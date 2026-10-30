@@ -42,12 +42,12 @@ assert.equal(typeof new ChronicleEvidenceService(new BrowserReplayRenderer()).op
 assert.equal(typeof ChronicleRepository, "function");
 const root = await mkdtemp(path.join(os.tmpdir(), "scry-boundary-smoke-"));
 const protection = new EvidenceCipher(Buffer.alloc(32, 9));
-const evidence = await new ChronicleEvidenceService(new BrowserReplayRenderer()).openSession({ root, runId: "qualification-run", sessionId: "qualification-session", protection, maxSessionBytes: 1024 * 1024 });
+const evidence = await new ChronicleEvidenceService(new BrowserReplayRenderer()).openSession({ admission: { run: (work) => work() }, root, runId: "qualification-run", sessionId: "qualification-session", protection, maxSessionBytes: 1024 * 1024 });
 const recording = evidence.createRecording(createRecordingProtection({ classifier: new SensitiveValueClassifier({ protectedValues: { credential: "qualification-secret" } }) }));
 recording.receive(JSON.stringify({ text: "qualification-secret", timestamp: 1000 }));
 await evidence.prepareClosure();
 assert.equal((await evidence.seal({ renderVideo: false, actionLedger: async () => [] })).chunkCount, 1);
-const reopened = await new AuthenticatedEvidenceStore({ directory: path.join(root, "evidence"), runId: "qualification-run", scopeId: "qualification-session", protection }).initialize();
+const reopened = await new AuthenticatedEvidenceStore({ admission: { run: (work) => work() }, directory: path.join(root, "evidence"), runId: "qualification-run", scopeId: "qualification-session", protection }).initialize();
 assert.equal(JSON.stringify((await reopened.verify()).events).includes("qualification-secret"), false);
 for (const dependency of ["@aws-sdk/client-s3", "@google-cloud/storage", "cloudinary", "@scry/veil", "playwright"])
   assert.equal(existsSync("/workspace/packages/chronicle/node_modules/" + dependency), false);

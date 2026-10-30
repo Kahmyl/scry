@@ -8,6 +8,7 @@ export class SanitizedBrowserRecorder {
   readonly #sessions = new Map<Page, CDPSession>();
   readonly #contexts = new Set<BrowserContext>();
   #source: string | null = null;
+  #closed = false;
 
   constructor(
     private readonly options: {
@@ -17,6 +18,7 @@ export class SanitizedBrowserRecorder {
   ) {}
 
   async start(context: BrowserContext): Promise<void> {
+    if (this.#closed) throw new Error("SCRY_BROWSER_RECORDER_CLOSED");
     await this.#loadSource();
     if (this.#contexts.has(context)) return;
     this.#contexts.add(context);
@@ -72,7 +74,13 @@ export class SanitizedBrowserRecorder {
   }
 
   async close(): Promise<void> {
+    await this.abort();
     await this.flush();
+  }
+
+  /** Detach without publishing buffered evidence after ownership loss. */
+  async abort(): Promise<void> {
+    this.#closed = true;
     await Promise.allSettled([...this.#sessions.values()].map((session) => session.detach()));
     this.#sessions.clear();
   }
@@ -112,8 +120,12 @@ export class SanitizedBrowserRecorder {
   }
 
   async #attach(context: BrowserContext, page: Page): Promise<void> {
-    if (this.#sessions.has(page)) return;
+    if (this.#closed || this.#sessions.has(page)) return;
     const session = await context.newCDPSession(page);
+    if (this.#closed) {
+      await session.detach().catch(() => undefined);
+      return;
+    }
     this.#sessions.set(page, session);
     await session.send("Runtime.enable");
     await session.send("Runtime.addBinding", {
@@ -121,7 +133,7 @@ export class SanitizedBrowserRecorder {
       executionContextName: "scry-recorder",
     });
     session.on("Runtime.bindingCalled", (event) => {
-      if (event.name !== "__scry_emit") return;
+      if (this.#closed || event.name !== "__scry_emit") return;
       this.options.recording.receive(event.payload);
     });
     await session.send("Page.addScriptToEvaluateOnNewDocument", {

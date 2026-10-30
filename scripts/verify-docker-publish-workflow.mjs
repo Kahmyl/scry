@@ -91,6 +91,7 @@ for (const forbidden of [
 for (const required of [
   "SCRY_BROWSER_SCHEMA_CONFIRM: CREATE_EMPTY_BASELINE",
   "test/browser-scope-integrity.integration.test.ts",
+  "test/browser-owner-fencing.integration.test.ts",
   "pnpm verify:baseline-topology",
 ]) {
   if (!databaseQualification.includes(required))

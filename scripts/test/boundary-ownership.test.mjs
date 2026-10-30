@@ -4,6 +4,33 @@ import { boundaryViolations } from "../boundary-ownership-rules.mjs";
 
 const consumer = "apps/api/src/browser-execution/example.ts";
 
+test("Praxis is the only browser driver owner and consumes only boundary contracts", () => {
+  const praxis = "packages/praxis/src/browser-engine.ts";
+  for (const dependency of ["playwright", "rrweb"]) {
+    assert.deepEqual(
+      boundaryViolations(praxis, `import { implementation } from "${dependency}";`),
+      [],
+    );
+    assert.notEqual(boundaryViolations(consumer, `await import("${dependency}");`).length, 0);
+  }
+  for (const dependency of [
+    "@scry/veil",
+    "@scry/chronicle",
+    "@nestjs/common",
+    "pg",
+    "../../../apps/api/src/infrastructure/database.js",
+  ])
+    assert.notEqual(
+      boundaryViolations(praxis, `import { implementation } from "${dependency}";`).length,
+      0,
+    );
+  assert.notEqual(
+    boundaryViolations(consumer, 'import { engine } from "@scry/praxis/src/browser-engine.js";')
+      .length,
+    0,
+  );
+});
+
 test("rejects duplicate evidence custody and evidence writes outside Chronicle", () => {
   for (const source of [
     "class AuthenticatedEvidenceStore {}",

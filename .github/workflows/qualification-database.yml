@@ -99,7 +99,7 @@ jobs:
       - name: Create isolated worker qualification database
         run: >-
           pnpm --filter @scry/api exec node --input-type=module --eval
-          'import pg from "pg"; const client = new pg.Client({ connectionString: process.env.DATABASE_URL }); await client.connect(); try { await client.query("CREATE DATABASE scry_ci_worker"); } finally { await client.end(); }'
+          'import pg from "pg"; const client = new pg.Client({ connectionString: process.env.DATABASE_URL }); await client.connect(); try { await client.query("CREATE DATABASE scry_ci_worker"); await client.query("CREATE DATABASE scry_ci_owner"); } finally { await client.end(); }'
 
       - name: Qualify the durable worker and protected observations
         env:
@@ -112,6 +112,17 @@ jobs:
         run: |
           pnpm db:migrate
           pnpm --filter @scry/api exec vitest run test/browser-command.worker.integration.test.ts --maxWorkers=1
+
+      - name: Qualify live owner replacement and evidence admission
+        env:
+          DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_owner
+          SCRY_BROWSER_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_owner
+          SCRY_BROWSER_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_owner
+          SCRY_BROWSER_EXPECTED_DATABASE: scry_ci_owner
+          SCRY_BROWSER_E2E: "1"
+        run: |
+          pnpm db:migrate
+          pnpm --filter @scry/api exec vitest run test/browser-owner-fencing.integration.test.ts --maxWorkers=1
 
       - name: Upload database failure evidence
         if: failure()

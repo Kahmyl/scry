@@ -1,6 +1,6 @@
 # Scry four-boundary reset progress
 
-Status: Veil and Chronicle baseline cutovers locally qualified; browser ownership proof remains open
+Status: Praxis, Veil, and Chronicle cutovers locally qualified; Assurance is next
 
 The current baseline remains the authority for behavior, public contracts, and
 durable data. This record tracks implementation of the
@@ -13,9 +13,9 @@ durable data. This record tracks implementation of the
 | Baseline research                       | Complete; reachability, state, failure, verification, and disposition recorded                                  |
 | Initial contracts and composition seams | Complete; the worker uses the Praxis execution port and report persistence uses the Veil report-protection port |
 | Veil protection ownership               | Complete; active baseline consumers use the extracted Veil implementation                                       |
-| Chronicle evidence ownership            | Baseline relocation complete; stale-owner closure proof requires the Praxis ownership seam                      |
-| Praxis browser ownership                | Mechanics relocated; ownership correction and its regression proof are in progress                              |
-| Assurance diagnostics and qualification | Pending production-boundary cutover                                                                             |
+| Chronicle evidence ownership            | Complete; recording and publication now consume owner-locked admission                                          |
+| Praxis browser ownership                | Complete; active browser mechanics, lifecycle, and local lease revocation belong to Praxis                      |
+| Assurance diagnostics and qualification | Next                                                                                                            |
 | Final cleanup and completion proof      | Pending                                                                                                         |
 
 ## Veil ownership
@@ -38,8 +38,8 @@ and evidence adapters. Veil owns:
 
 The API retains product admission, scope validation, database locking,
 transactions, and lifecycle coordination. Its cipher and report-protection
-adapters delegate to Veil. Browser mechanics remain in the existing engine and
-runtime until Praxis moves; Chronicle now owns recording custody and closure.
+adapters delegate to Veil. Browser mechanics now live in Praxis; Chronicle owns
+recording custody and closure.
 
 Evidence ordering, compression for storage, manifests, chain validation,
 retention, and replay rendering remain outside Veil. The evidence cipher
@@ -165,20 +165,20 @@ reachability-led cleanup, without compatibility facades or production imports.
   or Assurance. `pnpm verify:boundary-runtime` replaces the Veil-only smoke and
   remains required in fast qualification.
 
-The ordinary suite now passes 93 tests. The production dependency smoke also
+At the Chronicle cutover, the ordinary suite passed 93 tests. The production dependency smoke also
 records a Veil-protected event, seals it through Chronicle, and verifies the
 authenticated restart read under Node 22.
 
 This is local production-shaped qualification, not a deployment. Filesystem
 sequence conflict checks remain separate from the application's database owner
 generation checks; the move does not introduce a new browser lease protocol.
-The final audit identified an additional baseline limitation: stream-summary
+That audit identified an additional baseline limitation: stream-summary
 completion retains `ON CONFLICT(session_id) DO NOTHING` and does not independently
 revalidate owner generation. Recording-file sequencing likewise does not
 authenticate a browser lease. The stale-owner capture test proves capture and
 effect fencing, not stale-owner recording or stream closure. Those latter
-guarantees remain open for the Praxis ownership seam; the overall reset is not
-complete and must not be released on a claim that they are already proven.
+guarantees were carried into the Praxis ownership seam and corrected separately
+below. The overall reset still has Assurance and final cleanup work remaining.
 Existing activation bootstrap and inactive-table gaps remain deferred as recorded
 by baseline research.
 
@@ -201,13 +201,70 @@ recording/replay, and the durable worker journey pass through the new compositio
 This relocation does not by itself close the ownership limitation above; the
 intentional correction is a separate change.
 
+## Praxis ownership correction
+
+The structural move is commit `5df9a66`. The following intentional correction
+is separate: the baseline ignored heartbeat failures, allowed recording writes
+without lease admission, and completed streams without independently checking
+the current owner. A living replaced browser could successfully close; buffered
+recording and a render finishing after replacement could still be published.
+All three paths were reproduced as failing regressions before repair.
+
+The correction reuses the existing PostgreSQL owner identity and session lock:
+
+- Praxis owns the local browser lease lifecycle. Any failed ownership check or
+  heartbeat permanently revokes that browser instance and closes its resources;
+  a later database recovery cannot re-admit its buffered work.
+- The application validates active session, generation, lease token, and expiry,
+  and holds its session/owner locks across each short admitted storage operation.
+  Replacement claims use the same session lock. A write admitted before
+  replacement completes as the existing prefix; a later admission is rejected.
+- Chronicle requires admission for initialization/orphan recovery, durable
+  chunk flush, safe ledger writing, and replay publication. Rendering runs
+  outside database locks; its publication is separately rechecked.
+- Stream completion uses the same locked transaction and verifies both session
+  and Run identity. A stale owner cannot bypass fencing through an idempotent
+  completion retry.
+- Recorder detachment stops new input before the final queue flush. Chronicle
+  checks diagnostics again when sealing. Replay browsers close on setup failures.
+- Heartbeats remain active through rendering and stop only after closure or
+  revocation. Product-state refusals (unresolved outcomes or captures) preserve
+  the owned browser so the agent can settle them and retry close.
+
+A heartbeat-only repair would leave the durable-write race open. A new lease
+system or storage format was unnecessary; the bounded correction extends the
+existing authority rather than adding a second one. No schema or persisted
+format changed, no new mutation retry was added, and no old evidence was reset.
+Filesystem and PostgreSQL are still not one atomic store: a crash may leave
+authenticated orphan chunks, which retain the existing reconciliation behavior.
+The correction gates admission, not rollback of already-admitted external work.
+
+### Praxis verification
+
+| Check                                                                    | Result                                                                                                                                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary suite                                                           | 105 tests pass, including 10 Praxis lifecycle tests and 21 Chronicle tests                                                            |
+| Database lifecycle, failure truth, privacy, and scope                    | 13 tests pass                                                                                                                         |
+| Live owner and evidence admission                                        | 5 tests pass: living replacement, expiry, exact scope/token, buffered continuation, and replacement/write serialization               |
+| Browser recording and offline replay                                     | 2 real-Chromium tests pass                                                                                                            |
+| Durable worker, failure finalization, process recovery, and long journey | 6 tests pass across fresh isolated databases                                                                                          |
+| Migration                                                                | Fresh creation and second-run idempotence pass; no new migration                                                                      |
+| Production dependencies                                                  | Node 22 import, protected recording, closure, and authenticated restart read pass without development tools or Assurance              |
+| Repository and deployment                                                | Types, formatting, web build, six negative ownership checks, topology, workflow, publication, deployment, and operational checks pass |
+
+The retained worker journey caught a refused-close regression during repair;
+the browser-preserving refusal behavior was restored and independently tested
+before the journey passed. CI now runs the live owner-admission suite against
+its own fresh database in the database qualification lane.
+
+This is local production-shaped proof, not a deployment. When rolling out,
+drain/stop old workers before switching to the corrected worker set: an old
+binary does not acquire the new storage-admission gate. Existing activation
+bootstrap and inactive relational evidence-table limitations remain deferred.
+
 ## Next implementation slice
 
-Praxis will receive the active browser engine, browser ownership mechanics,
-checkpoint mechanics, recorder attachment, and replay browser adapter. It will
-consume Veil and Chronicle capabilities through ports while application
-composition retains product admission, transactions, queues, and lifecycle.
-Before calling that slice complete, characterize owner replacement during
-recording and closure, and ensure a replaced owner cannot admit authoritative
-recording or complete a stream. Any intentional correction must have its own
-regression proof and remain separate from structural relocation.
+Assurance will own diagnostics, experiments, fixtures, qualification campaigns,
+and their interpretation. It must consume public contracts and safe evidence
+without becoming a production dependency. Then complete the reachability-led
+cleanup of dormant application code and obsolete verification.

@@ -1,5 +1,11 @@
 import type { Buffer } from "node:buffer";
 
+/** The application holds its owner lock throughout each short durable write.
+ * Rendering and browser/network operations must not run while holding this gate. */
+export interface EvidenceWriteAdmission {
+  run<T>(work: () => Promise<T>): Promise<T>;
+}
+
 /** Veil supplies this capability; Chronicle never receives a master key. */
 export interface EvidenceProtectionPort {
   encrypt(compressed: Buffer, aad: Buffer): { nonce: Buffer; ciphertext: Buffer; tag: Buffer };
@@ -60,6 +66,7 @@ export interface SafeActionLedgerEntry {
 }
 
 export interface ChronicleEvidenceScope {
+  admission: EvidenceWriteAdmission;
   root: string;
   runId: string;
   sessionId: string;

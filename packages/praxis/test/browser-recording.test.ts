@@ -20,6 +20,8 @@ import {
 
 const browserTest = process.env.SCRY_BROWSER_E2E === "1" ? it : it.skip;
 
+const admission = { run: <T>(work: () => Promise<T>) => work() };
+
 describe("browser recording and offline replay", () => {
   browserTest(
     "preserves a masked interval while Veil settles a short protected response",
@@ -27,6 +29,7 @@ describe("browser recording and offline replay", () => {
       const root = await mkdtemp(path.join(os.tmpdir(), "browser-recording-barrier-"));
       const secret = "violet7";
       const store = await new AuthenticatedEvidenceStore<Record<string, unknown>>({
+        admission,
         directory: path.join(root, "evidence"),
         runId: "00000000-0000-4000-8000-000000000202",
         scopeId: "browser-recording-barrier",
@@ -85,6 +88,7 @@ describe("browser recording and offline replay", () => {
       const ledgerPath = path.join(root, "action-ledger.jsonl");
       const secret = "fixtureSecret7Qp9Zx4Lm2N8Rc6V";
       const store = await new AuthenticatedEvidenceStore<Record<string, unknown>>({
+        admission,
         directory: evidenceDirectory,
         runId: "00000000-0000-4000-8000-000000000201",
         scopeId: "browser-recording-fixture",
@@ -126,6 +130,7 @@ describe("browser recording and offline replay", () => {
       expect(persisted).not.toContain(secret);
 
       const publication = await renderSanitizedReplay({
+        admission,
         renderer: new BrowserReplayRenderer(),
         events: verified.events,
         ledgerPath,
@@ -141,6 +146,7 @@ describe("browser recording and offline replay", () => {
       expect(publication.renderDurationMs).toBeLessThanOrEqual(publication.durationMs);
       await expect(access(publication.videoPath)).resolves.toBeUndefined();
       const second = await renderSanitizedReplay({
+        admission,
         renderer: new BrowserReplayRenderer(),
         events: verified.events,
         ledgerPath,

@@ -13,10 +13,13 @@ import type {
   VeilBrowserProtectionPort,
   VeilBrowserAuthorityPort,
   VeilBrowserCapturePort,
+  PraxisOwnerIdentity,
 } from "@scry/contracts";
 import { SanitizedBrowserRecorder } from "./recorder.js";
+import { PraxisOwnerLease } from "./owner-lease.js";
 
 interface ActiveSession {
+  lease: PraxisOwnerLease;
   browser: Browser;
   context: BrowserContext;
   page: Page;
@@ -66,6 +69,7 @@ function safeRedirectChain(
 export class PraxisBrowserEngine {
   readonly #sessions = new Map<string, ActiveSession>();
   readonly #opening = new Map<string, Promise<{ sessionId: string; ownerGeneration: number }>>();
+  readonly #closing = new Map<string, Promise<void>>();
   constructor(
     private readonly commands: PraxisCommandsPort,
     private readonly effects: PraxisEffectsPort,
@@ -76,7 +80,11 @@ export class PraxisBrowserEngine {
   async open(sessionId: string): Promise<{ sessionId: string; ownerGeneration: number }> {
     await this.effects.assertCompatibleBaseline();
     const existing = this.#sessions.get(sessionId);
-    if (existing) return { sessionId, ownerGeneration: existing.ownerGeneration };
+    if (this.#closing.has(sessionId)) throw new Error("SCRY_BROWSER_SESSION_CLOSING");
+    if (existing) {
+      await this.assertSessionOwner(existing);
+      return { sessionId, ownerGeneration: existing.ownerGeneration };
+    }
     const opening = this.#opening.get(sessionId);
     if (opening) return opening;
     const operation = this.#openNew(sessionId);
@@ -92,33 +100,37 @@ export class PraxisBrowserEngine {
     const scope = await this.commands.sessionContext(sessionId);
     const ownerLeaseMs = 60_000;
     const owner = await this.effects.claimOwner(sessionId, `worker:${process.pid}`, ownerLeaseMs);
-    const root = path.resolve(
-      process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser",
-      sessionId,
-    );
-    const [protectedValues, restoredPublicValues] = await Promise.all([
-      this.commands.protectedValuesForSession(sessionId),
-      this.commands.publicValuesForSession(sessionId),
-    ]);
-    const protectedSession = this.protection.createSession({
-      scope,
-      captureDirectory: path.join(root, "captures"),
-      protectedValues,
-      restoredPublicValues,
-    });
-    const { authority, vault } = protectedSession;
-    const evidence = await this.evidenceService.openSession({
-      root,
-      runId: scope.runId,
-      sessionId,
-      protection: protectedSession.evidenceProtection,
-      maxSessionBytes: 20 * 1024 * 1024,
-    });
-    await protectedSession.restoreCaptures(await this.effects.durableCapturesForSession(sessionId));
+    const identity = { sessionId, generation: owner.generation, leaseToken: owner.leaseToken };
+    const lease = new PraxisOwnerLease(identity, this.effects);
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
     let ownerHeartbeat: NodeJS.Timeout | undefined;
     try {
+      const root = path.resolve(
+        process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser",
+        sessionId,
+      );
+      const [protectedValues, restoredPublicValues] = await Promise.all([
+        this.commands.protectedValuesForSession(sessionId),
+        this.commands.publicValuesForSession(sessionId),
+      ]);
+      const protectedSession = this.protection.createSession({
+        scope,
+        captureDirectory: path.join(root, "captures"),
+        protectedValues,
+        restoredPublicValues,
+      });
+      const { authority, vault } = protectedSession;
+      const evidence = await this.evidenceService.openSession({
+        root,
+        runId: scope.runId,
+        sessionId,
+        protection: protectedSession.evidenceProtection,
+        maxSessionBytes: 20 * 1024 * 1024,
+        admission: lease,
+      });
+      const durableCaptures = await this.effects.durableCapturesForSession(sessionId);
+      await lease.run(() => protectedSession.restoreCaptures(durableCaptures));
       const checkpoint = await this.commands.loadBrowserCheckpoint(sessionId, owner.generation);
       browser = await chromium.launch({
         headless: process.env.SCRY_BROWSER_HEADLESS !== "false",
@@ -144,13 +156,11 @@ export class PraxisBrowserEngine {
       });
       await recorder.start(context);
       ownerHeartbeat = setInterval(
-        () =>
-          void this.effects
-            .heartbeatOwner(sessionId, owner.generation, owner.leaseToken, ownerLeaseMs)
-            .catch(() => undefined),
+        () => void lease.heartbeat(ownerLeaseMs).catch(() => this.evict(session)),
         20_000,
       );
       const session: ActiveSession = {
+        lease,
         browser,
         context,
         page,
@@ -179,9 +189,11 @@ export class PraxisBrowserEngine {
         this.assertOrigin(session, checkpoint.resumeUrl);
         await page.goto(checkpoint.resumeUrl);
       }
+      await lease.run(async () => undefined);
       this.#sessions.set(sessionId, session);
       return { sessionId, ownerGeneration: owner.generation };
     } catch (error) {
+      lease.revoke();
       if (ownerHeartbeat) clearInterval(ownerHeartbeat);
       await context?.close().catch(() => undefined);
       await browser?.close().catch(() => undefined);
@@ -194,10 +206,18 @@ export class PraxisBrowserEngine {
 
   async execute(sessionId: string, command: BrowserCommand): Promise<Record<string, unknown>> {
     const session = await this.requiredSession(sessionId);
-    const result = await this.executeInSession(session, command);
-    if (command.kind !== "close" && command.kind !== "close_for_failure")
-      await this.persistCheckpoint(session);
-    return result;
+    try {
+      const result = await this.executeInSession(session, command);
+      if (command.kind !== "close" && command.kind !== "close_for_failure") {
+        await this.persistCheckpoint(session);
+        await this.assertSessionOwner(session);
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof Error && error.message === "SCRY_BROWSER_OWNER_FENCED")
+        await this.evict(session);
+      throw error;
+    }
   }
 
   private async executeInSession(
@@ -270,34 +290,87 @@ export class PraxisBrowserEngine {
   }
 
   private async closeSession(sessionId: string, forFailure: boolean): Promise<void> {
+    const existing = this.#closing.get(sessionId);
+    if (existing) return existing;
+    const operation = this.finishSession(sessionId, forFailure);
+    this.#closing.set(sessionId, operation);
+    try {
+      await operation;
+    } finally {
+      this.#closing.delete(sessionId);
+    }
+  }
+
+  private async finishSession(sessionId: string, forFailure: boolean): Promise<void> {
     const session = this.#sessions.get(sessionId);
     if (!session) return;
+    await this.assertSessionOwner(session);
     if (forFailure)
       await this.effects.prepareFailureFinalization(sessionId, session.ownerGeneration);
     else await this.effects.assertNoPendingEffectOutcomes(sessionId);
     const unsettled = await this.effects.unsettledCaptureIds(sessionId);
     if (unsettled.length > 0)
       throw new Error(`SCRY_BROWSER_CAPTURES_UNSETTLED:${unsettled.join(",")}`);
-    this.#sessions.delete(sessionId);
-    clearInterval(session.ownerHeartbeat);
-    await session.evidence.prepareClosure();
-    await session.recorder.close();
-    await session.context.close();
-    await session.browser.close();
-    const completion = await session.evidence.seal({
-      renderVideo: process.env.SCRY_BROWSER_RENDER_VIDEO === "true",
-      actionLedger: () => this.commands.safeActionLedger(sessionId),
-      ...(process.env.SCRY_BROWSER_CHROME_PATH
-        ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
-        : {}),
-    });
-    await this.commands.completeEvidence(completion);
-    await this.commands.deleteBrowserCheckpoint(sessionId, session.ownerGeneration);
+    try {
+      await session.evidence.prepareClosure();
+      await session.recorder.close();
+      await session.context.close();
+      await session.browser.close();
+      const completion = await session.evidence.seal({
+        renderVideo: process.env.SCRY_BROWSER_RENDER_VIDEO === "true",
+        actionLedger: () => this.commands.safeActionLedger(sessionId),
+        ...(process.env.SCRY_BROWSER_CHROME_PATH
+          ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
+          : {}),
+      });
+      session.lease.assertActive();
+      await this.effects.completeEvidence(this.ownerIdentity(session), completion);
+      await this.commands.deleteBrowserCheckpoint(sessionId, session.ownerGeneration);
+    } finally {
+      await this.evict(session);
+    }
   }
 
   async closeAll(): Promise<void> {
-    for (const sessionId of [...this.#sessions.keys()])
-      await this.close(sessionId).catch(() => undefined);
+    await Promise.allSettled([...this.#opening.values()]);
+    for (const [sessionId, session] of [...this.#sessions.entries()]) {
+      try {
+        await this.close(sessionId);
+      } catch {
+        /* Shutdown must not retain a browser when product closure is refused. */
+      } finally {
+        await this.evict(session);
+      }
+    }
+  }
+
+  private ownerIdentity(session: ActiveSession): PraxisOwnerIdentity {
+    return {
+      sessionId: session.sessionId,
+      generation: session.ownerGeneration,
+      leaseToken: session.ownerLeaseToken,
+    };
+  }
+
+  private async assertSessionOwner(session: ActiveSession): Promise<void> {
+    try {
+      await session.lease.run(async () => undefined);
+    } catch (error) {
+      await this.evict(session);
+      throw error;
+    }
+  }
+
+  private async evict(session: ActiveSession): Promise<void> {
+    session.lease.revoke();
+    if (this.#sessions.get(session.sessionId) === session) this.#sessions.delete(session.sessionId);
+    clearInterval(session.ownerHeartbeat);
+    session.references.clear();
+    await Promise.allSettled([
+      session.recorder.abort(),
+      session.context.close(),
+      session.browser.close(),
+    ]);
   }
 
   private async requiredSession(sessionId: string): Promise<ActiveSession> {
