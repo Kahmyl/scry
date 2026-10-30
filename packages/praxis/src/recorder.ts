@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { BrowserContext, CDPSession, Frame, Page } from "playwright";
-import type { ChronicleRecordingPort } from "@scry/contracts";
+import type { ChronicleRecordingPort, RecordingFailureCode } from "@scry/contracts";
 
 export class SanitizedBrowserRecorder {
   readonly #sessions = new Map<Page, CDPSession>();
@@ -167,7 +167,7 @@ export class SanitizedBrowserRecorder {
     page.once("close", () => this.#sessions.delete(page));
   }
 
-  #recordError(code: string, error: unknown): void {
+  #recordError(code: RecordingFailureCode, error: unknown): void {
     this.options.recording.recordError(code, error);
   }
 

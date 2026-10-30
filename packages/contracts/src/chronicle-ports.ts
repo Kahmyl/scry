@@ -17,15 +17,26 @@ export interface RecordingProtectionPort {
   snapshot(): (value: unknown) => unknown;
 }
 
+export const recordingFailureCodes = [
+  "recorder_missing",
+  "recorder_payload_invalid",
+  "recorder_write_failed",
+  "recorder_attach_failed",
+  "recorder_checkpoint_failed",
+  "recorder_capture_failed",
+  "recorder_navigation_reinstall_failed",
+] as const;
+export type RecordingFailureCode = (typeof recordingFailureCodes)[number];
+
 export interface ChronicleRecordingDiagnostics {
   receivedEvents: number;
-  errors: Array<{ code: string; message?: string }>;
-  diagnostics: Array<{ code: string }>;
+  errors: Array<{ code: RecordingFailureCode }>;
+  diagnostics: Array<{ code: "owner_closed_during_capture" }>;
 }
 
 export interface ChronicleRecordingPort {
   receive(payload: string): void;
-  recordError(code: string, error: unknown): void;
+  recordError(code: RecordingFailureCode, error: unknown): void;
   flush(): Promise<ChronicleRecordingDiagnostics>;
 }
 

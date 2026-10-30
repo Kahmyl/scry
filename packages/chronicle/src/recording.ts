@@ -1,4 +1,9 @@
-import type { ChronicleRecordingPort, RecordingProtectionPort } from "@scry/contracts";
+import {
+  recordingFailureCodes,
+  type RecordingFailureCode,
+  type ChronicleRecordingPort,
+  type RecordingProtectionPort,
+} from "@scry/contracts";
 
 export interface ReplayEventStore {
   readonly nextSequence: number;
@@ -10,8 +15,8 @@ export interface ReplayEventStore {
 export class ChronicleRecording implements ChronicleRecordingPort {
   #queue: Promise<void> = Promise.resolve();
   #receivedEvents: number;
-  readonly #errors: Array<{ code: string; message?: string }> = [];
-  readonly #diagnostics: Array<{ code: string }> = [];
+  readonly #errors: Array<{ code: RecordingFailureCode }> = [];
+  readonly #diagnostics: Array<{ code: "owner_closed_during_capture" }> = [];
 
   constructor(
     private readonly store: ReplayEventStore,
@@ -37,7 +42,7 @@ export class ChronicleRecording implements ChronicleRecordingPort {
       .catch((error: unknown) => this.recordError("recorder_write_failed", error));
   }
 
-  recordError(code: string, error: unknown): void {
+  recordError(code: RecordingFailureCode, error: unknown): void {
     if (
       /Target page, context or browser has been closed|Session closed|Page crashed|Browser closed|Connection closed/iu.test(
         error instanceof Error ? error.message : "",
@@ -46,7 +51,9 @@ export class ChronicleRecording implements ChronicleRecordingPort {
       this.#diagnostics.push({ code: "owner_closed_during_capture" });
       return;
     }
-    this.#errors.push({ code, ...(error instanceof Error ? { message: error.message } : {}) });
+    this.#errors.push({
+      code: recordingFailureCodes.find((value) => value === code) ?? "recorder_capture_failed",
+    });
   }
 
   async flush() {

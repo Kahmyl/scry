@@ -64,13 +64,10 @@ describe("recording custody and closure", () => {
     recording.receive("{");
     recording.receive('{"safe":1}');
     recording.receive('{"safe":2}');
-    recording.recordError("capture_closed", new Error("Session closed"));
+    recording.recordError("recorder_capture_failed", new Error("Session closed"));
     expect(await recording.flush()).toEqual({
       receivedEvents: 1,
-      errors: [
-        { code: "recorder_payload_invalid" },
-        { code: "recorder_write_failed", message: "disk unavailable" },
-      ],
+      errors: [{ code: "recorder_payload_invalid" }, { code: "recorder_write_failed" }],
       diagnostics: [{ code: "owner_closed_during_capture" }],
     });
     expect(append).toHaveBeenCalledTimes(2);

@@ -6,7 +6,11 @@ import type {
   EvidenceCompletion,
   PraxisOwnerIdentity,
 } from "@scry/contracts";
-import { assertPublicationDecisionSet, assertPublicationDisclosure } from "@scry/veil";
+import {
+  assertPublicationDecisionSet,
+  assertPublicationDisclosure,
+  storedBrowserFailureCode,
+} from "@scry/veil";
 import type { PoolClient, QueryResultRow } from "pg";
 
 import { Database } from "../../infrastructure/database.js";
@@ -836,7 +840,7 @@ export class BrowserExecutionRepository {
   async markSessionPublishFailed(sessionId: string, errorCode: string): Promise<void> {
     await this.database.query(
       "UPDATE browser_execution_outbox SET publish_attempts=publish_attempts+1,last_error=$2 WHERE session_id=$1 AND published_at IS NULL",
-      [sessionId, errorCode.slice(0, 500)],
+      [sessionId, storedBrowserFailureCode(errorCode)],
     );
   }
 

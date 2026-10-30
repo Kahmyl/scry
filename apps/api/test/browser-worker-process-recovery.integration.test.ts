@@ -286,7 +286,11 @@ run("browser baseline real worker-process recovery", () => {
     return waitFor(async () => {
       const observed = await commands.observe(submitted.commandId);
       if (observed.state === "failed") throw new Error(observed.errorCode);
-      return observed.state === "completed" ? observed.result : false;
+      if (observed.state === "completed") {
+        if (!observed.result) throw new Error("fixture_command_result_missing");
+        return observed.result;
+      }
+      return false;
     }, 30_000);
   }
 
