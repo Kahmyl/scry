@@ -129,6 +129,24 @@ afterEach(() => {
 });
 
 describe("browser owner lifecycle", () => {
+  it("checks current command authority after startup and before native dispatch", async () => {
+    const { engine } = fixture();
+    await engine.open("session");
+    const assertCurrent = vi.fn(async () => {
+      throw new Error("SCRY_BROWSER_COMMAND_CLAIM_FENCED");
+    });
+    await expect(
+      engine.execute(
+        "session",
+        { kind: "navigate", url: "https://fixture.example" },
+        { remainingMs: 1000, assertCurrent },
+      ),
+    ).rejects.toThrow("COMMAND_CLAIM_FENCED");
+    expect(assertCurrent).toHaveBeenCalledTimes(1);
+    expect(browserFixture.page.goto).not.toHaveBeenCalled();
+    expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
+    await engine.closeAll();
+  });
   it("does not revive an older background startup when its command incarnation was cancelled", async () => {
     const { engine, effects } = fixture(),
       cancel = new AbortController();

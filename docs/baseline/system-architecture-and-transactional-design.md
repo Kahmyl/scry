@@ -263,9 +263,14 @@ Completion also requires a live durable execution deadline. An expired deadline
 may be recorded as failure only by its still-live claimant; an expired/replaced
 claimant cannot clear recovery facts by writing either success or failure.
 Heartbeats return database-relative command and claim lifetimes and never renew
-the immutable execution deadline. These application guards require coordinated
-worker replacement; they do not retrofit older binaries or prove that an old
-browser has stopped. Carried queue cancellation, independent process supervision,
+the immutable execution deadline. The worker carries these relative lifetimes
+through native dispatch using post-lock monotonic query anchors. Response
+delivery order is not authority order: an older checkpoint cannot undo an
+acknowledged renewal, while a newer checkpoint still constrains an older delayed
+renewal acknowledgement. Only an acknowledged heartbeat may extend the claim.
+Unknown physical drain remains nonterminal and triggers host recovery before
+best-effort diagnostic persistence. These guards require coordinated worker
+replacement; they do not retrofit older binaries. Independent process supervision
 and durable uncertain-work recovery remain separate qualification requirements.
 
 ## Browser ownership and fencing

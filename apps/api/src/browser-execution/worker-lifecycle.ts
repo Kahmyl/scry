@@ -9,6 +9,7 @@ type QueueJob = Pick<Job, "moveToDelayed">;
 export class BrowserWorkRegistry {
   #accepting = true;
   #transportFailed = false;
+  #runtimeUnconfirmed = false;
   readonly #active = new Set<Promise<unknown>>();
 
   run<T>(job: QueueJob, token: string | undefined, work: () => Promise<T>): Promise<T> {
@@ -36,6 +37,13 @@ export class BrowserWorkRegistry {
   }
   get transportFailed(): boolean {
     return this.#transportFailed;
+  }
+  failRuntime(): void {
+    this.#runtimeUnconfirmed = true;
+    this.stop();
+  }
+  get runtimeUnconfirmed(): boolean {
+    return this.#runtimeUnconfirmed;
   }
   get activeCount(): number {
     return this.#active.size;
@@ -137,6 +145,8 @@ export function createBrowserWorkerShutdown(
       // listener records that failure here; a fulfilled close is not a waiver.
       if (options.registry.transportFailed && !failures.includes("transport"))
         failures.push("transport");
+      if (options.registry.runtimeUnconfirmed && !failures.includes("runtime"))
+        failures.push("runtime");
       if (failures.length) throw new BrowserWorkerShutdownError(failures);
     });
     return operation;
