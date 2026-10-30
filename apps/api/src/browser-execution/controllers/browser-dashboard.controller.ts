@@ -1,4 +1,12 @@
-import { Controller, Get, Inject, Param } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Inject,
+  Param,
+  ParseIntPipe,
+  StreamableFile,
+  Header,
+} from "@nestjs/common";
 
 import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
 import type { Principal } from "../../auth/auth.types.js";
@@ -18,6 +26,24 @@ export class BrowserDashboardController {
   @Get("runs/:runId")
   getRun(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
     return this.dashboard.getRun(workspace(principal), runId);
+  }
+
+  @Get("runs/:runId/media")
+  @Header("Cache-Control", "private, no-store")
+  listMedia(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
+    return this.dashboard.listMedia(workspace(principal), runId);
+  }
+
+  @Get("runs/:runId/media/:index")
+  @Header("Cache-Control", "private, no-store")
+  @Header("X-Content-Type-Options", "nosniff")
+  async getMedia(
+    @Param("runId") runId: string,
+    @Param("index", ParseIntPipe) index: number,
+    @CurrentPrincipal() principal: Principal,
+  ) {
+    const media = await this.dashboard.getMedia(workspace(principal), runId, index);
+    return new StreamableFile(media.bytes, { type: media.type, disposition: "inline" });
   }
 
   @Get("projects/:projectId/reports")

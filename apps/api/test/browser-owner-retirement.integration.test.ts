@@ -58,8 +58,13 @@ live("confirmed native owner retirement", () => {
     const retirement = vi.spyOn(effects, "retireOwner");
     const id = await seedSession(database, effects, "https://fixture.example");
     let stopping: Promise<void> | undefined;
+    let closing: Promise<unknown> | undefined;
     try {
       const owner = await praxis.openSession(id);
+      // Native capture admits a file at an action checkpoint/close, not a DOM
+      // snapshot on startup. Hold that real native receipt's Chronicle append.
+      closing = praxis.executeCommand(id, { kind: "close" });
+      void closing.catch(() => undefined);
       await vi.waitFor(() => expect(held).toHaveBeenCalledTimes(1), { timeout: 3000 });
       await entered;
       const browser = await launched.mock.results.at(-1)!.value;
@@ -94,6 +99,7 @@ live("confirmed native owner retirement", () => {
     } finally {
       finish();
       await stopping?.catch(() => undefined);
+      await closing?.catch(() => undefined);
       await praxis.shutdown();
       held.mockRestore();
       retirement.mockRestore();

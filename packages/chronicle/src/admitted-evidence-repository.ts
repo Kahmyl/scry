@@ -11,7 +11,7 @@ import type {
 export class AdmittedEvidenceRepository {
   constructor(private readonly sql: ChronicleSqlPort) {}
 
-  async snapshot(sessionId: string): Promise<EvidenceStreamSnapshot> {
+  async snapshot(sessionId: string, lock = true): Promise<EvidenceStreamSnapshot> {
     const result = await this.sql.query<{
       id: string;
       session_id: string;
@@ -27,7 +27,9 @@ export class AdmittedEvidenceRepository {
       capture_stopped_at: Date | null;
       capture_complete: boolean | null;
       interruptions: number;
-    }>("SELECT * FROM browser_evidence_streams WHERE session_id=$1 FOR UPDATE", [sessionId]);
+    }>(`SELECT * FROM browser_evidence_streams WHERE session_id=$1${lock ? " FOR UPDATE" : ""}`, [
+      sessionId,
+    ]);
     const row = result.rows[0];
     if (!row) throw new Error("SCRY_BROWSER_EVIDENCE_STREAM_MISSING");
     const chunks = await this.sql.query<{

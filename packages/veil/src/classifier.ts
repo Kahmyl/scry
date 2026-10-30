@@ -15,10 +15,7 @@ const BUILTIN_PATTERNS: readonly PatternDefinition[] = [
     "assignment-secret",
     /\b(?:api[_-]?key|client[_-]?secret|password|passwd|token)\s*[:=]\s*[^\s,;"']{4,}/giu,
   ],
-  ["email", /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/giu],
   ["payment-card", /\b(?:\d[ -]*?){13,19}\b/gu],
-  ["nigerian-bvn-or-nin", /\b\d{11}\b/gu],
-  ["phone", /(?<![A-Za-z0-9.-])(?:\+\d[\d\s()-]{7,}\d|\d[\d\s()-]{8,}\d)(?![A-Za-z0-9.-])/gu],
 ];
 
 export interface SensitiveFinding {
@@ -65,11 +62,12 @@ export class SensitiveValueClassifier {
     let output = this.sanitizeExact(input);
     for (const [category, pattern] of this.#patterns) {
       pattern.lastIndex = 0;
-      output = output.replace(pattern, replacement(category));
+      output = output.replace(pattern, (candidate) =>
+        category === "payment-card" && !looksLikePaymentCard(candidate)
+          ? candidate
+          : replacement(category),
+      );
     }
-    output = output.replace(/[A-Za-z0-9_+-]{20,}={0,2}/gu, (candidate) =>
-      looksLikeHighEntropyToken(candidate) ? replacement("high-entropy") : candidate,
-    );
     return output;
   }
 
@@ -93,34 +91,27 @@ export class SensitiveValueClassifier {
     for (const [category, pattern] of this.#patterns) {
       pattern.lastIndex = 0;
       for (const match of input.matchAll(pattern)) {
+        if (category === "payment-card" && !looksLikePaymentCard(match[0])) continue;
         findings.push({ category, start: match.index ?? 0, length: match[0].length });
-      }
-    }
-    for (const match of input.matchAll(/[A-Za-z0-9_+-]{20,}={0,2}/gu)) {
-      if (looksLikeHighEntropyToken(match[0])) {
-        findings.push({
-          category: "high-entropy",
-          start: match.index ?? 0,
-          length: match[0].length,
-        });
       }
     }
     return findings.sort((left, right) => left.start - right.start || right.length - left.length);
   }
 }
 
-function looksLikeHighEntropyToken(candidate: string): boolean {
-  if (!/[A-Za-z]/u.test(candidate) || !/\d/u.test(candidate)) return false;
-  if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(candidate)) return false;
-  if (/^[a-z0-9]+(?:-[a-z0-9]+){2,}$/u.test(candidate)) return false;
-  const counts = new Map<string, number>();
-  for (const character of candidate) counts.set(character, (counts.get(character) ?? 0) + 1);
-  let entropy = 0;
-  for (const count of counts.values()) {
-    const probability = count / candidate.length;
-    entropy -= probability * Math.log2(probability);
+function looksLikePaymentCard(candidate: string): boolean {
+  const digits = candidate.replace(/\D/gu, "");
+  if (digits.length < 13 || digits.length > 19 || /^(\d)\1+$/u.test(digits)) return false;
+  let sum = 0;
+  for (let index = digits.length - 1, doubled = false; index >= 0; index--, doubled = !doubled) {
+    let digit = Number(digits[index]);
+    if (doubled) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
   }
-  return entropy >= 3.5;
+  return sum % 10 === 0;
 }
 
 export function protectedValueVariants(values: Readonly<Record<string, string>>): string[] {

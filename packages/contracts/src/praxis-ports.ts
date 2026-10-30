@@ -9,7 +9,6 @@ import type {
 import type {
   EvidenceCompletion,
   EvidenceProtectionPort,
-  RecordingProtectionPort,
   SafeActionLedgerEntry,
 } from "./chronicle-ports.js";
 
@@ -237,11 +236,10 @@ export interface VeilBrowserCapturePort {
   discard(captureId: string): Promise<{ receipt: BrowserCaptureReceipt }>;
 }
 export interface VeilBrowserSessionPort {
+  nativeProtectionScript: string;
   authority: VeilBrowserAuthorityPort;
   vault: VeilBrowserCapturePort;
   evidenceProtection: EvidenceProtectionPort;
-  recordingProtection: RecordingProtectionPort;
-  privacyOptions: Readonly<Record<string, unknown>>;
   semanticHint(value: string): string;
   restoreCaptures(captures: DurableCaptureEnvelope[]): Promise<void>;
 }

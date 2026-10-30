@@ -292,31 +292,13 @@ describe("qualification outcomes", () => {
       ]),
     );
     expect(profiles.browser).toEqual(
-      expect.arrayContaining([
-        "browser-recording",
-        "browser-custody",
-        "component-veil",
-        "component-praxis",
-        "component-contracts",
-        "component-mcp",
-        "component-api",
-        "web-build",
-        "component-web",
-        "playwright",
-        "boundaries",
-        "topology",
-      ]),
+      expect.arrayContaining(["browser-recording", "browser-custody", "playwright"]),
     );
     expect(profiles.database).toEqual(
-      expect.arrayContaining([
-        "component-api",
-        "component-veil",
-        "database-lifecycle",
-        "schema-upgrades",
-        "boundaries",
-        "topology",
-      ]),
+      expect.arrayContaining(["database-lifecycle", "schema-upgrades"]),
     );
+    for (const id of [...profiles.browser!, ...profiles.database!])
+      expect(id).not.toMatch(/^component-|^web-build$|^topology$|^boundaries$/u);
     expect(profiles.owner).toContain("owner-admission");
     expect(profiles.owner).toContain("owner-watchdog");
     expect(profiles.owner).toContain("owner-retirement");

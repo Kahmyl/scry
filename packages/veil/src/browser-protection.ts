@@ -4,9 +4,8 @@ import { ProtectionAuthority } from "./protection-authority.js";
 import { ProtectedCaptureVault } from "./protected-capture-vault.js";
 import { BrowserProtectedKeyring } from "./protected-keyring.js";
 import { EvidenceCipher } from "./evidence-cipher.js";
-import { createRecordingProtection } from "./recording-admission.js";
-import { recordingProtectionOptions } from "./recording-protection.js";
 import { safeDomSemanticHint } from "./transport-protection.js";
+import { nativeProtectionScript } from "./native-protection.js";
 
 /** Supplies policy capabilities without exposing key material to browser execution. */
 export class VeilBrowserProtection implements VeilBrowserProtectionPort {
@@ -53,14 +52,13 @@ export class VeilBrowserProtection implements VeilBrowserProtectionPort {
       legacyEncryptionKeys: [keyring.deriveLegacy(scope.protectionKeyId, "capture", context)],
     });
     return {
+      nativeProtectionScript: nativeProtectionScript(Object.values(input.protectedValues)),
       authority,
       vault,
       evidenceProtection: new EvidenceCipher(
         keyring.derive(scope.protectionKeyId, "evidence", context),
         [keyring.deriveLegacy(scope.protectionKeyId, "evidence", context)],
       ),
-      recordingProtection: createRecordingProtection({ authority }),
-      privacyOptions: recordingProtectionOptions,
       semanticHint: (value) => safeDomSemanticHint(value, authority),
       async restoreCaptures(captures) {
         // PostgreSQL, not files left by a dead worker, is authoritative.

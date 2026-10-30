@@ -234,8 +234,8 @@ export class PraxisBrowserEngine {
       const page = await context.newPage();
       this.assertOpening(resources);
       const recorder = new SanitizedBrowserRecorder({
-        recording: evidence.createRecording(protectedSession.recordingProtection),
-        privacyOptions: protectedSession.privacyOptions,
+        native: await evidence.createNativeRecording(),
+        protectionScript: protectedSession.nativeProtectionScript,
       });
       resources.recorder = recorder;
       await recorder.start(context);
@@ -352,6 +352,8 @@ export class PraxisBrowserEngine {
             try {
               const result = await this.executeInSession(session, command, attempt, current);
               attempt.assertActive();
+              if (["navigate", "fill", "click", "press"].includes(command.kind))
+                await session.recorder.checkpoint(command.kind);
               if (command.kind !== "close" && command.kind !== "close_for_failure") {
                 await this.persistCheckpoint(session, attempt);
                 await this.assertSessionOwner(session);
@@ -438,6 +440,7 @@ export class PraxisBrowserEngine {
           );
           try {
             await current();
+            await session.recorder.protectValue(value);
             await this.nativePhase(session, 15000, () =>
               handle.fill(value, { timeout: attempt.remainingMs(15000) }),
             );
