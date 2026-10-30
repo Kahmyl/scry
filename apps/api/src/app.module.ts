@@ -1,41 +1,23 @@
 import { Module } from "@nestjs/common";
+import { APP_FILTER, APP_GUARD } from "@nestjs/core";
 
-import { AccessModule } from "./access/index.js";
-import { AdaptiveSessionsModule } from "./adaptive-sessions/index.js";
-import { ArtifactsModule } from "./artifacts/index.js";
-import { AuthModule } from "./auth/index.js";
-import { AuthoringModule } from "./authoring/index.js";
-import { AuthenticationAuthoringModule } from "./authentication-authoring/index.js";
-import { CalibrationModule } from "./calibration/index.js";
-import { FlowsModule } from "./flows/index.js";
-import { InfrastructureModule } from "./infrastructure/index.js";
-import { MissionsModule } from "./missions/index.js";
-import { OrchestrationModule } from "./orchestration/index.js";
-import { PraxisModule } from "./praxis/index.js";
-import { RuntimeModule } from "./runtime/index.js";
-import { RunsModule } from "./runs/index.js";
-import { SystemModule } from "./system/index.js";
-import { VeilModule } from "./veil/index.js";
+import { AuthGuard } from "./auth/auth.guard.js";
+import { AuthService } from "./auth/auth.service.js";
+import { McpTokensController } from "./auth/mcp-tokens.controller.js";
+import { IdentityRepository } from "./auth/repositories/identity.repository.js";
+import { McpTokenRepository } from "./auth/repositories/mcp-token.repository.js";
+import { BrowserExecutionModule } from "./browser-execution/index.js";
+import { BrowserExceptionFilter } from "./browser-execution/browser-exception.filter.js";
 
 @Module({
-  imports: [
-    InfrastructureModule,
-    AuthModule,
-    SystemModule,
-    AccessModule,
-    AdaptiveSessionsModule,
-    ArtifactsModule,
-    AuthoringModule,
-    AuthenticationAuthoringModule,
-    CalibrationModule,
-    FlowsModule,
-    MissionsModule,
-    OrchestrationModule,
-    PraxisModule,
-    RuntimeModule,
-    RunsModule,
-    VeilModule,
+  imports: [BrowserExecutionModule],
+  controllers: [McpTokensController],
+  providers: [
+    IdentityRepository,
+    McpTokenRepository,
+    AuthService,
+    { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_FILTER, useClass: BrowserExceptionFilter },
   ],
-  exports: [InfrastructureModule, AccessModule, RuntimeModule, CalibrationModule],
 })
 export class AppModule {}

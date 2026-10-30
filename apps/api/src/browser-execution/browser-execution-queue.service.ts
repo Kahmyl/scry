@@ -5,21 +5,21 @@ import { RedisConnection } from "../infrastructure/redis.js";
 import { BrowserExecutionRepository } from "./repositories/browser-execution.repository.js";
 import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
 
-const queueNamespace = process.env.BROWSER_V2_QUEUE_NAMESPACE?.trim();
+const queueNamespace = process.env.SCRY_BROWSER_QUEUE_NAMESPACE?.trim();
 if (queueNamespace && !/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(queueNamespace))
-  throw new Error("BROWSER_V2_QUEUE_NAMESPACE_INVALID");
+  throw new Error("SCRY_BROWSER_QUEUE_NAMESPACE_INVALID");
 const scopedQueueName = (base: string) => (queueNamespace ? `${base}-${queueNamespace}` : base);
 
-export const BROWSER_EXECUTION_V2_QUEUE = scopedQueueName("scry-browser-execution-v2");
-export const BROWSER_COMMAND_V2_QUEUE = scopedQueueName("scry-browser-command-v2");
-export interface BrowserExecutionV2Job {
+export const BROWSER_EXECUTION_QUEUE = scopedQueueName("scry-browser-execution");
+export const BROWSER_COMMAND_QUEUE = scopedQueueName("scry-browser-command");
+export interface BrowserExecutionJob {
   sessionId: string;
-  runtimeCapabilityVersion: string;
+  runtimeCapabilityId: string;
 }
 
 @Injectable()
 export class BrowserExecutionQueueService implements OnModuleInit, OnModuleDestroy {
-  readonly queue: Queue<BrowserExecutionV2Job>;
+  readonly queue: Queue<BrowserExecutionJob>;
   readonly commandQueue: Queue<{ commandId: string }>;
   #dispatcher?: NodeJS.Timeout;
 
@@ -28,11 +28,11 @@ export class BrowserExecutionQueueService implements OnModuleInit, OnModuleDestr
     @Inject(BrowserExecutionRepository) private readonly repository: BrowserExecutionRepository,
     @Inject(BrowserCommandRepository) private readonly commands: BrowserCommandRepository,
   ) {
-    this.queue = new Queue(BROWSER_EXECUTION_V2_QUEUE, {
+    this.queue = new Queue(BROWSER_EXECUTION_QUEUE, {
       connection: redis.client,
       defaultJobOptions: { attempts: 1, removeOnComplete: 100, removeOnFail: 500 },
     });
-    this.commandQueue = new Queue(BROWSER_COMMAND_V2_QUEUE, {
+    this.commandQueue = new Queue(BROWSER_COMMAND_QUEUE, {
       connection: redis.client,
       defaultJobOptions: {
         attempts: 5,
@@ -44,7 +44,7 @@ export class BrowserExecutionQueueService implements OnModuleInit, OnModuleDestr
   }
 
   async onModuleInit(): Promise<void> {
-    if (process.env.BROWSER_V2_ENABLED !== "true") return;
+    if (process.env.SCRY_BROWSER_ENABLED !== "true") return;
     await this.dispatchPending();
     await this.dispatchPendingCommands();
     this.#dispatcher = setInterval(
@@ -54,7 +54,7 @@ export class BrowserExecutionQueueService implements OnModuleInit, OnModuleDestr
   }
 
   async dispatchPendingCommands(limit = 100): Promise<number> {
-    if (process.env.BROWSER_V2_ENABLED !== "true") throw new Error("BROWSER_V2_DISABLED");
+    if (process.env.SCRY_BROWSER_ENABLED !== "true") throw new Error("SCRY_BROWSER_DISABLED");
     const pending = await this.commands.pending(limit);
     let dispatched = 0;
     for (const command of pending) {
@@ -67,7 +67,7 @@ export class BrowserExecutionQueueService implements OnModuleInit, OnModuleDestr
   }
 
   async dispatchPending(limit = 100): Promise<number> {
-    if (process.env.BROWSER_V2_ENABLED !== "true") throw new Error("BROWSER_V2_DISABLED");
+    if (process.env.SCRY_BROWSER_ENABLED !== "true") throw new Error("SCRY_BROWSER_DISABLED");
     const sessions = await this.repository.pendingSessions(limit);
     let dispatched = 0;
     for (const session of sessions) {

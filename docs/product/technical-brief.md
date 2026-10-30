@@ -218,7 +218,7 @@ application testing.
   ledger, and reporting boundary.
 - **Objective**: one independently assessable outcome within a Mission.
 - **Flow**: one executable browser journey used to test an Objective.
-- **Flow revision**: an immutable executable version of a Flow.
+- **Flow revision**: an immutable executable definition of a Flow.
 - **Run**: one execution of one Flow revision in one environment.
 - **Attempt**: one preserved execution attempt; retries do not overwrite prior
   outcomes.
@@ -227,13 +227,35 @@ application testing.
 - **Mission report**: an immutable synthesis of tested outcomes, accepted
   evidence, findings, omissions, and inconclusive work.
 
+## Platform responsibility direction
+
+Scry will organize its platform capabilities around four authoritative
+boundaries:
+
+- **Praxis** operates browsers and owns browser execution mechanics;
+- **Veil** protects sensitive information and controls disclosure;
+- **Chronicle** manages durable evidence and the factual history of execution;
+  and
+- **Assurance** owns diagnostics, analysis, experiments, and qualification.
+
+The application composes these capabilities with Projects, Missions,
+Objectives, Flows, Runs, authorization, transactions, queues, and public
+interfaces. The boundaries support the product promise; they do not replace
+the product model or the external agent's testing judgment.
+
+This is an architectural direction, not a claim that the current repository
+already follows it. The ownership rules are defined in the
+[four-boundary direction](../baseline/four-boundary-direction.md), and the work
+to reach it is defined in the
+[four-boundary implementation plan](../baseline/four-boundary-implementation-plan.md).
+
 ## Current implementation and intended MVP
 
 The existing Chromium execution baseline, Missions, Flows, Runs, browser
 interaction, privacy controls, and evidence storage are foundations. They do
 not constitute the complete MVP.
 
-The intended MVP is the first useful version of the product described in this
+The intended MVP is the first useful form of the product described in this
 brief:
 
 > An agent can receive a meaningful application-testing assignment, execute

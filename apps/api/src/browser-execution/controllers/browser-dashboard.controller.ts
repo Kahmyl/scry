@@ -4,7 +4,7 @@ import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
 import type { Principal } from "../../auth/auth.types.js";
 import { BrowserDashboardRepository } from "../repositories/browser-dashboard.repository.js";
 
-@Controller("api/v2")
+@Controller("api")
 export class BrowserDashboardController {
   constructor(
     @Inject(BrowserDashboardRepository) private readonly dashboard: BrowserDashboardRepository,

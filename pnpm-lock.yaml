@@ -32,45 +32,21 @@ importers:
       '@nestjs/platform-fastify':
         specifier: ^11.0.0
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))
-      '@scry/chronicle':
-        specifier: workspace:*
-        version: link:../../packages/chronicle
       '@scry/browser-runtime':
         specifier: workspace:*
         version: link:../../packages/browser-runtime
       '@scry/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@scry/executor':
-        specifier: workspace:*
-        version: link:../../packages/executor
-      '@scry/observability':
-        specifier: workspace:*
-        version: link:../../packages/observability
-      '@scry/policy':
-        specifier: workspace:*
-        version: link:../../packages/policy
-      '@scry/praxis':
-        specifier: workspace:*
-        version: link:../../packages/praxis
-      '@scry/veil':
-        specifier: workspace:*
-        version: link:../../packages/veil
       bullmq:
         specifier: ^5.58.0
         version: 5.81.3
-      fflate:
-        specifier: ^0.8.3
-        version: 0.8.3
       ioredis:
         specifier: ^5.7.0
         version: 5.11.1
       jose:
         specifier: ^6.2.5
         version: 6.2.5
-      parse5:
-        specifier: ^7.3.0
-        version: 7.3.0
       pg:
         specifier: ^8.13.0
         version: 8.22.0
@@ -90,9 +66,6 @@ importers:
         specifier: ^4.0.0
         version: 4.4.3
     devDependencies:
-      '@scry/assurance':
-        specifier: workspace:*
-        version: link:../../packages/assurance
       '@types/node':
         specifier: ^22.0.0
         version: 22.20.1
@@ -114,9 +87,6 @@ importers:
       '@scry/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@scry/observability':
-        specifier: workspace:*
-        version: link:../../packages/observability
       tsx:
         specifier: ^4.20.0
         version: 4.23.1

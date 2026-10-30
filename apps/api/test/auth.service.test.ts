@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AuthService } from "../src/auth/auth.service.js";
 import type { IdentityRepository } from "../src/auth/repositories/identity.repository.js";
-import { ScryRepository } from "../src/access/index.js";
+import { BrowserProjectRepository } from "../src/browser-execution/repositories/browser-project.repository.js";
 import type { Database } from "../src/infrastructure/database.js";
 
 const originalServiceToken = process.env.SCRY_SERVICE_TOKEN;
@@ -41,28 +41,22 @@ describe("AuthService", () => {
     );
   });
 
-  it("enforces viewer read-only membership", () => {
-    const repository = new ScryRepository({} as Database);
-    expect(() =>
-      repository.requireWriteAccess({
-        kind: "user",
-        subject: "00000000-0000-0000-0000-000000000001",
-        userId: "user-1",
-        email: "viewer@example.com",
-        workspaceId: "workspace-1",
-        role: "viewer",
-      }),
-    ).toThrow("Workspace viewers have read-only access");
-    expect(() =>
-      repository.requireWriteAccess({
-        kind: "user",
-        subject: "00000000-0000-0000-0000-000000000002",
-        userId: "user-2",
-        email: "member@example.com",
-        workspaceId: "workspace-1",
-        role: "member",
-      }),
-    ).not.toThrow();
+  it("enforces viewer read-only membership", async () => {
+    const repository = new BrowserProjectRepository({} as Database);
+    await expect(
+      repository.create(
+        {
+          kind: "user",
+          credentialKind: "user",
+          subject: "00000000-0000-0000-0000-000000000001",
+          userId: "user-1",
+          email: "viewer@example.com",
+          workspaceId: "workspace-1",
+          role: "viewer",
+        },
+        { name: "Forbidden project", description: "" },
+      ),
+    ).rejects.toThrow("SCRY_BROWSER_PROJECT_POLICY_FORBIDDEN");
   });
 });
 

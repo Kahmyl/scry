@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
 
 permissions:
@@ -15,8 +13,6 @@ permissions:
 jobs:
   fast:
     uses: ./.github/workflows/qualification-fast.yml
-    with:
-      base_sha: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
 
   browser:
     uses: ./.github/workflows/qualification-browser.yml

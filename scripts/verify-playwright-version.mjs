@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
 
-const executorPackage = JSON.parse(
-  await readFile(new URL("../packages/executor/package.json", import.meta.url), "utf8"),
+const browserRuntimePackage = JSON.parse(
+  await readFile(new URL("../packages/browser-runtime/package.json", import.meta.url), "utf8"),
 );
-const expected = executorPackage.dependencies?.playwright;
+const expected = browserRuntimePackage.dependencies?.playwright;
 
 if (!/^\d+\.\d+\.\d+$/.test(expected ?? "")) {
   throw new Error(
-    `@scry/executor must pin Playwright exactly; received ${JSON.stringify(expected)}`,
+    `@scry/browser-runtime must pin Playwright exactly; received ${JSON.stringify(expected)}`,
   );
 }
 
@@ -21,12 +21,12 @@ for (const file of files) {
 }
 
 const lockfile = await readFile(new URL("../pnpm-lock.yaml", import.meta.url), "utf8");
-const executorImporter =
-  lockfile.match(/  packages\/executor:\n([\s\S]*?)(?=\n  \S|\npackages:)/)?.[1] ?? "";
-const lockedSpecifier = executorImporter.match(
+const browserRuntimeImporter =
+  lockfile.match(/  packages\/browser-runtime:\n([\s\S]*?)(?=\n  \S|\npackages:)/)?.[1] ?? "";
+const lockedSpecifier = browserRuntimeImporter.match(
   /      playwright:\n        specifier: ([^\n]+)/,
 )?.[1];
-const lockedVersion = executorImporter.match(
+const lockedVersion = browserRuntimeImporter.match(
   /      playwright:\n        specifier: [^\n]+\n        version: ([^\n]+)/,
 )?.[1];
 if (lockedSpecifier !== expected || lockedVersion !== expected) {

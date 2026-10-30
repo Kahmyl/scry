@@ -16,6 +16,17 @@ const dockerignore = readFileSync(".dockerignore", "utf8");
 const deployCompose = readFileSync("compose.deploy.yml", "utf8");
 const apiPackage = JSON.parse(readFileSync("apps/api/package.json", "utf8"));
 
+// Validate each publication step's actual environment, not a synthetic Compose
+// environment that can hide an omitted required variable in the workflow.
+for (const name of [
+  "Boot and smoke-test the candidate beta topology",
+  "Publish the beta Compose application as an OCI artifact",
+]) {
+  const step = workflow.split(`      - name: ${name}\n`)[1]?.split("      - name:")[0];
+  if (!step || !/^          SCRY_DATABASE_NAME: scry_publication_smoke$/m.test(step))
+    fail(`${name} must supply the explicit disposable publication database name`);
+}
+
 for (const retiredWorkflow of [
   ".github/workflows/praxis-verification.yml",
   ".github/workflows/veil-verification.yml",
@@ -51,10 +62,8 @@ for (const required of [
   "github.event.workflow_run.conclusion == 'success'",
   "github.event.workflow_run.event == 'push'",
   "github.event.workflow_run.head_branch == 'main'",
-  "startsWith(github.event.workflow_run.head_branch, 'v')",
   "Verify manual publication authority",
-  "Automated publication requires qualification from main or a semantic version tag.",
-  "^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
+  "Automated publication requires qualification from main.",
   "I_ACKNOWLEDGE_RESIDUAL_RISK",
   "Record publication audit evidence",
   "artifacts/publication-audit.json",
@@ -66,7 +75,6 @@ for (const required of [
   "docker/build-push-action@v6",
   'node scripts/render-compose-oci.mjs "$RUNNER_TEMP/scry-compose-oci.yml"',
   'docker compose -f "$SCRY_COMPOSE_FILE" publish',
-  "node scripts/schema-fingerprint.mjs",
   "Boot and smoke-test the candidate beta topology",
 ]) {
   if (!workflow.includes(required)) fail(`beta publication contract missing: ${required}`);
@@ -81,33 +89,29 @@ for (const forbidden of [
 }
 
 for (const required of [
-  "BROWSER_V2_SCHEMA_CONFIRM: CREATE_EMPTY_V2",
-  "test/browser-v2-scope-integrity.integration.test.ts",
-  "pnpm verify:browser-v2-cutover",
+  "SCRY_BROWSER_SCHEMA_CONFIRM: CREATE_EMPTY_BASELINE",
+  "test/browser-scope-integrity.integration.test.ts",
+  "pnpm verify:baseline-topology",
 ]) {
   if (!databaseQualification.includes(required))
     fail(`database qualification outcome contract missing: ${required}`);
 }
 
-if (!fastQualification.includes("artifacts/verification-ci-unit-results.json"))
-  fail("fast qualification artifact omits CI unit results");
+for (const required of [
+  "pnpm run verify:baseline-topology",
+  "test/auth.service.test.ts test/browser-protected-keyring.test.ts",
+  "pnpm --filter @scry/browser-runtime test",
+]) {
+  if (!fastQualification.includes(required))
+    fail(`fast qualification baseline safety contract missing: ${required}`);
+}
 
-const runtimePackages = [
-  "browser-runtime",
-  "chronicle",
-  "contracts",
-  "executor",
-  "observability",
-  "policy",
-  "praxis",
-  "veil",
-];
+const runtimePackages = ["browser-runtime", "contracts"];
 
 const workspaceManifests = [
   "apps/api/package.json",
   "apps/mcp/package.json",
   "apps/web/package.json",
-  "packages/assurance/package.json",
   ...runtimePackages.map((packageName) => `packages/${packageName}/package.json`),
 ];
 
@@ -120,12 +124,6 @@ for (const { file, source } of developmentDockerfiles) {
 
 if (apiPackage.dependencies?.["@scry/assurance"])
   fail("@scry/api must not classify Assurance as a production dependency");
-
-if (apiPackage.devDependencies?.["@scry/assurance"] !== "workspace:*")
-  fail("@scry/api must retain Assurance only as qualification/tooling dependency");
-
-if (!dockerfile.includes("COPY packages/assurance/package.json packages/assurance/package.json"))
-  fail("Docker dependency resolution must retain the Assurance workspace manifest");
 
 if (/^COPY packages packages$/m.test(dockerfile))
   fail("Docker runtime image must not broadly copy every workspace package");
@@ -154,9 +152,9 @@ if (fastStartupProbeCount < 4)
   );
 
 for (const required of [
-  'test: ["CMD-SHELL", "pg_isready -U scry -d ${SCRY_DATABASE_NAME:-scry_browser_v2}"]',
+  '"pg_isready -U scry -d ${SCRY_DATABASE_NAME:?Set SCRY_DATABASE_NAME to the existing database}"',
   'test: ["CMD", "redis-cli", "ping"]',
-  'test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/v2/health"]',
+  'test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/health"]',
   'test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4100/health"]',
 ]) {
   const index = deployCompose.indexOf(required);
@@ -203,7 +201,7 @@ for (const required of [
   "COPY --from=prod-deps /workspace/node_modules ./node_modules",
   "COPY --from=prod-deps /workspace/apps ./apps",
   "COPY --from=prod-deps /workspace/packages ./packages",
-  "COPY scripts/schema-fingerprint.mjs scripts/verify-deployment-preflight.mjs ./scripts/",
+  "COPY scripts/verify-deployment-preflight.mjs ./scripts/",
 ]) {
   if (!dockerfile.includes(required))
     fail(`runtime image does not inherit pruned production dependencies: ${required}`);
@@ -226,10 +224,10 @@ for (const forbidden of [
 }
 
 for (const required of [
-  '"apps/api/tsconfig.json",\n        "apps/api/src/browser-v2-main.ts"',
-  '"apps/api/tsconfig.json",\n        "apps/api/src/browser-v2-worker.ts"',
-  '"apps/api/tsconfig.json",\n        "apps/api/scripts/migrate-browser-v2.ts"',
-  '"apps/mcp/tsconfig.json",\n        "apps/mcp/src/browser-v2-http.ts"',
+  '"apps/api/tsconfig.json",\n        "apps/api/src/main.ts"',
+  '"apps/api/tsconfig.json",\n        "apps/api/src/worker.ts"',
+  '"apps/api/tsconfig.json",\n        "apps/api/scripts/migrate.ts"',
+  '"apps/mcp/tsconfig.json",\n        "apps/mcp/src/http.ts"',
 ]) {
   if (!deployCompose.includes(required))
     fail(`production Compose runtime command missing: ${required}`);
@@ -237,7 +235,7 @@ for (const required of [
 
 if (
   !dockerfile.includes(
-    'CMD ["apps/api/node_modules/.bin/tsx", "--tsconfig", "apps/api/tsconfig.json", "apps/api/src/browser-v2-main.ts"]',
+    'CMD ["apps/api/node_modules/.bin/tsx", "--tsconfig", "apps/api/tsconfig.json", "apps/api/src/main.ts"]',
   )
 )
   fail("Docker default runtime command must invoke app-local tsx directly");
@@ -289,14 +287,14 @@ const environment = {
   SCRY_IMAGE_REF: `registry.invalid/scry@sha256:${"1".repeat(64)}`,
   SCRY_DOMAIN: "scry.invalid",
   SCRY_RELEASE_ID: "beta-verification",
-  SCRY_SCHEMA_FINGERPRINT: "2".repeat(64),
+  SCRY_DATABASE_NAME: "scry_verification",
   POSTGRES_PASSWORD: "verification",
   SCRY_SERVICE_TOKEN: "verification",
-  BROWSER_V2_PROTECTED_KEYS_JSON: JSON.stringify({
-    "verification-v1": Buffer.alloc(32, 3).toString("base64"),
+  SCRY_BROWSER_PROTECTED_KEYS_JSON: JSON.stringify({
+    "verification-key": Buffer.alloc(32, 3).toString("base64"),
   }),
-  BROWSER_V2_PROTECTED_KEY_VERSION: "verification-v1",
-  BROWSER_V2_REQUIRE_ACTIVATED_CUTOVER: "false",
+  SCRY_BROWSER_PROTECTED_KEY_ID: "verification-key",
+  SCRY_BROWSER_REQUIRE_ACTIVATED_CUTOVER: "false",
   SUPABASE_URL: "https://example.invalid",
   SUPABASE_PUBLISHABLE_KEY: "verification",
 };

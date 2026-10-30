@@ -279,8 +279,11 @@ export class ProtectedCaptureVault {
   readonly #maxOperationBytes: number;
   readonly #retentionMs: number;
   readonly #encryptionKey: Buffer | undefined;
+  readonly #legacyEncryptionKeys: readonly Buffer[];
   #captureKey: Buffer | null = null;
   #assetKey: Buffer | null = null;
+  #legacyCaptureKeys: readonly Buffer[] = [];
+  #legacyAssetKeys: readonly Buffer[] = [];
   #queue: Promise<void> = Promise.resolve();
 
   constructor(options: {
@@ -293,6 +296,8 @@ export class ProtectedCaptureVault {
     retentionMs?: number;
     /** A production key supplied by the runtime; local tests may use private files. */
     encryptionKey?: Buffer;
+    /** Historical master keys accepted only when decrypting persisted captures. */
+    legacyEncryptionKeys?: readonly Buffer[];
   }) {
     this.#directory = options.directory;
     this.#runId = options.runId;
@@ -303,7 +308,12 @@ export class ProtectedCaptureVault {
     this.#retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
     if (options.encryptionKey && options.encryptionKey.length !== 32)
       throw new Error("capture_master_key_invalid");
+    if (options.legacyEncryptionKeys?.some((key) => key.length !== 32))
+      throw new Error("capture_master_key_invalid");
     this.#encryptionKey = options.encryptionKey ? Buffer.from(options.encryptionKey) : undefined;
+    this.#legacyEncryptionKeys = (options.legacyEncryptionKeys ?? []).map((key) =>
+      Buffer.from(key),
+    );
   }
 
   async initialize(): Promise<this> {
@@ -317,6 +327,12 @@ export class ProtectedCaptureVault {
       );
       this.#assetKey = Buffer.from(
         hkdfSync("sha256", this.#encryptionKey, salt, Buffer.from("asset-v2"), 32),
+      );
+      this.#legacyCaptureKeys = this.#legacyEncryptionKeys.map((key) =>
+        Buffer.from(hkdfSync("sha256", key, salt, Buffer.from("capture-v2"), 32)),
+      );
+      this.#legacyAssetKeys = this.#legacyEncryptionKeys.map((key) =>
+        Buffer.from(hkdfSync("sha256", key, salt, Buffer.from("asset-v2"), 32)),
       );
     } else {
       this.#captureKey = await this.#loadOrCreateKey("capture.key");
@@ -436,7 +452,7 @@ export class ProtectedCaptureVault {
         protectionBarrier: input.protectionBarrier,
       };
       const aad = {
-        evidenceVersion: 1,
+        evidenceFormat: 1,
         runId: this.#runId,
         scopeId: this.#scopeId,
         effectId: input.effectId,
@@ -634,7 +650,7 @@ export class ProtectedCaptureVault {
             Buffer.from(asset.value),
             this.#requiredAssetKey(),
             {
-              evidenceVersion: 1,
+              evidenceFormat: 1,
               runId: this.#runId,
               scopeId: this.#scopeId,
               captureId,
@@ -726,7 +742,7 @@ export class ProtectedCaptureVault {
     ) {
       throw new Error("protected_asset_scope_mismatch");
     }
-    const plaintext = await this.#decrypt(record, this.#requiredAssetKey());
+    const plaintext = await this.#decrypt(record, this.#requiredAssetKey(), this.#legacyAssetKeys);
     try {
       await sink.fill(plaintext.toString("utf8"));
       return { reference, digest: sha256(plaintext) };
@@ -823,7 +839,7 @@ export class ProtectedCaptureVault {
     ) {
       throw new Error("capture_scope_mismatch");
     }
-    return this.#decrypt(record, this.#requiredCaptureKey());
+    return this.#decrypt(record, this.#requiredCaptureKey(), this.#legacyCaptureKeys);
   }
 
   async #readEncrypted(target: string): Promise<EncryptedRecord> {
@@ -851,7 +867,11 @@ export class ProtectedCaptureVault {
         record.aad.outputKey !== key
       )
         throw new Error("published_protection_scope_mismatch");
-      const plaintext = await this.#decrypt(record, this.#requiredAssetKey());
+      const plaintext = await this.#decrypt(
+        record,
+        this.#requiredAssetKey(),
+        this.#legacyAssetKeys,
+      );
       try {
         if (sha256(plaintext) !== output.digest)
           throw new Error("published_protection_digest_invalid");
@@ -863,21 +883,28 @@ export class ProtectedCaptureVault {
     return values;
   }
 
-  async #decrypt(record: EncryptedRecord, key: Buffer): Promise<Buffer> {
+  async #decrypt(
+    record: EncryptedRecord,
+    key: Buffer,
+    legacyKeys: readonly Buffer[],
+  ): Promise<Buffer> {
     const aad = Buffer.from(JSON.stringify(record.aad));
     const nonce = Buffer.from(record.nonce, "base64");
     const ciphertext = Buffer.from(record.ciphertext, "base64");
     const tag = Buffer.from(record.tag, "base64");
     if (sha256(Buffer.concat([aad, nonce, ciphertext, tag])) !== record.digest)
       throw new Error("encrypted_record_digest_invalid");
-    try {
-      const decipher = createDecipheriv("aes-256-gcm", key, nonce);
-      decipher.setAAD(aad);
-      decipher.setAuthTag(tag);
-      return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    } catch {
-      throw new Error("encrypted_record_authentication_invalid");
+    for (const candidate of [key, ...legacyKeys]) {
+      try {
+        const decipher = createDecipheriv("aes-256-gcm", candidate, nonce);
+        decipher.setAAD(aad);
+        decipher.setAuthTag(tag);
+        return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+      } catch {
+        // Historical keys are read-only compatibility candidates.
+      }
     }
+    throw new Error("encrypted_record_authentication_invalid");
   }
 
   #requiredCaptureKey(): Buffer {

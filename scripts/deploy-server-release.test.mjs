@@ -32,8 +32,6 @@ for (const service of ["caddy", "web"])
 
 const previousRelease = "1".repeat(40);
 const candidateRelease = "2".repeat(40);
-const previousSchema = "a".repeat(64);
-const candidateSchema = "b".repeat(64);
 const previousImage = `docker.io/kahmyl/scry@sha256:${"c".repeat(64)}`;
 const candidateImage = `docker.io/kahmyl/scry@sha256:${"d".repeat(64)}`;
 
@@ -149,7 +147,6 @@ function runScenario(name, additions = {}) {
   const sameRelease = additions.SAME_RELEASE === "true";
   const savedRelease = sameRelease ? candidateRelease : previousRelease;
   const savedImage = sameRelease ? candidateImage : previousImage;
-  const savedSchema = sameRelease ? candidateSchema : previousSchema;
   const discoveredCompose = join(deployDir, "legacy-compose.yaml");
   const discoveredOverride = join(deployDir, "legacy-override.yaml");
   const fallbackCompose = join(deployDir, "compose.yaml");
@@ -161,7 +158,7 @@ function runScenario(name, additions = {}) {
     envFile,
     [
       "SCRY_DEPLOYMENT_TIER=staging",
-      "SCRY_DATABASE_NAME=scry_browser_v2",
+      "SCRY_DATABASE_NAME=scry_existing",
       "SCRY_DOMAIN=scry.example.test",
       "POSTGRES_PASSWORD=test-only",
     ].join("\n"),
@@ -179,7 +176,6 @@ function runScenario(name, additions = {}) {
       [
         `CURRENT_RELEASE_ID=${savedRelease}`,
         `CURRENT_IMAGE_REF=${savedImage}`,
-        `CURRENT_SCHEMA_FINGERPRINT=${savedSchema}`,
         `CURRENT_COMPOSE_FILE=${previousCompose}`,
         "",
       ].join("\n"),
@@ -195,13 +191,12 @@ printf 'SCRY_RELEASE_ID=%s %s\\n' "\${SCRY_RELEASE_ID:-}" "$*" >>"$MOCK_DOCKER_L
 args="$*"
 if [[ "$args" == "compose version --short" ]]; then printf '2.40.0\\n'; exit 0; fi
 if [[ "$args" == ps\\ -q* ]]; then [[ "\${BOOTSTRAP:-false}" == true ]] && printf 'existing-api\\n'; exit 0; fi
-if [[ "$args" == *"range .Config.Env"* ]]; then printf 'SCRY_RELEASE_ID=%s\\nSCRY_SCHEMA_FINGERPRINT=%s\\n' "$PREVIOUS_RELEASE" "$PREVIOUS_SCHEMA"; exit 0; fi
+if [[ "$args" == *"range .Config.Env"* ]]; then printf 'SCRY_RELEASE_ID=%s\\n' "$PREVIOUS_RELEASE"; exit 0; fi
 if [[ "$args" == *".Config.Image"* ]]; then printf '%s\\n' "$PREVIOUS_IMAGE"; exit 0; fi
 if [[ "$args" == *"com.docker.compose.project.config_files"* ]]; then [[ "\${OMIT_CONFIG_LABEL:-false}" == true ]] || printf '%s\\n' "$DISCOVERED_COMPOSE"; exit 0; fi
 if [[ "$args" == *"com.docker.compose.project.working_dir"* ]]; then printf '%s\\n' "$DEPLOY_DIR"; exit 0; fi
 if [[ "$args" == *"index .RepoDigests 0"* ]]; then printf '%s\\n' "$CANDIDATE_IMAGE"; exit 0; fi
 if [[ "$args" == *"org.scry.release-id"* ]]; then printf '%s\\n' "$CANDIDATE_RELEASE"; exit 0; fi
-if [[ "$args" == *"org.scry.schema-fingerprint"* ]]; then printf '%s\\n' "$CANDIDATE_SCHEMA"; exit 0; fi
 if [[ "$args" == *"SELECT 1 FROM pg_database"* ]]; then printf '1\\n'; exit 0; fi
 if [[ "$args" == *"browser_execution_sessions"* ]]; then printf '%s\\n' "\${ACTIVE_WORK:-0}"; exit 0; fi
 if [[ "$args" == *"pg_dump"* ]]; then printf 'mock-database-dump\\n'; exit 0; fi
@@ -215,7 +210,7 @@ exit 0
   );
   const result = spawnSync(
     "bash",
-    [deployScript, deployDir, candidateRelease, candidateImage, candidateSchema, incomingCompose],
+    [deployScript, deployDir, candidateRelease, candidateImage, incomingCompose],
     {
       encoding: "utf8",
       env: {
@@ -224,10 +219,8 @@ exit 0
         MOCK_DOCKER_LOG: logFile,
         CANDIDATE_IMAGE: candidateImage,
         CANDIDATE_RELEASE: candidateRelease,
-        CANDIDATE_SCHEMA: candidateSchema,
         PREVIOUS_RELEASE: previousRelease,
         PREVIOUS_IMAGE: previousImage,
-        PREVIOUS_SCHEMA: previousSchema,
         DISCOVERED_COMPOSE: discoveredComposeFiles,
         DEPLOY_DIR: deployDir,
         ...additions,

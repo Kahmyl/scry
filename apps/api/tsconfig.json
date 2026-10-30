@@ -5,5 +5,20 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "src/main.ts",
+    "src/worker.ts",
+    "src/app.module.ts",
+    "src/auth/**/*.ts",
+    "src/common/**/*.ts",
+    "src/infrastructure/database.ts",
+    "src/infrastructure/redis.ts",
+    "src/browser-execution/**/*.ts",
+    "scripts/migrate.ts",
+    "scripts/activate-schema.ts",
+    "test/auth.service.test.ts",
+    "test/browser-*.test.ts",
+    "test/browser-*.integration.test.ts",
+    "test/fixtures/browser-crash-phase.ts"
+  ]
 }

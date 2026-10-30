@@ -5,22 +5,19 @@ const base = {
   SCRY_IMAGE_REF: "registry.invalid/scry@sha256:" + "1".repeat(64),
   SCRY_DOMAIN: "staging.scry.invalid",
   SCRY_RELEASE_ID: "verification",
-  SCRY_SCHEMA_FINGERPRINT: execFileSync("node", ["scripts/schema-fingerprint.mjs"], {
-    encoding: "utf8",
-  }).trim(),
+  SCRY_DATABASE_NAME: "scry_verification",
   POSTGRES_PASSWORD: "verification",
   SUPABASE_URL: "https://example.supabase.co",
   SUPABASE_PUBLISHABLE_KEY: "verification",
   SCRY_SERVICE_TOKEN: "verification",
-  BROWSER_V2_PROTECTED_KEY_VERSION: "browser-v2-key-1",
-  BROWSER_V2_PROTECTED_KEYS_JSON: JSON.stringify({
-    "browser-v2-key-1": Buffer.alloc(32, 7).toString("base64"),
+  SCRY_BROWSER_PROTECTED_KEY_ID: "browser-key-1",
+  SCRY_BROWSER_PROTECTED_KEYS_JSON: JSON.stringify({
+    "browser-key-1": Buffer.alloc(32, 7).toString("base64"),
   }),
 };
 
 const staging = { ...base, SCRY_DEPLOYMENT_TIER: "staging", COMPOSE_PROFILES: "" };
 runPreflight(staging);
-runPreflight({ ...staging, SCRY_SCHEMA_FINGERPRINT: "" });
 const stagingServices = renderServices(staging);
 for (const service of ["api", "worker", "mcp", "web", "postgres", "redis"])
   if (!stagingServices.includes(service))
@@ -49,28 +46,8 @@ const invalid = spawnSync("node", ["scripts/verify-deployment-preflight.mjs"], {
 });
 if (invalid.status === 0) throw new Error("production accepted disabled operations");
 
-for (const tier of ["beta", "production"]) {
-  const missingFingerprint = spawnSync("node", ["scripts/verify-deployment-preflight.mjs"], {
-    env: { ...base, SCRY_DEPLOYMENT_TIER: tier, SCRY_SCHEMA_FINGERPRINT: "" },
-    encoding: "utf8",
-  });
-  if (missingFingerprint.status === 0)
-    throw new Error(`${tier} accepted a missing SCRY_SCHEMA_FINGERPRINT`);
-  if (!missingFingerprint.stderr.includes(`${tier} requires explicit SCRY_SCHEMA_FINGERPRINT`))
-    throw new Error(`${tier} did not report the explicit schema fingerprint requirement`);
-}
-
-const mismatchedSchema = spawnSync("node", ["scripts/verify-deployment-preflight.mjs"], {
-  env: { ...staging, SCRY_SCHEMA_FINGERPRINT: "2".repeat(64) },
-  encoding: "utf8",
-});
-if (mismatchedSchema.status === 0)
-  throw new Error("deployment preflight accepted a source/schema fingerprint mismatch");
-if (!mismatchedSchema.stderr.includes("SCRY_SCHEMA_FINGERPRINT must match current source"))
-  throw new Error("deployment preflight did not report the schema fingerprint mismatch");
-
 console.log(
-  "Deployment tiers verified: staging core-only, production operations-enabled, invalid production and schema mismatch refused.",
+  "Deployment tiers verified: staging core-only, production operations-enabled, and invalid production refused.",
 );
 
 function runPreflight(env) {

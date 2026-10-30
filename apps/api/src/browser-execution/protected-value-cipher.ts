@@ -7,22 +7,22 @@ export interface EncryptedProtectedValue {
   nonce: Buffer;
   authenticationTag: Buffer;
   valueDigest: string;
-  keyVersion: string;
+  keyId: string;
 }
 
 @Injectable()
 export class BrowserProtectedValueCipher {
-  activeKeyVersion(): string {
-    return BrowserProtectedKeyring.fromEnvironment().activeVersion;
+  activeKeyId(): string {
+    return BrowserProtectedKeyring.fromEnvironment().activeKeyId;
   }
 
   encrypt(value: string, context: Record<string, string>): EncryptedProtectedValue {
     const keyring = BrowserProtectedKeyring.fromEnvironment();
-    const keyVersion = keyring.activeVersion;
+    const keyId = keyring.activeKeyId;
     const plaintext = Buffer.from(value, "utf8");
     const nonce = randomBytes(12);
     const aad = Buffer.from(JSON.stringify({ version: 1, ...context }), "utf8");
-    const cipher = createCipheriv("aes-256-gcm", keyring.key(keyVersion), nonce);
+    const cipher = createCipheriv("aes-256-gcm", keyring.key(keyId), nonce);
     cipher.setAAD(aad);
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
     return {
@@ -30,19 +30,19 @@ export class BrowserProtectedValueCipher {
       nonce,
       authenticationTag: cipher.getAuthTag(),
       valueDigest: createHash("sha256").update(plaintext).digest("hex"),
-      keyVersion,
+      keyId,
     };
   }
 
   decrypt(record: EncryptedProtectedValue, context: Record<string, string>): string {
     const keyring = BrowserProtectedKeyring.fromEnvironment();
     const aad = Buffer.from(JSON.stringify({ version: 1, ...context }), "utf8");
-    const decipher = createDecipheriv("aes-256-gcm", keyring.key(record.keyVersion), record.nonce);
+    const decipher = createDecipheriv("aes-256-gcm", keyring.key(record.keyId), record.nonce);
     decipher.setAAD(aad);
     decipher.setAuthTag(record.authenticationTag);
     const plaintext = Buffer.concat([decipher.update(record.ciphertext), decipher.final()]);
     if (createHash("sha256").update(plaintext).digest("hex") !== record.valueDigest)
-      throw new Error("BROWSER_V2_PROTECTED_VALUE_DIGEST_MISMATCH");
+      throw new Error("SCRY_BROWSER_PROTECTED_VALUE_DIGEST_MISMATCH");
     return plaintext.toString("utf8");
   }
 }

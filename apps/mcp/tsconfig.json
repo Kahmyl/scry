@@ -3,5 +3,13 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "src/main.ts",
+    "src/http.ts",
+    "src/server.ts",
+    "src/api-client.ts",
+    "src/tool-registry.ts",
+    "test/server.test.ts",
+    "test/http-session-transport.test.ts"
+  ]
 }

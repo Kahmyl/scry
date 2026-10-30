@@ -2,11 +2,6 @@ name: Scry fast qualification lane
 
 on:
   workflow_call:
-    inputs:
-      base_sha:
-        description: Git base used by impact-aware verification
-        required: false
-        type: string
   workflow_dispatch:
 
 permissions:
@@ -14,7 +9,7 @@ permissions:
 
 jobs:
   fast:
-    name: Format, types, boundaries, and affected tests
+    name: Format, types, baseline boundaries, and tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -45,35 +40,19 @@ jobs:
       - name: Typecheck workspaces
         run: pnpm run typecheck
 
-      - name: Run static architecture and release gates
+      - name: Run baseline architecture, security, and deployment gates
         run: |
-          pnpm run verify:repository-topology
-          pnpm run verify:subsystem-boundaries
-          pnpm run verify:execution-kernel-boundary
-          pnpm run verify:direct-browser-boundary
-          pnpm run verify:release-fingerprint
+          pnpm run verify:baseline-topology
           pnpm run verify:docker-publish-workflow
           pnpm run verify:server-deployment
           pnpm run verify:deployment-runtime
-          pnpm run verify:browser-v2-cutover
+          pnpm run verify:deployment-tiers
+          pnpm run verify:production-operations
+          pnpm run verify:deployment-preflight
+          pnpm --filter @scry/api exec vitest run test/auth.service.test.ts test/browser-protected-keyring.test.ts
+          pnpm --filter @scry/browser-runtime test
 
-      - name: Run deterministic impact-aware qualification
-        env:
-          REQUESTED_BASE_SHA: ${{ inputs.base_sha }}
+      - name: Run baseline tests and build
         run: |
-          base_sha="$REQUESTED_BASE_SHA"
-          if [ -z "$base_sha" ] || printf '%s' "$base_sha" | grep -Eq '^0+$'; then
-            base_sha=HEAD^
-          fi
-          pnpm run verify -- --base "$base_sha" --plan
-          pnpm run verify:ci-unit
-
-      - name: Upload impact plan and results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: affected-verification-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            artifacts/verification-affected-*.json
-            artifacts/verification-ci-unit-results.json
-          if-no-files-found: warn
+          pnpm test
+          pnpm build

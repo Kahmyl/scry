@@ -5,8 +5,8 @@ export {
 } from "./repositories/browser-execution.repository.js";
 export {
   BrowserExecutionQueueService,
-  BROWSER_EXECUTION_V2_QUEUE,
-  type BrowserExecutionV2Job,
+  BROWSER_EXECUTION_QUEUE,
+  type BrowserExecutionJob,
 } from "./browser-execution-queue.service.js";
 export { BrowserProtectedValueCipher } from "./protected-value-cipher.js";
 export { BrowserProtectedKeyring } from "./browser-protected-keyring.js";

@@ -5,16 +5,10 @@ import type { PoolClient, QueryResultRow } from "pg";
 
 import { Database } from "../../infrastructure/database.js";
 import { BrowserProtectedValueCipher } from "../protected-value-cipher.js";
-import {
-  BROWSER_RUNTIME_CAPABILITY_VERSION,
-  BROWSER_V2_SCHEMA_VERSION,
-} from "../browser-runtime-capability.js";
-import {
-  browserV2CatalogFingerprint,
-  loadBrowserV2SchemaManifest,
-} from "../browser-v2-schema-manifest.js";
+import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
+import { assertBrowserSchema } from "../browser-schema.js";
 
-const CAPABILITY_VERSION = BROWSER_RUNTIME_CAPABILITY_VERSION;
+const CAPABILITY_ID = BROWSER_RUNTIME_CAPABILITY_ID;
 
 type EffectClass = "authentication" | "business";
 type MutationOutcome = "pending" | "applied" | "not_applied" | "unknown";
@@ -30,8 +24,8 @@ interface SessionRow extends QueryResultRow {
   authentication_commits_used: number;
   business_commit_limit: number;
   business_commits_used: number;
-  runtime_capability_version: string;
-  protection_key_version: string;
+  runtime_capability_id: string;
+  protection_key_id: string;
 }
 
 interface EffectRow extends QueryResultRow {
@@ -111,35 +105,19 @@ export class BrowserExecutionRepository {
   ) {}
 
   async assertCompatibleBaseline(): Promise<void> {
-    const [manifest, result, catalogFingerprint] = await Promise.all([
-      loadBrowserV2SchemaManifest(),
-      this.database.query<{
-        schema_version: number;
-        schema_fingerprint: string;
-        catalog_fingerprint: string | null;
-        runtime_capability_version: string;
-      }>(
-        `SELECT schema_version,schema_fingerprint,catalog_fingerprint,runtime_capability_version
-         FROM schema_baseline WHERE singleton=true`,
-      ),
-      browserV2CatalogFingerprint(this.database.pool),
-    ]);
+    await assertBrowserSchema(this.database.pool);
+    const result = await this.database.query<{ runtime_capability_id: string }>(
+      "SELECT runtime_capability_id FROM schema_baseline WHERE singleton=true",
+    );
     const row = result.rows[0];
-    if (
-      manifest.schemaVersion !== BROWSER_V2_SCHEMA_VERSION ||
-      !row ||
-      row.schema_version !== BROWSER_V2_SCHEMA_VERSION ||
-      row.schema_fingerprint !== manifest.schemaFingerprint ||
-      row.catalog_fingerprint !== catalogFingerprint ||
-      row.runtime_capability_version !== CAPABILITY_VERSION
-    ) {
-      throw new Error("BROWSER_V2_SCHEMA_CAPABILITY_MISMATCH");
+    if (!row || row.runtime_capability_id !== CAPABILITY_ID) {
+      throw new Error("SCRY_BROWSER_SCHEMA_CAPABILITY_MISMATCH");
     }
-    if (process.env.BROWSER_V2_REQUIRE_ACTIVATED_CUTOVER === "true") {
+    if (process.env.SCRY_BROWSER_REQUIRE_ACTIVATED_CUTOVER === "true") {
       const activation = await this.database.query(
         "SELECT 1 FROM identity_import_receipts WHERE mode='permanent' AND state='active' LIMIT 1",
       );
-      if (!activation.rowCount) throw new Error("BROWSER_V2_CUTOVER_NOT_ACTIVATED");
+      if (!activation.rowCount) throw new Error("SCRY_BROWSER_CUTOVER_NOT_ACTIVATED");
     }
   }
 
@@ -158,7 +136,7 @@ export class BrowserExecutionRepository {
       effect.expected_origin !== input.expectedOrigin ||
       effect.intent_summary !== input.intentSummary
     )
-      throw new Error("BROWSER_V2_EFFECT_IDEMPOTENCY_CONFLICT");
+      throw new Error("SCRY_BROWSER_EFFECT_IDEMPOTENCY_CONFLICT");
     return { effectId: effect.id };
   }
 
@@ -177,7 +155,7 @@ export class BrowserExecutionRepository {
           row.mission_id !== input.missionId ||
           input.idempotencyKey.length === 0
         ) {
-          throw new Error("BROWSER_V2_SESSION_IDEMPOTENCY_CONFLICT");
+          throw new Error("SCRY_BROWSER_SESSION_IDEMPOTENCY_CONFLICT");
         }
         return row;
       }
@@ -185,12 +163,12 @@ export class BrowserExecutionRepository {
         "SELECT disclosure_mode FROM environments WHERE id=$1 AND project_id=$2",
         [input.environmentId, input.projectId],
       );
-      if (!environment.rows[0]) throw new Error("BROWSER_V2_ENVIRONMENT_NOT_FOUND");
+      if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
       const inserted = await client.query<SessionRow>(
         `INSERT INTO browser_execution_sessions(
            id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
            authentication_commit_limit,business_commit_limit,allowed_first_party_origins,
-           allowed_service_origins,runtime_capability_version,protection_key_version,
+           allowed_service_origins,runtime_capability_id,protection_key_id,
            disclosure_mode,idempotency_key,state)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,'active') RETURNING *`,
         [
@@ -205,17 +183,17 @@ export class BrowserExecutionRepository {
           input.businessCommitLimit,
           JSON.stringify(input.allowedFirstPartyOrigins),
           JSON.stringify(input.allowedServiceOrigins ?? []),
-          CAPABILITY_VERSION,
-          this.cipher.activeKeyVersion(),
+          CAPABILITY_ID,
+          this.cipher.activeKeyId(),
           environment.rows[0].disclosure_mode,
           input.idempotencyKey,
         ],
       );
       await client.query(
-        "INSERT INTO browser_execution_outbox(session_id,runtime_capability_version) VALUES($1,$2)",
-        [input.id, CAPABILITY_VERSION],
+        "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
+        [input.id, CAPABILITY_ID],
       );
-      return required(inserted.rows[0], "BROWSER_V2_SESSION_INSERT_FAILED");
+      return required(inserted.rows[0], "SCRY_BROWSER_SESSION_INSERT_FAILED");
     });
   }
 
@@ -226,17 +204,17 @@ export class BrowserExecutionRepository {
     reason = "claim",
   ): Promise<{ generation: number; leaseToken: string; fencingToken: number }> {
     if (!Number.isSafeInteger(leaseMs) || leaseMs < 1_000)
-      throw new Error("BROWSER_V2_OWNER_LEASE_INVALID");
+      throw new Error("SCRY_BROWSER_OWNER_LEASE_INVALID");
     return this.database.transaction(async (client) => {
       const session = await this.lockSession(client, sessionId);
-      if (session.state !== "active") throw new Error("BROWSER_V2_SESSION_NOT_ACTIVE");
+      if (session.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
       const now = new Date();
       const active = await client.query<{ generation: number; lease_expires_at: Date }>(
         "SELECT generation,lease_expires_at FROM browser_owner_generations WHERE session_id=$1 AND state='active' FOR UPDATE",
         [sessionId],
       );
       if (active.rows[0] && new Date(active.rows[0].lease_expires_at).getTime() > now.getTime()) {
-        throw new Error("BROWSER_V2_OWNER_ACTIVE");
+        throw new Error("SCRY_BROWSER_OWNER_ACTIVE");
       }
       await client.query(
         `UPDATE browser_owner_generations SET state='lost',terminal_at=$2,replacement_reason=$3
@@ -287,7 +265,7 @@ export class BrowserExecutionRepository {
       await client.query(
         `INSERT INTO browser_owner_generations(
            session_id,generation,worker_id,lease_token,fencing_token,state,lease_expires_at,
-           runtime_capability_version)
+           runtime_capability_id)
          VALUES($1,$2,$3,$4,$2,'active',$5,$6)`,
         [
           sessionId,
@@ -295,7 +273,7 @@ export class BrowserExecutionRepository {
           workerId,
           leaseToken,
           new Date(now.getTime() + leaseMs),
-          CAPABILITY_VERSION,
+          CAPABILITY_ID,
         ],
       );
       await client.query(
@@ -317,7 +295,7 @@ export class BrowserExecutionRepository {
        WHERE session_id=$1 AND generation=$2 AND lease_token=$3 AND state='active' AND lease_expires_at>now()`,
       [sessionId, generation, leaseToken, leaseMs],
     );
-    if (result.rowCount !== 1) throw new Error("BROWSER_V2_OWNER_FENCED");
+    if (result.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
   }
 
   async releaseOwner(sessionId: string, generation: number, leaseToken: string): Promise<void> {
@@ -326,7 +304,7 @@ export class BrowserExecutionRepository {
        WHERE session_id=$1 AND generation=$2 AND lease_token=$3 AND state='active'`,
       [sessionId, generation, leaseToken],
     );
-    if (result.rowCount !== 1) throw new Error("BROWSER_V2_OWNER_FENCED");
+    if (result.rowCount !== 1) throw new Error("SCRY_BROWSER_OWNER_FENCED");
   }
 
   async assertNoPendingEffectOutcomes(sessionId: string): Promise<void> {
@@ -338,7 +316,7 @@ export class BrowserExecutionRepository {
     );
     if (pending.rows.length > 0) {
       throw new Error(
-        `BROWSER_V2_EFFECT_OUTCOME_PENDING:${pending.rows.map(({ id }) => id).join(",")}`,
+        `SCRY_BROWSER_EFFECT_OUTCOME_PENDING:${pending.rows.map(({ id }) => id).join(",")}`,
       );
     }
   }
@@ -352,7 +330,7 @@ export class BrowserExecutionRepository {
       );
       if (unsettled.rows.length > 0) {
         throw new Error(
-          `BROWSER_V2_CAPTURES_UNSETTLED:${unsettled.rows.map(({ id }) => id).join(",")}`,
+          `SCRY_BROWSER_CAPTURES_UNSETTLED:${unsettled.rows.map(({ id }) => id).join(",")}`,
         );
       }
       const interrupted = await client.query<EffectRow>(
@@ -405,7 +383,7 @@ export class BrowserExecutionRepository {
       if (existing.rows[0]) {
         const effect = existing.rows[0];
         if (!matchesEffect(effect, input))
-          throw new Error("BROWSER_V2_EFFECT_IDEMPOTENCY_CONFLICT");
+          throw new Error("SCRY_BROWSER_EFFECT_IDEMPOTENCY_CONFLICT");
         return { replay: true, effect };
       }
       const unresolved = await client.query<{ id: string }>(
@@ -415,7 +393,7 @@ export class BrowserExecutionRepository {
         [input.sessionId, input.effectClass],
       );
       if (unresolved.rows[0])
-        throw new Error(`BROWSER_V2_EFFECT_UNRESOLVED:${unresolved.rows[0].id}`);
+        throw new Error(`SCRY_BROWSER_EFFECT_UNRESOLVED:${unresolved.rows[0].id}`);
 
       const limit =
         input.effectClass === "authentication"
@@ -426,7 +404,7 @@ export class BrowserExecutionRepository {
           ? session.authentication_commits_used
           : session.business_commits_used;
       if (used >= limit)
-        throw new Error(`BROWSER_V2_${input.effectClass.toUpperCase()}_BUDGET_EXHAUSTED`);
+        throw new Error(`SCRY_BROWSER_${input.effectClass.toUpperCase()}_BUDGET_EXHAUSTED`);
       const countColumn =
         input.effectClass === "authentication"
           ? "authentication_commits_used"
@@ -451,7 +429,7 @@ export class BrowserExecutionRepository {
           session.run_id,
           session.project_id,
           session.mission_id,
-          required(ordinal.rows[0], "BROWSER_V2_EFFECT_ORDINAL_FAILED").next,
+          required(ordinal.rows[0], "SCRY_BROWSER_EFFECT_ORDINAL_FAILED").next,
           input.idempotencyKey,
           input.effectClass,
           input.ownerGeneration,
@@ -465,7 +443,7 @@ export class BrowserExecutionRepository {
       await this.appendEffectEvent(client, effectId, input.sessionId, "admitted", {});
       return {
         replay: false,
-        effect: required(inserted.rows[0], "BROWSER_V2_EFFECT_INSERT_FAILED"),
+        effect: required(inserted.rows[0], "SCRY_BROWSER_EFFECT_INSERT_FAILED"),
       };
     });
   }
@@ -474,13 +452,13 @@ export class BrowserExecutionRepository {
     return this.transition(effectId, ownerGeneration, async (client, effect) => {
       if (effect.dispatch_state === "started") return effect;
       if (effect.dispatch_state !== "not_started" || effect.mutation_outcome !== "pending")
-        throw new Error("BROWSER_V2_DISPATCH_TRANSITION_INVALID");
+        throw new Error("SCRY_BROWSER_DISPATCH_TRANSITION_INVALID");
       const updated = await client.query<EffectRow>(
         "UPDATE browser_effects SET dispatch_state='started',dispatch_started_at=now(),updated_at=now() WHERE id=$1 RETURNING *",
         [effectId],
       );
       await this.appendEffectEvent(client, effectId, effect.session_id, "dispatch_started", {});
-      return required(updated.rows[0], "BROWSER_V2_EFFECT_UPDATE_FAILED");
+      return required(updated.rows[0], "SCRY_BROWSER_EFFECT_UPDATE_FAILED");
     });
   }
 
@@ -498,13 +476,13 @@ export class BrowserExecutionRepository {
       if (effect.mutation_outcome === outcome && effect.determination_source === source)
         return effect;
       if (effect.dispatch_state === "not_started" && outcome !== "not_applied")
-        throw new Error("BROWSER_V2_OUTCOME_UNPROVEN");
+        throw new Error("SCRY_BROWSER_OUTCOME_UNPROVEN");
       if (outcome === "not_applied" && ["started", "unknown"].includes(effect.dispatch_state))
-        throw new Error("BROWSER_V2_NOT_APPLIED_UNPROVEN");
+        throw new Error("SCRY_BROWSER_NOT_APPLIED_UNPROVEN");
       if (outcome === "applied" && effect.dispatch_state !== "acknowledged")
-        throw new Error("BROWSER_V2_APPLIED_UNPROVEN");
+        throw new Error("SCRY_BROWSER_APPLIED_UNPROVEN");
       if (effect.mutation_outcome !== "pending" && effect.mutation_outcome !== "unknown")
-        throw new Error("BROWSER_V2_EFFECT_ALREADY_TERMINAL");
+        throw new Error("SCRY_BROWSER_EFFECT_ALREADY_TERMINAL");
       const updated = await client.query<EffectRow>(
         `UPDATE browser_effects SET mutation_outcome=$2,determination_source=$3,terminal_at=now(),updated_at=now(),
            dispatch_state=CASE WHEN $2='unknown' AND dispatch_state='started' THEN 'unknown' ELSE dispatch_state END
@@ -528,7 +506,7 @@ export class BrowserExecutionRepository {
         outcome === "unknown" ? "unknown" : outcome,
         { source },
       );
-      return required(updated.rows[0], "BROWSER_V2_EFFECT_UPDATE_FAILED");
+      return required(updated.rows[0], "SCRY_BROWSER_EFFECT_UPDATE_FAILED");
     });
   }
 
@@ -536,7 +514,7 @@ export class BrowserExecutionRepository {
     effectId: string;
     ownerGeneration: number;
     captureId: string;
-    evidenceVersion: number;
+    evidenceFormat: number;
     objectKey: string;
     ciphertextDigest: string;
     authenticatedMetadata: Record<string, unknown>;
@@ -555,7 +533,7 @@ export class BrowserExecutionRepository {
         createHash("sha256").update(input.encryptedPayload).digest("hex") !==
           input.encryptedPayloadDigest
       )
-        throw new Error("BROWSER_V2_CAPTURE_ENVELOPE_INVALID");
+        throw new Error("SCRY_BROWSER_CAPTURE_ENVELOPE_INVALID");
       const ownsHttpResponse = input.responseStatus !== undefined;
       if (ownsHttpResponse) {
         if (
@@ -564,14 +542,14 @@ export class BrowserExecutionRepository {
           input.responseStatus! > 599 ||
           !["started", "unknown", "acknowledged"].includes(effect.dispatch_state)
         )
-          throw new Error("BROWSER_V2_RESPONSE_TRANSITION_INVALID");
+          throw new Error("SCRY_BROWSER_RESPONSE_TRANSITION_INVALID");
         if (
           effect.dispatch_state === "acknowledged" &&
           effect.response_status !== input.responseStatus
         )
-          throw new Error("BROWSER_V2_RESPONSE_CONFLICT");
+          throw new Error("SCRY_BROWSER_RESPONSE_CONFLICT");
       } else if (effect.dispatch_state !== "acknowledged") {
-        throw new Error("BROWSER_V2_CAPTURE_BEFORE_RESPONSE");
+        throw new Error("SCRY_BROWSER_CAPTURE_BEFORE_RESPONSE");
       }
       const existing = await client.query<{
         id: string;
@@ -586,11 +564,11 @@ export class BrowserExecutionRepository {
           existing.rows[0].ciphertext_digest !== input.ciphertextDigest ||
           existing.rows[0].encrypted_payload_digest !== input.encryptedPayloadDigest
         )
-          throw new Error("BROWSER_V2_CAPTURE_CONFLICT");
+          throw new Error("SCRY_BROWSER_CAPTURE_CONFLICT");
         return effect;
       }
       await client.query(
-        `INSERT INTO browser_captures(id,effect_id,session_id,evidence_version,object_key,ciphertext_digest,
+        `INSERT INTO browser_captures(id,effect_id,session_id,evidence_format,object_key,ciphertext_digest,
            authenticated_metadata,content_class,byte_size,state,structural_index,captured_at,expires_at,
            encrypted_payload,encrypted_payload_digest)
          VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,'durable',$10::jsonb,$11,$12,$13,$14)`,
@@ -598,7 +576,7 @@ export class BrowserExecutionRepository {
           input.captureId,
           input.effectId,
           effect.session_id,
-          input.evidenceVersion,
+          input.evidenceFormat,
           input.objectKey,
           input.ciphertextDigest,
           JSON.stringify(input.authenticatedMetadata),
@@ -663,7 +641,7 @@ export class BrowserExecutionRepository {
     );
     return result.rows.map((row) => {
       if (!row.authenticated_metadata.storedReceipt)
-        throw new Error("BROWSER_V2_CAPTURE_RECEIPT_MISSING");
+        throw new Error("SCRY_BROWSER_CAPTURE_RECEIPT_MISSING");
       return {
         captureId: row.capture_id,
         encryptedPayload: row.encrypted_payload,
@@ -679,7 +657,7 @@ export class BrowserExecutionRepository {
     return this.database.transaction(async (client) => {
       const effect = await this.lockEffect(client, input.effectId);
       await this.assertOwner(client, effect.session_id, input.ownerGeneration);
-      if (effect.capture_state !== "durable") throw new Error("BROWSER_V2_CAPTURE_NOT_DURABLE");
+      if (effect.capture_state !== "durable") throw new Error("SCRY_BROWSER_CAPTURE_NOT_DURABLE");
       const decisionSetDigest = createHash("sha256")
         .update(JSON.stringify(input.decisions))
         .digest("hex");
@@ -696,7 +674,7 @@ export class BrowserExecutionRepository {
           existing.rows[0].selection_digest !== input.selectionDigest ||
           existing.rows[0].decision_set_digest !== decisionSetDigest
         )
-          throw new Error("BROWSER_V2_PUBLICATION_CONFLICT");
+          throw new Error("SCRY_BROWSER_PUBLICATION_CONFLICT");
         return {
           publicationId: existing.rows[0].id,
           protectedReferences: await this.protectedReferences(client, effect.id),
@@ -706,11 +684,11 @@ export class BrowserExecutionRepository {
         ...Object.entries(input.publicOutputs),
         ...Object.entries(input.protectedOutputs),
       ];
-      if (outputEntries.length === 0) throw new Error("BROWSER_V2_OUTPUTS_REQUIRED");
+      if (outputEntries.length === 0) throw new Error("SCRY_BROWSER_OUTPUTS_REQUIRED");
       if (new Set(outputEntries.map(([name]) => name)).size !== outputEntries.length)
-        throw new Error("BROWSER_V2_OUTPUT_NAME_DUPLICATE");
+        throw new Error("SCRY_BROWSER_OUTPUT_NAME_DUPLICATE");
       if (input.decisions.length !== outputEntries.length)
-        throw new Error("BROWSER_V2_PROTECTION_DECISION_SET_INCOMPLETE");
+        throw new Error("SCRY_BROWSER_PROTECTION_DECISION_SET_INCOMPLETE");
       const decisionNames = new Set(input.decisions.map((decision) => decision.key));
       if (
         decisionNames.size !== input.decisions.length ||
@@ -720,7 +698,7 @@ export class BrowserExecutionRepository {
             decision.captureId !== input.captureId || decision.effectId !== input.effectId,
         )
       )
-        throw new Error("BROWSER_V2_PROTECTION_DECISION_SET_INVALID");
+        throw new Error("SCRY_BROWSER_PROTECTION_DECISION_SET_INVALID");
       const capture = await client.query<{
         id: string;
         structural_index: Array<{ path: unknown }>;
@@ -729,7 +707,7 @@ export class BrowserExecutionRepository {
          WHERE id=$1 AND effect_id=$2 AND state='durable' AND expires_at>now() FOR UPDATE`,
         [input.captureId, input.effectId],
       );
-      if (!capture.rows[0]) throw new Error("BROWSER_V2_CAPTURE_UNAVAILABLE");
+      if (!capture.rows[0]) throw new Error("SCRY_BROWSER_CAPTURE_UNAVAILABLE");
       const capturedPaths = new Set(
         capture.rows[0].structural_index.map((node) => JSON.stringify(node.path)),
       );
@@ -739,7 +717,7 @@ export class BrowserExecutionRepository {
       );
       for (const decision of input.decisions) {
         if (!capturedPaths.has(JSON.stringify(decision.path)))
-          throw new Error("BROWSER_V2_PROTECTION_DECISION_PATH_INVALID");
+          throw new Error("SCRY_BROWSER_PROTECTION_DECISION_PATH_INVALID");
         const publicValue = input.publicOutputs[decision.key];
         const protectedValue = input.protectedOutputs[decision.key];
         if (
@@ -753,7 +731,7 @@ export class BrowserExecutionRepository {
               publicValue !== undefined ||
               digestOutputValue(protectedValue) !== decision.valueDigest))
         )
-          throw new Error("BROWSER_V2_PROTECTION_DECISION_VALUE_INVALID");
+          throw new Error("SCRY_BROWSER_PROTECTION_DECISION_VALUE_INVALID");
         if (decision.label === "public") {
           if (
             disclosure.rows[0]?.disclosure_mode !== "trusted_application_output" ||
@@ -762,7 +740,7 @@ export class BrowserExecutionRepository {
             !decision.publicEvidenceDigest ||
             !decision.publicProposalDigest
           )
-            throw new Error("BROWSER_V2_PUBLIC_ADMISSION_INVALID");
+            throw new Error("SCRY_BROWSER_PUBLIC_ADMISSION_INVALID");
         }
       }
       const publicationId = randomUUID();
@@ -825,7 +803,7 @@ export class BrowserExecutionRepository {
         });
         await client.query(
           `INSERT INTO protected_values(id,project_id,mission_id,run_id,source_effect_id,source_kind,display_name,
-             external_reference,ciphertext,nonce,authentication_tag,value_digest,key_version)
+             external_reference,ciphertext,nonce,authentication_tag,value_digest,key_id)
            VALUES($1,$2,$3,$4,$5,'generated',$6,$7,$8,$9,$10,$11,$12)`,
           [
             protectedValueId,
@@ -834,12 +812,12 @@ export class BrowserExecutionRepository {
             effect.run_id,
             effect.id,
             canonicalName,
-            `protected://browser-v2/${protectedValueId}`,
+            `protected://browser/${protectedValueId}`,
             encrypted.ciphertext,
             encrypted.nonce,
             encrypted.authenticationTag,
             encrypted.valueDigest,
-            encrypted.keyVersion,
+            encrypted.keyId,
           ],
         );
         await client.query(
@@ -870,7 +848,7 @@ export class BrowserExecutionRepository {
     captureId: string;
   }): Promise<void> {
     await this.transition(input.effectId, input.ownerGeneration, async (client, effect) => {
-      if (effect.capture_state !== "durable") throw new Error("BROWSER_V2_CAPTURE_NOT_DURABLE");
+      if (effect.capture_state !== "durable") throw new Error("SCRY_BROWSER_CAPTURE_NOT_DURABLE");
       const capture = await client.query<{
         state: string;
         structural_index: Array<{ path: unknown; kind?: string; length?: number }>;
@@ -879,14 +857,14 @@ export class BrowserExecutionRepository {
         [input.captureId, input.effectId],
       );
       const row = capture.rows[0];
-      if (!row) throw new Error("BROWSER_V2_CAPTURE_UNAVAILABLE");
+      if (!row) throw new Error("SCRY_BROWSER_CAPTURE_UNAVAILABLE");
       if (row.state === "deleted") return effect;
-      if (row.state !== "durable") throw new Error("BROWSER_V2_CAPTURE_ALREADY_SETTLED");
+      if (row.state !== "durable") throw new Error("SCRY_BROWSER_CAPTURE_ALREADY_SETTLED");
       const publication = await client.query(
         "SELECT 1 FROM browser_publications WHERE capture_id=$1",
         [input.captureId],
       );
-      if (publication.rowCount) throw new Error("BROWSER_V2_CAPTURE_ALREADY_PUBLISHED");
+      if (publication.rowCount) throw new Error("SCRY_BROWSER_CAPTURE_ALREADY_PUBLISHED");
       await client.query(
         "UPDATE browser_captures SET state='deleted',deleted_at=now(),structural_index='[]'::jsonb,encrypted_payload=NULL,encrypted_payload_digest=NULL WHERE id=$1",
         [input.captureId],
@@ -909,7 +887,7 @@ export class BrowserExecutionRepository {
       "SELECT id FROM browser_captures WHERE effect_id=$1 AND session_id=$2 AND state='durable' ORDER BY captured_at LIMIT 1",
       [effectId, sessionId],
     );
-    if (result.rows[0]) throw new Error(`BROWSER_V2_CAPTURE_UNSETTLED:${result.rows[0].id}`);
+    if (result.rows[0]) throw new Error(`SCRY_BROWSER_CAPTURE_UNSETTLED:${result.rows[0].id}`);
   }
 
   async unsettledCaptureIds(sessionId: string): Promise<string[]> {
@@ -926,7 +904,7 @@ export class BrowserExecutionRepository {
       "SELECT * FROM browser_effects WHERE id=$1",
       [effectId],
     );
-    return required(result.rows[0], "BROWSER_V2_EFFECT_NOT_FOUND");
+    return required(result.rows[0], "SCRY_BROWSER_EFFECT_NOT_FOUND");
   }
 
   async recoverEffect(effectId: string): Promise<Record<string, unknown>> {
@@ -995,12 +973,12 @@ export class BrowserExecutionRepository {
 
   async pendingSessions(
     limit = 100,
-  ): Promise<Array<{ sessionId: string; runtimeCapabilityVersion: string }>> {
+  ): Promise<Array<{ sessionId: string; runtimeCapabilityId: string }>> {
     const result = await this.database.query<{
       sessionId: string;
-      runtimeCapabilityVersion: string;
+      runtimeCapabilityId: string;
     }>(
-      `SELECT session_id AS "sessionId",runtime_capability_version AS "runtimeCapabilityVersion"
+      `SELECT session_id AS "sessionId",runtime_capability_id AS "runtimeCapabilityId"
        FROM browser_execution_outbox WHERE published_at IS NULL ORDER BY created_at LIMIT $1`,
       [limit],
     );
@@ -1018,7 +996,7 @@ export class BrowserExecutionRepository {
         "SELECT 1 FROM browser_execution_outbox WHERE session_id=$1 AND published_at IS NOT NULL",
         [sessionId],
       );
-      if (existing.rowCount !== 1) throw new Error("BROWSER_V2_OUTBOX_NOT_FOUND");
+      if (existing.rowCount !== 1) throw new Error("SCRY_BROWSER_OUTBOX_NOT_FOUND");
     }
   }
 
@@ -1045,7 +1023,7 @@ export class BrowserExecutionRepository {
     await this.database.transaction(async (client) => {
       const session = await this.lockSession(client, sessionId);
       if (Number(session.active_owner_generation) !== ownerGeneration)
-        throw new Error("BROWSER_V2_OWNER_FENCED");
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
       const incomplete = await client.query<{ id: string }>(
         `SELECT e.id FROM browser_effects e WHERE e.session_id=$1 AND (
            e.mutation_outcome='pending' OR
@@ -1056,12 +1034,13 @@ export class BrowserExecutionRepository {
         [sessionId, allowUnknown],
       );
       if (incomplete.rows[0])
-        throw new Error(`BROWSER_V2_SESSION_INCOMPLETE:${incomplete.rows[0].id}`);
+        throw new Error(`SCRY_BROWSER_SESSION_INCOMPLETE:${incomplete.rows[0].id}`);
       const evidence = await client.query<{ state: string }>(
         "SELECT state FROM browser_evidence_streams WHERE session_id=$1 FOR UPDATE",
         [sessionId],
       );
-      if (evidence.rows[0]?.state !== "complete") throw new Error("BROWSER_V2_EVIDENCE_INCOMPLETE");
+      if (evidence.rows[0]?.state !== "complete")
+        throw new Error("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
       await client.query(
         `UPDATE browser_owner_generations SET state='released',terminal_at=now(),replacement_reason='session_finalized'
          WHERE session_id=$1 AND generation=$2 AND state='active'`,
@@ -1091,7 +1070,7 @@ export class BrowserExecutionRepository {
       "SELECT * FROM browser_execution_sessions WHERE id=$1 FOR UPDATE",
       [sessionId],
     );
-    return required(result.rows[0], "BROWSER_V2_SESSION_NOT_FOUND");
+    return required(result.rows[0], "SCRY_BROWSER_SESSION_NOT_FOUND");
   }
 
   private async lockOwnedSession(
@@ -1114,7 +1093,7 @@ export class BrowserExecutionRepository {
        WHERE session_id=$1 AND generation=$2 AND state='active' AND lease_expires_at>now() FOR UPDATE`,
       [sessionId, generation],
     );
-    if (!owner.rows[0]) throw new Error("BROWSER_V2_OWNER_FENCED");
+    if (!owner.rows[0]) throw new Error("SCRY_BROWSER_OWNER_FENCED");
   }
 
   private async lockEffect(client: PoolClient, effectId: string): Promise<EffectRow> {
@@ -1122,7 +1101,7 @@ export class BrowserExecutionRepository {
       "SELECT * FROM browser_effects WHERE id=$1 FOR UPDATE",
       [effectId],
     );
-    return required(result.rows[0], "BROWSER_V2_EFFECT_NOT_FOUND");
+    return required(result.rows[0], "SCRY_BROWSER_EFFECT_NOT_FOUND");
   }
 
   private async appendEffectEvent(
@@ -1141,7 +1120,7 @@ export class BrowserExecutionRepository {
       [
         effectId,
         sessionId,
-        required(sequence.rows[0], "BROWSER_V2_EVENT_SEQUENCE_FAILED").next,
+        required(sequence.rows[0], "SCRY_BROWSER_EVENT_SEQUENCE_FAILED").next,
         type,
         JSON.stringify(details),
       ],
