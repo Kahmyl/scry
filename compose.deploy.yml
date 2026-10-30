@@ -139,7 +139,7 @@ services:
     volumes:
       - artifacts:/workspace/apps/api/artifacts/browser
     shm_size: 1gb
-    stop_grace_period: 30s
+    stop_grace_period: 60s
 
   migrate:
     image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}

@@ -271,6 +271,10 @@ fi
 backup_file="$release_dir/pre-deploy.dump"
 database_touched=false
 phase=preflight
+# Preserve the worker's full internal drain budget even when stopping a
+# previous release with an older retained manifest. The deployment harness
+# checks every worker-stop path against the current manifest grace.
+readonly worker_stop_timeout_seconds=60
 
 rollback() {
   local original_status=$1
@@ -279,7 +283,7 @@ rollback() {
   set +e
   printf '[scry-deploy] Candidate failed during %s; beginning recovery.\n' "$phase" >&2
   rm -f "$current_state.pending"
-  run_candidate stop -t 30 caddy web mcp worker api migrate >/dev/null 2>&1 ||
+  run_candidate stop -t "$worker_stop_timeout_seconds" caddy web mcp worker api migrate >/dev/null 2>&1 ||
     recovery_failed=true
 
   if [[ "$database_touched" == true && -s "$backup_file" ]]; then
@@ -328,7 +332,7 @@ if [[ "$previous_available" == true ]]; then
     fail "deployment refused because $active_work browser work item(s) are nonterminal"
   fi
   run_compose "$previous_compose" "$previous_image" "$previous_release" \
-    stop -t 30 web mcp worker api
+    stop -t "$worker_stop_timeout_seconds" web mcp worker api
 
   phase=database_backup
   log "Capturing a fenced PostgreSQL snapshot."

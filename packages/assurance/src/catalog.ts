@@ -173,6 +173,13 @@ export const checks: readonly CheckDefinition[] = [
     { database: true, redis: true },
   ),
   tests(
+    "worker-shutdown",
+    "Busy native browser cancellation precedes actual Redis job and transport drain",
+    "@scry/api",
+    ["test/browser-worker-shutdown.integration.test.ts"],
+    { integrated: true, redis: true },
+  ),
+  tests(
     "worker-journey",
     "Durable commands protect dependent mutations and observations",
     "@scry/api",
@@ -248,7 +255,7 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
     "boundaries",
   ],
   database: ["component-api", "component-veil", "database-lifecycle", "topology", "boundaries"],
-  worker: ["command-queue", "worker-journey"],
+  worker: ["command-queue", "worker-shutdown", "worker-journey"],
   owner: ["owner-admission"],
   failure: ["failure-finalization"],
   recovery: ["worker-recovery"],

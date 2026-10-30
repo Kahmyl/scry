@@ -120,6 +120,8 @@ export const admittedBrowserFailureCodes: ReadonlySet<string> = new Set([
   "SCRY_BROWSER_SESSION_NOT_COMMANDABLE",
   "SCRY_BROWSER_SESSION_NOT_FOUND",
   "SCRY_BROWSER_VIDEO_RENDERING_REQUIRED",
+  "SCRY_BROWSER_WORKER_SHUTDOWN_CONFIGURATION_INVALID",
+  "SCRY_BROWSER_WORKER_SHUTDOWN_INCOMPLETE",
   "capture_capacity_exceeded",
   "capture_dom_invalid",
   "capture_envelope_conflict",

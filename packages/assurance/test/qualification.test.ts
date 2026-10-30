@@ -309,6 +309,14 @@ describe("qualification outcomes", () => {
     );
     expect(database.tests).toEqual({ minimumPassed: 17, allowSkipped: false });
     expect(profiles.worker).toContain("command-queue");
+    expect(profiles.worker).toContain("worker-shutdown");
+    expect(checks.find((entry) => entry.id === "worker-shutdown")?.tests).toEqual({
+      minimumPassed: 1,
+      allowSkipped: false,
+    });
+    expect(checks.find((entry) => entry.id === "worker-shutdown")?.prerequisites).toEqual([
+      "redis",
+    ]);
     const custody = checks.find((entry) => entry.id === "browser-custody")!;
     expect(custody.command).toContain("test/owned-browser.integration.test.ts");
     expect(custody.environment).toEqual({ SCRY_BROWSER_E2E: "1" });

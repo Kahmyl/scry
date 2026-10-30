@@ -165,6 +165,15 @@ closure remains the separate path for evidence sealing. Worker transport drainin
 and crash supervision have their own qualification requirements; process custody
 alone does not establish those guarantees.
 
+Worker shutdown stops local admission before waiting for processors. It pauses
+queue consumption, interrupts owned browser resources, drains tracked work,
+allows queue acknowledgement, then closes application resources. Each phase has
+a separate bounded cleanup budget; failed drain selects forced transport closure
+without claiming successful command or business completion. Failed cleanup exits
+the worker unsuccessfully. The container's sixty-second termination grace is the
+external backstop if the event loop itself becomes unresponsive. Shutdown does
+not merge, retry, or infer the outcome of a previously dispatched business action.
+
 Assurance owns the baseline qualification catalog, repository/deployment checks,
 public cross-boundary browser fixture, bounded runner, and safe reports.
 Component characterizations remain owner-local and are invoked through check

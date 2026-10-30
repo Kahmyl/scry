@@ -46,6 +46,13 @@ const rendered = execFileSync(
   { encoding: "utf8", env: environment },
 );
 const compose = JSON.parse(rendered);
+const grace = compose.services?.worker?.stop_grace_period ?? "";
+const duration = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+(?:\.\d+)?)s)?$/u.exec(grace);
+const graceSeconds = duration
+  ? Number(duration[1] ?? 0) * 3600 + Number(duration[2] ?? 0) * 60 + Number(duration[3] ?? 0)
+  : NaN;
+if (!Number.isFinite(graceSeconds) || graceSeconds < 60 || graceSeconds > 90)
+  throw new Error("Worker external shutdown grace must bound and exceed its phase budgets");
 for (const service of requiredServices)
   if (!compose.services?.[service])
     throw new Error(`Missing production operations service: ${service}`);
