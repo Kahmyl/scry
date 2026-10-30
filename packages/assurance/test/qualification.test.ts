@@ -352,6 +352,11 @@ describe("qualification outcomes", () => {
     expect(custody.command).toContain("test/owned-browser.integration.test.ts");
     expect(custody.environment).toEqual({ SCRY_BROWSER_E2E: "1" });
     expect(custody.tests).toEqual({ minimumPassed: 4, allowSkipped: false });
+    const cancellation = checks.find((entry) => entry.id === "command-cancellation")!;
+    expect(profiles.browser).toContain("command-cancellation");
+    expect(cancellation.command).toContain("test/command-lane.integration.test.ts");
+    expect(cancellation.environment).toEqual({ SCRY_BROWSER_E2E: "1" });
+    expect(cancellation.tests).toEqual({ minimumPassed: 4, allowSkipped: false });
     expect(checks.find((entry) => entry.id === "command-queue")?.prerequisites).toEqual([
       "database",
       "redis",
