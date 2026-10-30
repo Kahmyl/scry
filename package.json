@@ -17,11 +17,13 @@
     "docker:reset": "docker compose down --volumes --remove-orphans",
     "format": "prettier --write .",
     "format:check": "node scripts/verify-format.mjs",
-    "typecheck": "pnpm --filter @scry/contracts typecheck && pnpm --filter @scry/browser-runtime typecheck && pnpm --filter @scry/api typecheck && pnpm --filter @scry/mcp typecheck && pnpm --filter @scry/web typecheck",
-    "test": "pnpm --filter @scry/contracts test && pnpm --filter @scry/browser-runtime test && pnpm --filter @scry/api test && pnpm --filter @scry/mcp test && pnpm --filter @scry/web test",
+    "typecheck": "pnpm --filter @scry/contracts typecheck && pnpm --filter @scry/veil typecheck && pnpm --filter @scry/browser-runtime typecheck && pnpm --filter @scry/api typecheck && pnpm --filter @scry/mcp typecheck && pnpm --filter @scry/web typecheck",
+    "test": "pnpm --filter @scry/contracts test && pnpm --filter @scry/veil test && pnpm --filter @scry/browser-runtime test && pnpm --filter @scry/api test && pnpm --filter @scry/mcp test && pnpm --filter @scry/web test",
     "build": "pnpm --filter @scry/web build",
     "verify:playwright": "node scripts/verify-playwright-version.mjs",
     "verify:baseline-topology": "node scripts/verify-baseline-topology.mjs",
+    "verify:boundary-ownership": "node --test scripts/test/boundary-ownership.test.mjs && node scripts/verify-boundary-ownership.mjs",
+    "verify:veil-runtime": "node scripts/verify-veil-runtime.mjs",
     "verify:workflow-manifests": "node scripts/verify-workflow-manifests.mjs",
     "verify:deployment-preflight": "node scripts/verify-deployment-preflight.mjs",
     "verify:deployment-tiers": "node scripts/verify-deployment-tiers.mjs",
@@ -30,7 +32,7 @@
     "verify:deployment-runtime": "node scripts/verify-deployment-runtime.mjs",
     "verify:docker-publish-workflow": "node scripts/verify-docker-publish-workflow.mjs",
     "verify:server-deployment": "node scripts/verify-server-deployment.mjs",
-    "verify": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm verify:playwright && pnpm verify:baseline-topology && pnpm verify:workflow-manifests && pnpm verify:docker-publish-workflow && pnpm verify:server-deployment"
+    "verify": "pnpm format:check && pnpm typecheck && pnpm test && pnpm build && pnpm verify:playwright && pnpm verify:baseline-topology && pnpm verify:boundary-ownership && pnpm verify:workflow-manifests && pnpm verify:docker-publish-workflow && pnpm verify:server-deployment"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

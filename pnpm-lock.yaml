@@ -38,6 +38,9 @@ importers:
       '@scry/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@scry/veil':
+        specifier: workspace:*
+        version: link:../../packages/veil
       bullmq:
         specifier: ^5.58.0
         version: 5.81.3
@@ -192,6 +195,9 @@ importers:
       '@scry/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@scry/veil':
+        specifier: workspace:*
+        version: link:../veil
       playwright:
         specifier: 1.62.0
         version: 1.62.0

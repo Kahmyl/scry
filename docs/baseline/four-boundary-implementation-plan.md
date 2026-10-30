@@ -93,6 +93,11 @@ production path that can operate a browser, handle a protected value, persist
 evidence, or gate release. Unknown or conflicting ownership remains an explicit
 blocker rather than being assigned by package name.
 
+Result: complete. The
+[four-boundary baseline research](four-boundary-baseline-research.md) records
+the reachability, ownership, state, failure, verification, disposition, and
+explicit treatment of baseline gaps used by later workstreams.
+
 ## Workstream 2: contracts and composition seam
 
 ### Objective
@@ -124,6 +129,10 @@ Make ownership enforceable before moving behavior.
 The seams are usable by one production slice without exporting an engine,
 repository implementation, keyring, or mutable internal state as a shared
 contract.
+
+Result: the initial Praxis execution and Veil report-protection seams are in
+use. More specific ports are defined when a complete behavior slice requires
+them; unused speculative interfaces are not a completion requirement.
 
 ## Workstream 3: establish Veil as protection authority
 
@@ -159,6 +168,13 @@ sensitive browser output.
 Every production disclosure and cryptographic protection path is accounted for
 by Veil or explicitly blocked pending migration. Duplicate protection engines
 are removed only after consumer cutover.
+
+Result: complete. Veil owns the extracted baseline protection engine,
+sanitizers, protected capture quarantine, recording privacy rules, publication
+admission, keyring, value cipher, and evidence cipher. API repositories retain
+their transactions and call Veil for protection decisions. The dormant Veil
+implementation and displaced runtime copies have been removed. See the
+[progress and verification record](four-boundary-progress.md).
 
 ## Workstream 4: establish Chronicle as evidence authority
 

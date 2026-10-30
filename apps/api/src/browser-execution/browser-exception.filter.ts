@@ -5,6 +5,7 @@ import {
   HttpException,
   HttpStatus,
 } from "@nestjs/common";
+import { publicBrowserErrorCode } from "@scry/veil";
 
 type HttpReply = { status(code: number): HttpReply; send(body: unknown): void };
 
@@ -16,7 +17,7 @@ export class BrowserExceptionFilter implements ExceptionFilter {
       reply.status(exception.getStatus()).send(exception.getResponse());
       return;
     }
-    const code = safeBrowserCode(exception);
+    const code = publicBrowserErrorCode(exception);
     if (!code) {
       reply
         .status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -36,11 +37,6 @@ export function browserErrorStatus(code: string): number {
   if (code.includes("NOT_FOUND")) return HttpStatus.NOT_FOUND;
   if (code.includes("INVALID") || code.includes("DUPLICATE")) return HttpStatus.BAD_REQUEST;
   return HttpStatus.CONFLICT;
-}
-
-function safeBrowserCode(exception: unknown): string | undefined {
-  const raw = exception instanceof Error ? exception.message : String(exception);
-  return /^SCRY_BROWSER_[A-Z0-9_]+$/u.test(raw) ? raw : undefined;
 }
 
 function browserSafeActions(code: string): string[] {

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@scry/contracts": "workspace:*",
+    "@scry/veil": "workspace:*",
     "playwright": "1.62.0",
     "rrweb": "2.1.1"
   },

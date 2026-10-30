@@ -10,6 +10,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { finalizationBrowserErrorCode } from "@scry/veil";
 import {
   createBrowserFlowSchema,
   bindBrowserProtectedInputsSchema,
@@ -223,7 +224,7 @@ export class BrowserLifecycleController {
         await this.execution.finalizeFailedSession(session.id, input.ownerGeneration);
       else await this.execution.finalizeSession(session.id, input.ownerGeneration);
     } catch (error) {
-      const code = safeBrowserCode(error);
+      const code = finalizationBrowserErrorCode(error);
       throw new ConflictException({ code, status: 409, safeActions: [] });
     }
     return this.lifecycle.markRunTerminal(
@@ -270,11 +271,4 @@ async function waitForCommand(
     await new Promise<void>((resolve) => setTimeout(resolve, 75));
   } while (Date.now() < deadline);
   return undefined;
-}
-
-function safeBrowserCode(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  return /^SCRY_BROWSER_[A-Z0-9_]+(?::[A-Za-z0-9,_-]+)?$/u.test(raw)
-    ? raw
-    : "SCRY_BROWSER_FINALIZATION_FAILED";
 }

@@ -10,15 +10,18 @@ import type {
 } from "@scry/contracts";
 import {
   AuthenticatedEvidenceStore,
-  ProtectedCaptureVault,
-  ProtectionAuthority,
   SanitizedBrowserRecorder,
   renderSanitizedReplay,
 } from "@scry/browser-runtime";
+import {
+  ProtectedCaptureVault,
+  ProtectionAuthority,
+  BrowserProtectedKeyring,
+  safeDomSemanticHint,
+} from "@scry/veil";
 
 import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
 import { BrowserExecutionRepository } from "./repositories/browser-execution.repository.js";
-import { BrowserProtectedKeyring } from "./browser-protected-keyring.js";
 
 interface ActiveSession {
   browser: Browser;
@@ -880,14 +883,6 @@ function sanitizeDomSemanticHints(
           stack.push(child as Record<string, unknown>);
     }
   }
-}
-
-function safeDomSemanticHint(input: string, authority: ProtectionAuthority): string {
-  const normalized = input.replace(/\s+/gu, " ").trim();
-  if (!normalized) return "";
-  if (normalized.length > 200 || /[\u0000-\u001f\u007f]/u.test(normalized))
-    return "[PROTECTED:SEMANTIC_HINT]";
-  return authority.sanitize(normalized, "database_safe_field");
 }
 
 async function bounded<T>(operation: Promise<T>, timeoutMs: number, code: string): Promise<T> {

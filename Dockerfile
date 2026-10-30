@@ -10,6 +10,7 @@ COPY apps/mcp/package.json apps/mcp/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/browser-runtime/package.json packages/browser-runtime/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/veil/package.json packages/veil/package.json
 RUN --mount=type=cache,id=scry-pnpm,target=/pnpm/store pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 FROM deps AS prod-deps
@@ -34,6 +35,7 @@ COPY apps/api apps/api
 COPY apps/mcp apps/mcp
 COPY packages/browser-runtime packages/browser-runtime
 COPY packages/contracts packages/contracts
+COPY packages/veil packages/veil
 COPY scripts/verify-deployment-preflight.mjs ./scripts/
 COPY --from=build /workspace/apps/web/dist ./apps/web/dist
 COPY apps/web/scripts ./apps/web/scripts

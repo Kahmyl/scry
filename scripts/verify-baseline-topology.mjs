@@ -103,7 +103,7 @@ if (schemaCheck.includes("createHash") || schemaCheck.includes("pg_indexes")) {
   fail("database readiness still uses an exact schema fingerprint");
 }
 
-const protectedKeyring = read("apps/api/src/browser-execution/browser-protected-keyring.ts");
+const protectedKeyring = read("packages/veil/src/protected-keyring.ts");
 const workerEngine = read("apps/api/src/browser-execution/browser-worker-engine.ts");
 const evidenceStore = read("packages/browser-runtime/src/authenticated-evidence-store.ts");
 if (
@@ -134,6 +134,7 @@ const activeSourcePaths = [
   "apps/web/src/app/Dashboard.tsx",
   "apps/web/src/app/ProjectSettings.tsx",
   ...sourceFiles("packages/browser-runtime/src"),
+  ...sourceFiles("packages/veil/src"),
   "packages/contracts/src/index.ts",
   "packages/contracts/src/browser-execution.ts",
   "packages/contracts/src/browser-command.ts",

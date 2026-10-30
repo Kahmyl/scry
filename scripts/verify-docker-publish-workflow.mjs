@@ -99,14 +99,15 @@ for (const required of [
 
 for (const required of [
   "pnpm run verify:baseline-topology",
-  "test/auth.service.test.ts test/browser-protected-keyring.test.ts",
+  "test/auth.service.test.ts",
+  "pnpm --filter @scry/veil test",
   "pnpm --filter @scry/browser-runtime test",
 ]) {
   if (!fastQualification.includes(required))
     fail(`fast qualification baseline safety contract missing: ${required}`);
 }
 
-const runtimePackages = ["browser-runtime", "contracts"];
+const runtimePackages = ["browser-runtime", "contracts", "veil"];
 
 const workspaceManifests = [
   "apps/api/package.json",

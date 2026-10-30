@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { BrowserLifecycleRepository } from "../src/browser-execution/repositories/browser-lifecycle.repository.js";
+import { BrowserRuntimeVeilReportProtection } from "../src/browser-execution/browser-boundary-composition.js";
 import { Database } from "../src/infrastructure/database.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
@@ -16,7 +17,7 @@ run("browser baseline database scope integrity", () => {
     process.env.DATABASE_URL = databaseUrl;
     process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64 = randomBytes(32).toString("base64");
     database = new Database();
-    lifecycle = new BrowserLifecycleRepository(database);
+    lifecycle = new BrowserLifecycleRepository(database, new BrowserRuntimeVeilReportProtection());
     workspaceId = randomUUID();
     const userId = randomUUID();
     await database.transaction(async (client) => {

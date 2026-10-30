@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { BrowserProtectionDecision } from "@scry/contracts";
+import { assertPublicationDecisionSet, assertPublicationDisclosure } from "@scry/veil";
 import type { PoolClient, QueryResultRow } from "pg";
 
 import { Database } from "../../infrastructure/database.js";
@@ -680,25 +681,7 @@ export class BrowserExecutionRepository {
           protectedReferences: await this.protectedReferences(client, effect.id),
         };
       }
-      const outputEntries = [
-        ...Object.entries(input.publicOutputs),
-        ...Object.entries(input.protectedOutputs),
-      ];
-      if (outputEntries.length === 0) throw new Error("SCRY_BROWSER_OUTPUTS_REQUIRED");
-      if (new Set(outputEntries.map(([name]) => name)).size !== outputEntries.length)
-        throw new Error("SCRY_BROWSER_OUTPUT_NAME_DUPLICATE");
-      if (input.decisions.length !== outputEntries.length)
-        throw new Error("SCRY_BROWSER_PROTECTION_DECISION_SET_INCOMPLETE");
-      const decisionNames = new Set(input.decisions.map((decision) => decision.key));
-      if (
-        decisionNames.size !== input.decisions.length ||
-        outputEntries.some(([name]) => !decisionNames.has(name)) ||
-        input.decisions.some(
-          (decision) =>
-            decision.captureId !== input.captureId || decision.effectId !== input.effectId,
-        )
-      )
-        throw new Error("SCRY_BROWSER_PROTECTION_DECISION_SET_INVALID");
+      const outputCount = assertPublicationDecisionSet(input);
       const capture = await client.query<{
         id: string;
         structural_index: Array<{ path: unknown }>;
@@ -708,41 +691,15 @@ export class BrowserExecutionRepository {
         [input.captureId, input.effectId],
       );
       if (!capture.rows[0]) throw new Error("SCRY_BROWSER_CAPTURE_UNAVAILABLE");
-      const capturedPaths = new Set(
-        capture.rows[0].structural_index.map((node) => JSON.stringify(node.path)),
-      );
       const disclosure = await client.query<{ disclosure_mode: string }>(
         "SELECT disclosure_mode FROM browser_execution_sessions WHERE id=$1",
         [effect.session_id],
       );
-      for (const decision of input.decisions) {
-        if (!capturedPaths.has(JSON.stringify(decision.path)))
-          throw new Error("SCRY_BROWSER_PROTECTION_DECISION_PATH_INVALID");
-        const publicValue = input.publicOutputs[decision.key];
-        const protectedValue = input.protectedOutputs[decision.key];
-        if (
-          (decision.label === "public" &&
-            (publicValue === undefined ||
-              protectedValue !== undefined ||
-              !decision.allowedSinks.includes("database_safe_field") ||
-              digestOutputValue(publicValue) !== decision.valueDigest)) ||
-          (decision.label === "protected" &&
-            (protectedValue === undefined ||
-              publicValue !== undefined ||
-              digestOutputValue(protectedValue) !== decision.valueDigest))
-        )
-          throw new Error("SCRY_BROWSER_PROTECTION_DECISION_VALUE_INVALID");
-        if (decision.label === "public") {
-          if (
-            disclosure.rows[0]?.disclosure_mode !== "trusted_application_output" ||
-            decision.publicAdmissionMode !== "trusted_application_output" ||
-            !decision.publicSemantic ||
-            !decision.publicEvidenceDigest ||
-            !decision.publicProposalDigest
-          )
-            throw new Error("SCRY_BROWSER_PUBLIC_ADMISSION_INVALID");
-        }
-      }
+      assertPublicationDisclosure(
+        input,
+        capture.rows[0].structural_index,
+        disclosure.rows[0]?.disclosure_mode,
+      );
       const publicationId = randomUUID();
       await client.query(
         `INSERT INTO browser_publications(
@@ -755,7 +712,7 @@ export class BrowserExecutionRepository {
           effect.session_id,
           input.selectionDigest,
           decisionSetDigest,
-          outputEntries.length,
+          outputCount,
         ],
       );
       for (const decision of input.decisions) {
@@ -1139,12 +1096,6 @@ export class BrowserExecutionRepository {
       result.rows.map((row) => [row.canonical_name, row.protected_value_id]),
     );
   }
-}
-
-function digestOutputValue(value: string | number | boolean | null): string {
-  return createHash("sha256")
-    .update(value === null ? "null" : String(value))
-    .digest("hex");
 }
 
 function matchesEffect(effect: EffectRow, input: AdmitBrowserEffectInput): boolean {

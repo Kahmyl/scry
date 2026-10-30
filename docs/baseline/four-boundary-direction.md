@@ -191,13 +191,14 @@ The ownership model for a browser operation is:
 The repository currently contains a working baseline runtime and source paths
 that already use some of these boundary names. Neither condition proves that
 the intended ownership model has been achieved. The first implementation task
-is therefore a fresh, reachability-based baseline investigation.
+was therefore a fresh, reachability-based baseline investigation.
 
-That investigation must classify current behavior by responsibility, state,
-failure semantics, caller, and production reachability. Each implementation
-unit will then be retained, moved, rewritten, or deleted on evidence. Historical
-plans and package names may help locate code, but they are not architectural
-authority.
+The completed
+[baseline research record](four-boundary-baseline-research.md) classifies
+current behavior by responsibility, state, failure semantics, caller, and
+production reachability. Each implementation unit will be retained, moved,
+rewritten, or deleted on that evidence. Historical plans and package names may
+help locate code, but they are not architectural authority.
 
 The execution approach is defined in the
 [four-boundary implementation plan](four-boundary-implementation-plan.md).

@@ -8,11 +8,10 @@ import { chromium } from "playwright";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   AuthenticatedEvidenceStore,
-  ProtectedCaptureVault,
-  ProtectionAuthority,
   SanitizedBrowserRecorder,
   renderSanitizedReplay,
 } from "@scry/browser-runtime";
+import { ProtectedCaptureVault, ProtectionAuthority } from "@scry/veil";
 
 import {
   BrowserExecutionQueueService,

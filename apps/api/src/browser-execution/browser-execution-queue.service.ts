@@ -1,5 +1,6 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { Queue } from "bullmq";
+import { storedBrowserFailureCode } from "@scry/veil";
 
 import { RedisConnection } from "../infrastructure/redis.js";
 import { BrowserExecutionRepository } from "./repositories/browser-execution.repository.js";
@@ -77,7 +78,10 @@ export class BrowserExecutionQueueService implements OnModuleInit, OnModuleDestr
         await this.repository.markSessionPublished(session.sessionId);
         dispatched += 1;
       } catch (error) {
-        await this.repository.markSessionPublishFailed(session.sessionId, safeCode(error));
+        await this.repository.markSessionPublishFailed(
+          session.sessionId,
+          storedBrowserFailureCode(error),
+        );
       }
     }
     return dispatched;
@@ -88,9 +92,4 @@ export class BrowserExecutionQueueService implements OnModuleInit, OnModuleDestr
     await this.queue.close();
     await this.commandQueue.close();
   }
-}
-
-function safeCode(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  return raw.replace(/[^A-Za-z0-9:_-]/gu, "_").slice(0, 500);
 }

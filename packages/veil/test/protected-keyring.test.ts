@@ -1,8 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BrowserProtectedKeyring } from "../src/browser-execution/browser-protected-keyring.js";
-import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
+import { BrowserProtectedKeyring, BrowserProtectedValueCipher } from "../src/index.js";
 
 const saved = {
   single: process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64,
@@ -17,6 +16,19 @@ afterEach(() => {
 });
 
 describe.sequential("browser protected keyring", () => {
+  it("authenticates the stored value and its context after relocation", () => {
+    delete process.env.SCRY_BROWSER_PROTECTED_KEYS_JSON;
+    process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64 = randomBytes(32).toString("base64");
+    const cipher = new BrowserProtectedValueCipher();
+    const context = { projectId: "fixture-project", canonicalName: "credential" };
+    const record = cipher.encrypt("protected-value", context);
+    expect(cipher.decrypt(record, context)).toBe("protected-value");
+    expect(() => cipher.decrypt(record, { ...context, projectId: "other-project" })).toThrow();
+    expect(() =>
+      cipher.decrypt({ ...record, ciphertext: Buffer.alloc(record.ciphertext.length) }, context),
+    ).toThrow();
+  });
+
   it("decrypts old records after active-key rotation and refuses a retired key", () => {
     const versions = {
       "qualification-v1": randomBytes(32).toString("base64"),

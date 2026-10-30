@@ -43,13 +43,16 @@ jobs:
       - name: Run baseline architecture, security, and deployment gates
         run: |
           pnpm run verify:baseline-topology
+          pnpm run verify:boundary-ownership
+          pnpm run verify:veil-runtime
           pnpm run verify:docker-publish-workflow
           pnpm run verify:server-deployment
           pnpm run verify:deployment-runtime
           pnpm run verify:deployment-tiers
           pnpm run verify:production-operations
           pnpm run verify:deployment-preflight
-          pnpm --filter @scry/api exec vitest run test/auth.service.test.ts test/browser-protected-keyring.test.ts
+          pnpm --filter @scry/api exec vitest run test/auth.service.test.ts
+          pnpm --filter @scry/veil test
           pnpm --filter @scry/browser-runtime test
 
       - name: Run baseline tests and build
