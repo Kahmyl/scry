@@ -100,4 +100,37 @@ describe("capture detach and recording quiescence", () => {
     expect(recording.admit).toHaveBeenCalledWith(expect.objectContaining({ kind: "video" }));
     expect(recording.recordError).not.toHaveBeenCalled();
   });
+  it("retains failed-popup diagnostics without admitting a nonexistent video", async () => {
+    const { recording, recorder } = fixture();
+    let accept!: (page: unknown) => void, release!: (session: unknown) => void;
+    const cdp = new Promise((resolve) => {
+      release = resolve;
+    });
+    const context = {
+      on: vi.fn((_event: string, handler: (page: unknown) => void) => {
+        accept = handler;
+      }),
+      off: vi.fn(),
+      pages: () => [],
+      newCDPSession: vi.fn(() => cdp),
+    };
+    const page = {
+      context: () => context,
+      isClosed: () => true,
+      viewportSize: () => ({ width: 800, height: 600 }),
+      screencast: {
+        start: vi.fn(async () => {
+          throw new Error("Target page, context or browser has been closed");
+        }),
+        stop: vi.fn(async () => undefined),
+      },
+    };
+    await recorder.start(context as unknown as BrowserContext);
+    accept(page);
+    const closing = recorder.close();
+    release({ send: vi.fn(async () => ({ result: {} })), detach: vi.fn(async () => undefined) });
+    await closing;
+    expect(recording.recordError).toHaveBeenCalledWith("recorder_attach_failed", expect.any(Error));
+    expect(recording.admit).not.toHaveBeenCalled();
+  });
 });

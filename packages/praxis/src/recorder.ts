@@ -6,7 +6,7 @@ import type { ChronicleNativeRecordingPort } from "@scry/contracts";
 /** Records the live browser's native pixels. Screenshots are action checkpoints,
  * never the source of the video. Chronicle owns files and admitted receipts. */
 export class SanitizedBrowserRecorder {
-  readonly #pages = new Map<Page, { filename: string; started: number }>();
+  readonly #pages = new Map<Page, { filename: string; started: number; capturing: boolean }>();
   readonly #contexts = new Set<BrowserContext>();
   readonly #attachments = new Set<Promise<void>>();
   readonly #privateWorlds = new Map<Page, CDPSession>();
@@ -45,7 +45,7 @@ export class SanitizedBrowserRecorder {
     this.assertOpen();
     if (this.#pages.has(page)) return;
     const filename = `${randomUUID()}.webm`;
-    const entry = { filename, started: Date.now() };
+    const entry = { filename, started: Date.now(), capturing: false };
     this.#pages.set(page, entry);
     let session: CDPSession | undefined;
     try {
@@ -71,6 +71,7 @@ export class SanitizedBrowserRecorder {
       path: path.join(this.options.native.directory, filename),
       size: page.viewportSize() ?? { width: 1280, height: 720 },
     });
+    entry.capturing = true;
     if (this.#closed && !page.isClosed()) await page.screencast.stop();
   }
 
@@ -137,12 +138,15 @@ export class SanitizedBrowserRecorder {
   private async finishClose(): Promise<void> {
     this.assertOpen();
     this.stopAcceptingPages();
-    await Promise.all([...this.#attachments]);
+    // Failed popup starts already record their finite capture diagnostics. Join
+    // them without trying to publish a file that the browser never produced.
+    await Promise.allSettled([...this.#attachments]);
     this.assertOpen();
     await this.checkpoint("final");
     this.#closed = true;
     await this.#queue;
     for (const [page, entry] of this.#pages) {
+      if (!entry.capturing) continue;
       if (!page.isClosed()) await page.screencast.stop();
       await this.options.native.admit({
         filename: entry.filename,
