@@ -8,3 +8,4 @@ export * from "./admitted-evidence-repository.js";
 export * from "./admitted-evidence-reader.js";
 export * from "./evidence-artifact-failure.js";
 export * from "./native-timeline.js";
+export * from "./native-media.js";

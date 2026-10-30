@@ -11,14 +11,12 @@ import {
   AuthenticatedEvidenceStore,
   ChronicleRecording,
   ChronicleEvidenceSession,
-  renderSanitizedReplay,
 } from "@scry/chronicle";
 import {
   ProtectedCaptureVault,
   ProtectionAuthority,
   EvidenceCipher,
-  createRecordingProtection,
-  recordingProtectionOptions,
+  nativeProtectionScript,
 } from "@scry/veil";
 
 import {
@@ -115,7 +113,7 @@ run("browser execution baseline queued long journey", () => {
       const job = await queue.queue.getJob(sessionId);
       expect(job).not.toBeNull();
       const result = await job!.waitUntilFinished(queueEvents, 60_000);
-      expect(result).toMatchObject({ completed: true, networkRequestsDuringReplay: 0 });
+      expect(result).toMatchObject({ completed: true, nativeVideoRecorded: true });
       expect(await queue.dispatchPending()).toBe(0);
     } finally {
       await worker.close();
@@ -151,7 +149,7 @@ run("browser execution baseline queued long journey", () => {
 
   async function executeJourney(): Promise<{
     completed: true;
-    networkRequestsDuringReplay: number;
+    nativeVideoRecorded: boolean;
   }> {
     const owner = await repository.claimOwner(sessionId, "long-journey-worker", 60_000);
     const admission = new PraxisOwnerLease(
@@ -163,8 +161,6 @@ run("browser execution baseline queued long journey", () => {
 
     const evidenceDirectory = path.join(root, "evidence");
     const captureDirectory = path.join(root, "captures");
-    const outputDirectory = path.join(root, "rendered");
-    const ledgerPath = path.join(root, "action-ledger.jsonl");
     const authority = new ProtectionAuthority({
       scope: {
         projectId: "fixture-project",
@@ -210,13 +206,14 @@ run("browser execution baseline queued long journey", () => {
       new BrowserReplayRenderer(),
     );
     const recorder = new SanitizedBrowserRecorder({
-      recording: evidenceSession.createRecording(createRecordingProtection({ authority })),
-      privacyOptions: recordingProtectionOptions,
+      native: await evidenceSession.createNativeRecording(),
+      protectionScript: nativeProtectionScript([loginPassword, generatedSecret]),
     });
     const actions: Array<Record<string, unknown>> = [];
     const recordAction = async (tool: string, element: string, perform: () => Promise<void>) => {
       const started = Date.now();
       await perform();
+      await recorder.checkpoint("commit");
       actions.push({
         at: new Date(started).toISOString(),
         tool,
@@ -449,34 +446,17 @@ run("browser execution baseline queued long journey", () => {
     }
     await evidenceSession.stopCapture({ browserStopped: true, recordingDrained: true });
 
-    await writeFile(ledgerPath, `${actions.map((action) => JSON.stringify(action)).join("\n")}\n`, {
-      mode: 0o600,
-    });
     const verified = await store.verify();
     expect(JSON.stringify(verified.events)).not.toContain(loginPassword);
     expect(JSON.stringify(verified.events)).not.toContain(generatedSecret);
-    const publication = await renderSanitizedReplay({
-      admission,
-      renderer: new BrowserReplayRenderer(),
-      events: verified.events,
-      ledgerPath,
-      outputDirectory,
-      ...(process.env.SCRY_BROWSER_CHROME_PATH
-        ? { executablePath: process.env.SCRY_BROWSER_CHROME_PATH }
-        : {}),
-      framesPerSecond: 2,
-    });
     const completion = await evidenceSession.seal({
       renderVideo: false,
       actionLedger: async () => [],
     });
-    await repository.completeEvidence(admission.identity, {
-      ...completion,
-      videoObjectKey: `local://${publication.videoPath}`,
-    });
+    await repository.completeEvidence(admission.identity, completion);
     admission.revoke();
     await repository.finalizeSession(sessionId, owner.generation);
-    return { completed: true, networkRequestsDuringReplay: publication.networkRequests };
+    return { completed: true, nativeVideoRecorded: Boolean(completion.videoObjectKey) };
   }
 
   async function handleFixture(request: IncomingMessage, response: ServerResponse): Promise<void> {

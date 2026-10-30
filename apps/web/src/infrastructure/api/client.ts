@@ -31,6 +31,16 @@ export function remove<T>(path: string) {
   return api<T>(path, { method: "DELETE" });
 }
 
+export async function apiBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: await authenticatedHeaders(),
+    ...(signal ? { signal } : {}),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`Recording could not be loaded (${response.status})`);
+  return response.blob();
+}
+
 async function authenticatedHeaders(initial?: HeadersInit) {
   const headers = new Headers(initial);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");

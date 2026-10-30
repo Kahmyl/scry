@@ -8,9 +8,10 @@ baseline path.
 
 ## Architecture overview
 
-The [native evidence direction](native-evidence-direction.md) records the selected
-replacement for new visual evidence. It is not yet activated; recording and
-rendering descriptions below continue to describe the compatibility producer.
+The [native evidence baseline](native-evidence-direction.md) defines the candidate
+producer for new visual evidence. New sessions capture native pixels with
+best-effort local black masks. Historical DOM recording/rendering descriptions
+below apply only to retained historical evidence, not new browser sessions.
 
 ```text
 User browser
@@ -413,13 +414,12 @@ cannot return a completion summary if abandonment was accepted while it waited.
 Independent encoding and short immutable evidence admission remain separate
 boundaries; draining this queue does not claim that encoding has finished.
 
-The recorder masks inputs and sanitizes captured values before appending events.
-Events are ordered, compressed, encrypted with authenticated metadata, and
-linked by digest. Durable writes use private directories and atomic file
-replacement.
+The native recorder captures live pixels and action screenshots. Targeted masks
+are best effort. Media files remain in private generation-scoped directories;
+their exact receipts enter the ordered, compressed, encrypted metadata chain.
 
 Closing a session flushes the recorder, closes Chromium, verifies the complete
-chunk chain, renders a sanitized replay when enabled, records the evidence
+chunk chain and admitted native files, records the evidence
 summary, and removes the checkpoint. Final database closure then requires the
 complete evidence row and the correct browser-owner generation.
 

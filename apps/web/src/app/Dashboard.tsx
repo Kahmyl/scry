@@ -14,6 +14,7 @@ import {
   Topbar,
 } from "./components/index.js";
 import { ProjectSettings } from "./ProjectSettings.js";
+import { RunEvidence } from "./RunEvidence.js";
 
 type Mission = {
   id: string;
@@ -389,7 +390,22 @@ function MissionDetailView({ missionId, onBack }: { missionId: string; onBack: (
           ))}
         </div>
       </section>
+      {mission.runs.map((run) => (
+        <MissionRunEvidence key={run.id} run={run} />
+      ))}
     </>
+  );
+}
+
+function MissionRunEvidence({ run }: { run: MissionDetail["runs"][number] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="panel" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>
+        Run {run.id.slice(0, 8)} · {human(run.state)} · evidence
+      </summary>
+      {open && <RunEvidence runId={run.id} />}
+    </details>
   );
 }
 
@@ -447,6 +463,7 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
           />
         )}
       </section>
+      <RunEvidence runId={runId} />
       <section className="panel">
         <ListHeading title="Evidence" />
         {run.evidence.map((item) => (

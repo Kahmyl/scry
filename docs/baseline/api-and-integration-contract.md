@@ -37,6 +37,15 @@ The route names below are the canonical baseline resource map. Transitional
 transport aliases found in implementation source are not part of this product
 contract.
 
+## Native evidence reads
+
+`GET /api/runs/{runId}/media` lists safe descriptors for sealed native recordings
+and screenshots, plus the best-effort redaction warning.
+`GET /api/runs/{runId}/media/{index}` returns a verified private PNG or WebM.
+Both use the existing bearer authentication and workspace-scoped Run access.
+Descriptors contain no filesystem paths. Media responses are private/no-store.
+Historical evidence is not rewritten or presented as newly captured media.
+
 ## Health
 
 ### Read service health

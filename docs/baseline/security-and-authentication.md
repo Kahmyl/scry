@@ -1,11 +1,33 @@
 # Scry security and authentication
 
 The [native evidence direction](native-evidence-direction.md) records the selected
-narrow protection policy and the proposed private frame-processing boundary.
-Temporary customer raw-frame retention is not activated or approved by this
-document; its explicit retention decision and privacy qualification remain gates.
+narrow protection policy and the private frame-processing direction. The owner
+approved Veil-private, encrypted, quota-limited raw-frame retention for at most
+fifteen minutes. Customer retention remains inactive pending implementation and
+privacy qualification; this data-handling approval does not activate a producer,
+merge, or deployment. Evidence reaches Chronicle and the dashboard under the
+best-effort visual masking contract below, not a guarantee of complete redaction.
 
 Status: canonical baseline security model
+
+## Visual evidence masking
+
+Browser testing and faithful evidence are the delivery priority. Automatic visual
+redaction targets recognizable access secrets and financial details with local
+solid-black masks. Detection can miss sensitive content. Uncertain regions remain
+visible rather than being reconstructed, blanked or speculatively over-masked.
+A missed mask alone does not fail a test, invalidate a complete recording, or
+prevent its normal authorized display. A masking processing failure must be
+disclosed, not represented as successful protection.
+
+Viewers must warn that automatic redaction is best effort and sensitive information
+may remain. Evidence must be reviewed before sharing. This accepted visual risk
+does not relax saved-credential encryption, scoped access, private key custody or
+known-secret exclusions from ordinary logs and credential API responses. Private
+quarantine files are not exposed directly as a fallback. See the
+[native evidence direction](native-evidence-direction.md#current-masking-contract)
+for the current delivery contract; its visual policy supersedes stronger legacy
+replay-masking assumptions in the retained implementation described below.
 
 This document defines authentication, authorization, protected-information
 handling, and security boundaries for the product described in the

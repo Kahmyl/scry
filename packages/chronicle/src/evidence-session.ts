@@ -9,12 +9,14 @@ import type {
   EvidenceCompletion,
   EvidenceClosureIssue,
   RecordingProtectionPort,
+  NativeMediaReceipt,
 } from "@scry/contracts";
 import { AuthenticatedEvidenceStore } from "./authenticated-evidence-store.js";
 import { ChronicleRecording } from "./recording.js";
 import { renderSanitizedReplay } from "./offline-replay.js";
 import { durableWrite } from "./durable-file.js";
 import { AdmittedEvidenceReader } from "./admitted-evidence-reader.js";
+import { createNativeRecording, nativeEvidenceWarning, readNativeMedia } from "./native-media.js";
 import {
   EvidenceArtifactFailure,
   isArtifactFilesystemFailure,
@@ -30,6 +32,18 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
       | AdmittedEvidenceReader<Record<string, unknown>>,
     private readonly renderer: ChronicleReplayRendererPort,
   ) {}
+
+  async createNativeRecording() {
+    // Only typed, value-free media receipts enter this writer. Pixel masking is
+    // best effort at capture, never the old DOM disclosure/quarantine protocol.
+    const recording = this.createRecording({ snapshot: () => (value) => value });
+    return createNativeRecording({
+      root: this.scope.root,
+      generation: this.scope.admission.ownerGeneration,
+      recording,
+      assertActive: () => this.scope.admission.assertActive(),
+    });
+  }
 
   createRecording(protection: RecordingProtectionPort): ChronicleRecording {
     if (this.scope.purpose === "closure" || !("append" in this.store))
@@ -134,7 +148,16 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
     const manifestPath = path.join(publicationRoot, "evidence.json");
     let videoObjectKey: string | undefined;
     let issue: EvidenceClosureIssue | undefined;
-    if (options.renderVideo && verified.chunks > 0) {
+    const media = verified.events
+      .filter((event) => event.type === "native_media")
+      .map((event) => event.media as unknown as NativeMediaReceipt);
+    // Native files are published only when their exact receipts were admitted.
+    // Recovered owners read those receipts; orphan files are never promoted.
+    for (const item of media) await readNativeMedia(this.scope.root, item);
+    const nativeVideo = media.find((item) => item.kind === "video");
+    if (nativeVideo)
+      videoObjectKey = `local://${path.join(this.scope.root, nativeVideo.objectKey)}`;
+    if (!media.length && options.renderVideo && verified.chunks > 0) {
       const ledgerPath = path.join(publicationRoot, "actions.jsonl");
       const ledger = await options.actionLedger();
       this.scope.admission.assertActive();
@@ -174,6 +197,9 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
         totalBytes: snapshot.totalBytes,
         interruptions: snapshot.interruptions,
         chunks: snapshot.chunks,
+        ...(media.length
+          ? { media, capture: "native", playbackRate: 1, warning: nativeEvidenceWarning }
+          : {}),
         ...(issue ? { issue } : {}),
       }),
     );

@@ -100,6 +100,7 @@ function fixture() {
     completeEvidence: vi.fn(async () => undefined),
   };
   const session = {
+    createNativeRecording: vi.fn(async () => ({})),
     createRecording: vi.fn(),
     startCapture: vi.fn(async () => undefined),
     stopCapture: vi.fn(async () => undefined),
@@ -120,8 +121,7 @@ function fixture() {
       vault: {},
       restoreCaptures: vi.fn(async () => undefined),
       evidenceProtection: {},
-      recordingProtection: {},
-      privacyOptions: {},
+      nativeProtectionScript: "",
       semanticHint: (value: string) => value,
     })),
   };

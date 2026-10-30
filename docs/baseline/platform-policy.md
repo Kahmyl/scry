@@ -196,13 +196,14 @@ creates no reusable output handles.
 
 ## Evidence policy
 
-The browser session is continuously recorded. Inputs are masked, sensitive
-values are sanitized, high-risk media surfaces are blocked from replay, and
-recorded events are written to an encrypted, ordered hash chain.
+The browser session is natively recorded. Confidently identified access secrets
+and financial details receive targeted black masks; ordinary content and media
+remain visible. Masking is best effort, not a full-protection gate. Media receipts
+are written to the existing encrypted, ordered evidence chain.
 
 A successful Run requires a complete, gap-free evidence stream with at least
-one durable chunk and a chain head. The sanitized replay is derived from the
-verified evidence stream, not from an independent browser recollection.
+one durable chunk and a chain head. Native media is bound to admitted receipts,
+not reconstructed from DOM events or an independent browser recollection.
 
 Evidence proves what Scry recorded. It does not independently prove that the
 agent tested every possible scenario or that every statement in a report is

@@ -337,29 +337,46 @@ async function exercise() {
     }
   };
   visit("/evidence");
-  const publicationPath = artifactFiles.find(
-    (filename) => path.basename(filename) === "publication.json",
-  );
-  assert.ok(publicationPath, "SANITIZED_REPLAY_PUBLICATION_MISSING");
-  const publication = JSON.parse(readFileSync(publicationPath, "utf8"));
-  assert.equal(publication.complete, true);
-  assert.equal(publication.networkRequests, 0);
+  const media = await api(`/runs/${run.runId}/media`);
+  assert.match(media.warning, /best effort/u);
+  assert.equal(media.playbackRate, 1);
+  const recording = media.items.find((item) => item.kind === "video");
+  assert.ok(recording, "NATIVE_VIDEO_MISSING");
   assert.ok(
-    publication.frameCount > 0 &&
-      publication.visibleFrameCount >= Math.ceil(publication.frameCount / 2),
-    "REPLAY_FRAMES_INCOMPLETE",
+    media.items.some((item) => item.kind === "screenshot"),
+    "ACTION_SCREENSHOT_MISSING",
   );
-  assert.ok(
-    readFileSync(path.join(path.dirname(publicationPath), "sanitized-replay.webm")).length > 0,
-    "REPLAY_VIDEO_MISSING",
+  const video = await fetch(`http://api:4000/api/runs/${run.runId}/media/${recording.index}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  assert.ok(video.ok, "AUTHORIZED_NATIVE_VIDEO_UNAVAILABLE");
+  assert.equal(
+    Buffer.from(await video.arrayBuffer())
+      .subarray(0, 4)
+      .toString("hex"),
+    "1a45dfa3",
   );
+  const mediaDenied = await fetch(
+    `http://api:4000/api/runs/${run.runId}/media/${recording.index}`,
+    { headers: { authorization: `Bearer ${otherToken}` } },
+  );
+  assert.ok(!mediaDenied.ok, "CROSS_WORKSPACE_MEDIA_VISIBLE");
   for (const filename of artifactFiles.filter((value) => /\.(?:json|jsonl|html)$/u.test(value)))
     assert.ok(
       !readFileSync(filename, "utf8").includes(credential),
       "ARTIFACT_DISCLOSED_PROTECTED_VALUE",
     );
   assert.match(await (await fetch("http://web:3000/")).text(), /<div id="root">/u);
-  await unavailableDashboardJourney({ api, call, rpc, command, project, environment, credential });
+  await unavailableDashboardJourney({
+    api,
+    call,
+    rpc,
+    command,
+    project,
+    environment,
+    credential,
+    availableRunId: run.runId,
+  });
   console.log("DEPLOYED_BASELINE_BROWSER_PASS");
 }
 
@@ -371,6 +388,7 @@ async function unavailableDashboardJourney({
   project,
   environment,
   credential,
+  availableRunId,
 }) {
   const mission = await call("start_mission", {
     projectId: project.id,
@@ -479,6 +497,52 @@ async function unavailableDashboardJourney({
       await dialog.getByLabel("Password", { exact: true }).fill("fixture-ui-signin-only");
       await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
       await page.getByRole("heading", { name: "Dashboard", exact: true }).waitFor();
+      await page.goto(`http://web:3000/dashboard/runs/${availableRunId}`);
+      await page.waitForFunction(
+        () => document.querySelector(".native-evidence video")?.readyState >= 2,
+      );
+      const contrast = await page
+        .getByRole("button", { name: "Refresh evidence" })
+        .evaluate((button) => ({
+          foreground: getComputedStyle(button).color,
+          background: getComputedStyle(button).backgroundColor,
+        }));
+      assert.notEqual(contrast.foreground, contrast.background, "EVIDENCE_CONTROLS_INVISIBLE");
+      assert.equal(contrast.background, "rgb(25, 29, 35)", "EVIDENCE_CONTROLS_NOT_THEMED");
+      await page.getByRole("button", { name: /Screenshot.*navigate/u }).click();
+      await page.waitForFunction(
+        () => document.querySelector(".native-evidence img")?.naturalWidth > 0,
+      );
+      const pixels = await page.locator(".native-evidence img").evaluate((image) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0);
+        return {
+          password: [...context.getImageData(20, 90, 1, 1).data],
+          ordinary: [...context.getImageData(400, 300, 1, 1).data],
+        };
+      });
+      assert.deepEqual(pixels.password, [0, 0, 0, 255], "PRODUCTION_NATIVE_PASSWORD_NOT_BLACK");
+      assert.deepEqual(pixels.ordinary, [255, 255, 255, 255], "PRODUCTION_NATIVE_UI_OVERBLOCKED");
+      const nativeScreenshots = "/evidence/qualification-ui";
+      mkdirSync(nativeScreenshots, { recursive: true, mode: 0o700 });
+      await page.screenshot({
+        path: path.join(nativeScreenshots, "native-desktop.png"),
+        fullPage: true,
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+        false,
+        "NATIVE_EVIDENCE_MOBILE_OVERFLOW",
+      );
+      await page.screenshot({
+        path: path.join(nativeScreenshots, "native-mobile.png"),
+        fullPage: true,
+      });
+      await page.setViewportSize({ width: 1280, height: 900 });
       await page.goto(`http://web:3000/dashboard/runs/${run.runId}`);
       await page.getByText("Recording unavailable", { exact: true }).waitFor();
       await page

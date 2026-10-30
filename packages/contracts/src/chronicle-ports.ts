@@ -106,6 +106,32 @@ export interface ChronicleRecordingPort {
   abort(): Promise<void>;
 }
 
+/** Native, already best-effort-masked pixels. No DOM or application values. */
+export interface NativeMediaReceipt {
+  masking?: "best_effort" | "unavailable";
+  kind: "video" | "screenshot";
+  objectKey: string;
+  digest: string;
+  bytes: number;
+  timestamp: number;
+  label: string;
+  durationMs?: number;
+}
+export interface ChronicleNativeRecordingPort {
+  maskingUnavailable(): void;
+  readonly directory: string;
+  admit(input: {
+    filename: string;
+    kind: NativeMediaReceipt["kind"];
+    timestamp: number;
+    label: string;
+    durationMs?: number;
+  }): Promise<void>;
+  flush(): Promise<ChronicleRecordingDiagnostics>;
+  abort(): Promise<void>;
+  recordError(code: RecordingFailureCode, error: unknown): void;
+}
+
 export interface ChronicleReplayPlan {
   events: Array<Record<string, unknown>>;
   stagingDirectory: string;
@@ -169,6 +195,7 @@ export interface ChronicleSealOptions {
 }
 
 export interface ChronicleEvidenceSessionPort {
+  createNativeRecording(): Promise<ChronicleNativeRecordingPort>;
   createRecording(protection: RecordingProtectionPort): ChronicleRecordingPort;
   startCapture(): Promise<void>;
   stopCapture(receipt: { browserStopped: true; recordingDrained: true }): Promise<void>;

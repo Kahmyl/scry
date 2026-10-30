@@ -7,7 +7,7 @@ separate from Scry's broader product direction.
 
 ## Product definition
 
-Scry is a protected browser workspace for AI agents.
+Scry's baseline is an agent-operated browser-testing workspace.
 
 It allows an AI agent to carry out an assigned browser-based test, preserve a
 record of what happened, protect sensitive information, and return a report
@@ -16,6 +16,15 @@ that a person can review.
 The agent decides what to test, which actions to take, and whether the assigned
 goal was completed. Scry gives the agent a controlled place to do that work and
 keeps the resulting evidence.
+
+The delivery priority is testing with faithful evidence, not exhaustive data
+protection. New visual evidence must preserve the application's actual appearance
+and use localized, best-effort black masks for recognizable secrets and financial
+details. Some sensitive content may remain visible; missed masks must not be
+confused with failed tests or incomplete recordings. The
+[native evidence direction](../baseline/native-evidence-direction.md) defines this
+replacement recording behavior; it is not a claim that the retained recorder has
+already been replaced. Scry's broader testing direction is unchanged.
 
 The product promise is:
 
@@ -192,10 +201,13 @@ For each completed assignment, Scry provides:
 The agent decides what actions to take and what the results mean. Scry records
 what was done and preserves the evidence needed for review.
 
-### Sensitive information remains protected
+### Protection supports testing
 
-Credentials and protected outputs should not appear in ordinary observations,
-recordings, or reports.
+Saved credentials remain securely handled, and known secrets are kept out of
+ordinary logs and credential responses. Visual evidence uses best-effort targeted
+masking, not a promise of complete secrecy. Preserving the real application UI is
+more important than hiding uncertain regions. Users must be told that sensitive
+information may remain and should review evidence before sharing it.
 
 ### Uncertainty must remain visible
 

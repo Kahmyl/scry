@@ -3,12 +3,18 @@ import { SanitizedBrowserRecorder } from "../src/recorder.js";
 import type { BrowserContext } from "playwright";
 const fixture = () => {
   const recording = {
+    directory: "/unused-fixture",
+    maskingUnavailable: vi.fn(),
+    admit: vi.fn(async () => undefined),
     receive: vi.fn(),
     recordError: vi.fn(),
     flush: vi.fn(async () => ({ receivedEvents: 0, errors: [], diagnostics: [] })),
     abort: vi.fn(async (): Promise<void> => undefined),
   };
-  return { recording, recorder: new SanitizedBrowserRecorder({ recording, privacyOptions: {} }) };
+  return {
+    recording,
+    recorder: new SanitizedBrowserRecorder({ native: recording, protectionScript: "" }),
+  };
 };
 describe("capture detach and recording quiescence", () => {
   it("does not attach a context when source loading completes after abandonment", async () => {
