@@ -1,5 +1,10 @@
 import { Injectable } from "@nestjs/common";
-import type { BrowserCommand, PraxisCommandOptions, PraxisRuntimeOptions } from "@scry/contracts";
+import type {
+  BrowserCommand,
+  PraxisCommandOptions,
+  PraxisRuntimeOptions,
+  PraxisSessionScope,
+} from "@scry/contracts";
 import { PraxisExecutionPort } from "@scry/contracts";
 import { VeilReportProtection, VeilBrowserProtection } from "@scry/veil";
 import { BrowserReplayRenderer, PraxisBrowserEngine } from "@scry/praxis";
@@ -46,3 +51,9 @@ export function composePraxisExecutionPort(
 
 @Injectable()
 export class BrowserRuntimeVeilReportProtection extends VeilReportProtection {}
+
+export function readBrowserEvidenceProtection(
+  scope: Pick<PraxisSessionScope, "runId" | "sessionId" | "protectionKeyId">,
+) {
+  return new VeilBrowserProtection().readEvidence(scope);
+}

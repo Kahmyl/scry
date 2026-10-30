@@ -1,16 +1,17 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, symlink } from "node:fs/promises";
+import { mkdtemp, writeFile, symlink, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ChronicleEvidenceService } from "../src/evidence-session.js";
-import { readNativeMedia, readNativePublication } from "../src/native-media.js";
+import { readNativeMedia, readNativeEvidence } from "../src/native-media.js";
 import { memoryAdmission } from "./fixtures/evidence-admission.js";
 import { EvidenceCipher } from "@scry/veil";
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "chronicle-native-"));
   const { admission, revoke, stream } = memoryAdmission();
+  const protection = new EvidenceCipher(randomBytes(32));
   const evidence = await new ChronicleEvidenceService({
     render: async () => {
       throw new Error("DOM renderer must not run for native media");
@@ -19,7 +20,7 @@ async function fixture() {
     root,
     runId: stream.runId,
     sessionId: stream.sessionId,
-    protection: new EvidenceCipher(randomBytes(32)),
+    protection,
     admission,
     maxSessionBytes: 1024 * 1024,
   });
@@ -28,7 +29,13 @@ async function fixture() {
   const filename = `${randomUUID()}.png`;
   await writeFile(path.join(native.directory, filename), randomBytes(64));
   const input = { filename, kind: "screenshot" as const, timestamp: Date.now(), label: "initial" };
-  return { root, admission, evidence, native, input, revoke };
+  const readMedia = () =>
+    readNativeEvidence({
+      root,
+      protection,
+      snapshot: { ...structuredClone(stream), sealedAt: new Date().toISOString() },
+    });
+  return { root, admission, evidence, native, input, revoke, readMedia };
 }
 describe("native media custody", () => {
   it("publishes only admitted native receipts and deduplicates identical screenshots", async () => {
@@ -44,7 +51,7 @@ describe("native media custody", () => {
     await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
     const result = await f.evidence.seal({ renderVideo: true, actionLedger: async () => [] });
     expect(result.state).toBe("complete");
-    const media = await readNativePublication(result.replayObjectKey!, f.root);
+    const media = await f.readMedia();
     expect(media).toHaveLength(1);
     expect(await readNativeMedia(f.root, media[0]!)).toEqual(bytes);
   });
@@ -58,9 +65,52 @@ describe("native media custody", () => {
     await f.native.admit(f.input);
     await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
     const result = await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
-    const media = await readNativePublication(result.replayObjectKey!, f.root);
+    const media = await f.readMedia();
     await writeFile(path.join(f.native.directory, f.input.filename), randomBytes(64));
-    await expect(readNativeMedia(f.root, media[0]!)).rejects.toThrow("integrity_mismatch");
+    await expect(readNativeMedia(f.root, media[0]!)).rejects.toMatchObject({
+      issue: "integrity_mismatch",
+    });
+  });
+  it.each(["missing", "changed"] as const)(
+    "preserves unavailable failure closure for %s admitted native media",
+    async (kind) => {
+      const f = await fixture();
+      await f.native.admit(f.input);
+      await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
+      const file = path.join(f.native.directory, f.input.filename);
+      if (kind === "missing") await unlink(file);
+      else await writeFile(file, randomBytes(64));
+      const result = await f.evidence.seal({
+        renderVideo: false,
+        failureClosure: true,
+        actionLedger: async () => [],
+      });
+      expect(result).toMatchObject({
+        state: "incomplete",
+        issue: kind === "missing" ? "object_unavailable" : "integrity_mismatch",
+        chunkCount: 1,
+      });
+    },
+  );
+  it("ignores a substituted filesystem manifest and reads only database-admitted media receipts", async () => {
+    const f = await fixture();
+    await f.native.admit(f.input);
+    await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
+    const result = await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
+    const original = await f.readMedia();
+    await writeFile(
+      result.replayObjectKey!.slice(8),
+      JSON.stringify({
+        media: [
+          {
+            ...original[0],
+            objectKey: `native/1/${randomUUID()}/${randomUUID()}.png`,
+            digest: "0".repeat(64),
+          },
+        ],
+      }),
+    );
+    expect(await f.readMedia()).toEqual(original);
   });
   it("rejects traversal and symlink media candidates", async () => {
     const f = await fixture();

@@ -54,4 +54,50 @@ describe("capture detach and recording quiescence", () => {
     expect(recording.flush).toHaveBeenCalledTimes(1);
     expect(recording.abort).not.toHaveBeenCalled();
   });
+  it("drains an already accepted popup attachment during normal close", async () => {
+    const { recording, recorder } = fixture();
+    let accept!: (page: unknown) => void, release!: (session: unknown) => void;
+    const session = {
+      send: vi.fn(async (method: string) =>
+        method === "Page.getFrameTree"
+          ? { frameTree: { frame: { id: "frame" } } }
+          : method === "Page.createIsolatedWorld"
+            ? { executionContextId: 1 }
+            : { result: {} },
+      ),
+      detach: vi.fn(async () => undefined),
+    };
+    const cdp = new Promise((resolve) => {
+      release = resolve;
+    });
+    const context = {
+      on: vi.fn((_event: string, handler: (page: unknown) => void) => {
+        accept = handler;
+      }),
+      off: vi.fn(),
+      pages: () => [],
+      newCDPSession: vi.fn(() => cdp),
+    };
+    const page = {
+      context: () => context,
+      isClosed: () => false,
+      viewportSize: () => ({ width: 800, height: 600 }),
+      screenshot: vi.fn(async () => undefined),
+      screencast: { start: vi.fn(async () => undefined), stop: vi.fn(async () => undefined) },
+    };
+    await recorder.start(context as unknown as BrowserContext);
+    accept(page);
+    let closed = false;
+    const closing = recorder.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release(session);
+    await closing;
+    expect(page.screencast.start).toHaveBeenCalledOnce();
+    expect(page.screencast.stop).toHaveBeenCalledOnce();
+    expect(recording.admit).toHaveBeenCalledWith(expect.objectContaining({ kind: "video" }));
+    expect(recording.recordError).not.toHaveBeenCalled();
+  });
 });

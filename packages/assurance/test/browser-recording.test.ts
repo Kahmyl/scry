@@ -5,7 +5,7 @@ import path from "node:path";
 import { chromium } from "playwright";
 import { describe, expect, it } from "vitest";
 import { SanitizedBrowserRecorder, BrowserReplayRenderer } from "@scry/praxis";
-import { ChronicleEvidenceService, readNativePublication, readNativeMedia } from "@scry/chronicle";
+import { ChronicleEvidenceService, readNativeEvidence, readNativeMedia } from "@scry/chronicle";
 import { EvidenceCipher, nativeProtectionScript } from "@scry/veil";
 import { recordingAdmission } from "./fixtures/evidence-admission.js";
 
@@ -20,11 +20,12 @@ describe("native browser evidence", () => {
         "native-fixture",
         "00000000-0000-4000-8000-000000000202",
       );
+      const protection = new EvidenceCipher(randomBytes(32));
       const evidence = await new ChronicleEvidenceService(new BrowserReplayRenderer()).openSession({
         root,
         runId: "00000000-0000-4000-8000-000000000202",
         sessionId: "native-fixture",
-        protection: new EvidenceCipher(randomBytes(32)),
+        protection,
         admission,
         maxSessionBytes: 1024 * 1024,
       });
@@ -72,7 +73,11 @@ describe("native browser evidence", () => {
         await evidence.stopCapture({ browserStopped: true, recordingDrained: true });
         const completion = await evidence.seal({ renderVideo: true, actionLedger: async () => [] });
         expect(completion.state).toBe("complete");
-        const manifest = await readNativePublication(completion.replayObjectKey!, root);
+        const manifest = await readNativeEvidence({
+          root,
+          protection,
+          snapshot: { ...(await admission.readStream()), sealedAt: new Date().toISOString() },
+        });
         expect(manifest.filter((item) => item.kind === "video")).toHaveLength(1);
         expect(manifest.filter((item) => item.kind === "screenshot").length).toBeLessThanOrEqual(3);
         const video = await readNativeMedia(

@@ -4,7 +4,7 @@ function installNativeMasks(initial) {
   let overlay;
   let scheduled = false;
   const sensitive =
-    /password|passwd|passphrase|authtoken|accesstoken|sessioncookie|apikey|clientsecret|recoverycode|backupcode|onetimecode|cardnumber|ccnumber|cccsc|creditcard|accountnumber|routingnumber|iban|cvv|cvc/iu;
+    /password|passwd|passphrase|authtoken|accesstoken|sessioncookie|apikey|clientsecret|recoverycode|backupcode|onetimecode|cardnumber|ccnumber|cccsc|ccexp|creditcard|accountnumber|routingnumber|iban|cvv|cvc/iu;
   const refresh = (secret) => {
     if (secret) secrets.add(secret);
     if (scheduled) return;
@@ -16,9 +16,7 @@ function installNativeMasks(initial) {
       const root = overlay && roots.get(overlay);
       if (!root) return;
       const boxes = [];
-      for (const element of Array.from(
-        document.querySelectorAll("input,textarea,[data-scry-secret],[data-scry-financial]"),
-      ).slice(0, 500)) {
+      for (const element of Array.from(document.querySelectorAll("input,textarea")).slice(0, 500)) {
         const semantic =
           `${element.type ?? ""} ${element.name ?? ""} ${element.id} ${element.getAttribute("autocomplete") ?? ""} ${element.getAttribute("aria-label") ?? ""}`.replace(
             /[^a-z]/giu,
@@ -60,7 +58,8 @@ function installNativeMasks(initial) {
           /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/giu,
           /\b(?:sk_live_|sk_test_|ghp_)[A-Za-z0-9_-]{8,}/gu,
           /\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]){11,30}\b/gu,
-          /(?:card|account|routing|recovery|backup)[\s_-]*(?:number|code)?\s*[:=]\s*([A-Z0-9 -]{4,40})/giu,
+          /\b(?:card|account|routing)(?:[\s_-]*number)?\s*[:=]\s*((?:\d[ -]?){6,34})/giu,
+          /\b(?:recovery|backup)[\s_-]*code\s*[:=]\s*([A-Z0-9][A-Z0-9-]{3,31})\b/giu,
         ];
         for (const pattern of patterns)
           for (const match of text.matchAll(pattern)) {

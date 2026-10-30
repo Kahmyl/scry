@@ -2,9 +2,19 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
-import type { ChronicleNativeRecordingPort, NativeMediaReceipt } from "@scry/contracts";
+import type {
+  ChronicleNativeRecordingPort,
+  NativeMediaReceipt,
+  EvidenceStreamSnapshot,
+  EvidenceReadProtectionPort,
+} from "@scry/contracts";
 import type { ChronicleRecording } from "./recording.js";
 import { ensurePrivateDirectory } from "./durable-file.js";
+import { AdmittedEvidenceReader } from "./admitted-evidence-reader.js";
+import {
+  EvidenceArtifactFailure,
+  isArtifactFilesystemFailure,
+} from "./evidence-artifact-failure.js";
 
 export const nativeEvidenceWarning =
   "Automatic redaction is best effort. Sensitive information may remain. Review before sharing.";
@@ -112,15 +122,31 @@ async function privateFile(filename: string, root: string, limit: number): Promi
   }
 }
 
-export async function readNativePublication(
-  objectKey: string,
-  artifactRoot: string,
-): Promise<NativeMediaReceipt[]> {
-  if (!objectKey.startsWith("local://")) throw new Error("native_media_manifest_invalid");
-  const bytes = await privateFile(objectKey.slice(8), artifactRoot, 4 * 1024 * 1024);
-  const manifest = JSON.parse(bytes.toString("utf8")) as { media?: NativeMediaReceipt[] };
-  if (!Array.isArray(manifest.media)) return []; // Historical DOM evidence remains unchanged.
-  for (const item of manifest.media) {
+export async function readNativeEvidence(options: {
+  root: string;
+  snapshot: EvidenceStreamSnapshot;
+  protection: EvidenceReadProtectionPort;
+}): Promise<NativeMediaReceipt[]> {
+  const { snapshot } = options;
+  if (!snapshot.sealedAt) throw new Error("native_media_not_sealed");
+  if (snapshot.custodyMode !== "admitted") return [];
+  // A sealed database snapshot is immutable. No live-owner lease or file-system
+  // manifest can grant read authority or introduce another receipt.
+  const verified = await new AdmittedEvidenceReader<Record<string, unknown>>({
+    directory: path.join(options.root, "evidence"),
+    runId: snapshot.runId,
+    scopeId: snapshot.sessionId,
+    protection: options.protection,
+    admission: { readStream: async () => snapshot, assertActive() {} },
+  }).verify();
+  return nativeMediaReceipts(verified.events);
+}
+
+export function nativeMediaReceipts(events: Array<Record<string, unknown>>): NativeMediaReceipt[] {
+  const media = events
+    .filter((event) => event.type === "native_media")
+    .map((event) => event.media as unknown as NativeMediaReceipt);
+  for (const item of media) {
     if (
       !/^(?:video|screenshot)$/u.test(item.kind) ||
       !/^native\/\d+\/[a-f0-9-]{36}\/[a-f0-9-]{36}\.(?:webm|png)$/u.test(item.objectKey) ||
@@ -130,19 +156,30 @@ export async function readNativePublication(
     )
       throw new Error("native_media_manifest_invalid");
   }
-  return manifest.media;
+  return media;
 }
 
 export async function readNativeMedia(
   sessionRoot: string,
   receipt: NativeMediaReceipt,
 ): Promise<Buffer> {
-  const bytes = await privateFile(
-    path.join(sessionRoot, receipt.objectKey),
-    sessionRoot,
-    128 * 1024 * 1024,
-  );
+  let bytes: Buffer;
+  try {
+    bytes = await privateFile(
+      path.join(sessionRoot, receipt.objectKey),
+      sessionRoot,
+      128 * 1024 * 1024,
+    );
+  } catch (error) {
+    if (isArtifactFilesystemFailure(error)) throw new EvidenceArtifactFailure("object_unavailable");
+    if (
+      error instanceof Error &&
+      ["native_media_path_invalid", "native_media_size_invalid"].includes(error.message)
+    )
+      throw new EvidenceArtifactFailure("content_unverifiable");
+    throw error;
+  }
   if (bytes.length !== receipt.bytes || hash(bytes) !== receipt.digest)
-    throw new Error("native_media_integrity_mismatch");
+    throw new EvidenceArtifactFailure("integrity_mismatch");
   return bytes;
 }

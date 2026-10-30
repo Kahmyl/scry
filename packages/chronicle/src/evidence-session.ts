@@ -16,7 +16,12 @@ import { ChronicleRecording } from "./recording.js";
 import { renderSanitizedReplay } from "./offline-replay.js";
 import { durableWrite } from "./durable-file.js";
 import { AdmittedEvidenceReader } from "./admitted-evidence-reader.js";
-import { createNativeRecording, nativeEvidenceWarning, readNativeMedia } from "./native-media.js";
+import {
+  createNativeRecording,
+  nativeEvidenceWarning,
+  readNativeMedia,
+  nativeMediaReceipts,
+} from "./native-media.js";
 import {
   EvidenceArtifactFailure,
   isArtifactFilesystemFailure,
@@ -148,9 +153,7 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
     const manifestPath = path.join(publicationRoot, "evidence.json");
     let videoObjectKey: string | undefined;
     let issue: EvidenceClosureIssue | undefined;
-    const media = verified.events
-      .filter((event) => event.type === "native_media")
-      .map((event) => event.media as unknown as NativeMediaReceipt);
+    const media = nativeMediaReceipts(verified.events);
     // Native files are published only when their exact receipts were admitted.
     // Recovered owners read those receipts; orphan files are never promoted.
     for (const item of media) await readNativeMedia(this.scope.root, item);

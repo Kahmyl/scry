@@ -2,18 +2,25 @@ import { ChronicleRepository } from "@scry/chronicle";
 import { Inject, Injectable } from "@nestjs/common";
 import { NotFoundException } from "@nestjs/common";
 import path from "node:path";
-import { nativeEvidenceWarning, readNativePublication, readNativeMedia } from "@scry/chronicle";
+import {
+  nativeEvidenceWarning,
+  readNativeEvidence,
+  readNativeMedia,
+  AdmittedEvidenceRepository,
+} from "@scry/chronicle";
 
 import { Database } from "../../infrastructure/database.js";
+import { readBrowserEvidenceProtection } from "../browser-boundary-composition.js";
 
 @Injectable()
 export class BrowserDashboardRepository {
   constructor(@Inject(Database) private readonly database: Database) {}
 
   private async nativePublication(workspaceId: string | undefined, runId: string) {
-    const result = await this.database.query<{ objectKey: string; sessionId: string }>(
-      `SELECT es.replay_artifact_key AS "objectKey",es.session_id AS "sessionId"
+    const result = await this.database.query<{ sessionId: string; protectionKeyId: string }>(
+      `SELECT es.session_id AS "sessionId",s.protection_key_id AS "protectionKeyId"
        FROM browser_evidence_streams es JOIN runs r ON r.id=es.run_id
+       JOIN browser_execution_sessions s ON s.id=es.session_id
        JOIN projects p ON p.id=r.project_id WHERE r.id=$1
        AND ($2::uuid IS NULL OR p.workspace_id=$2) AND es.sealed_at IS NOT NULL
        AND es.replay_artifact_key IS NOT NULL ORDER BY es.created_at DESC LIMIT 1`,
@@ -23,7 +30,19 @@ export class BrowserDashboardRepository {
     if (!publication) return undefined;
     const root = path.resolve(process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser");
     const sessionRoot = path.join(root, publication.sessionId);
-    const media = await readNativePublication(publication.objectKey, sessionRoot);
+    const snapshot = await new AdmittedEvidenceRepository(this.database).snapshot(
+      publication.sessionId,
+      false,
+    );
+    const media = await readNativeEvidence({
+      root: sessionRoot,
+      snapshot,
+      protection: readBrowserEvidenceProtection({
+        runId,
+        sessionId: publication.sessionId,
+        protectionKeyId: publication.protectionKeyId,
+      }),
+    });
     return { media, sessionRoot };
   }
 

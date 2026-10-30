@@ -11,10 +11,12 @@ export class SanitizedBrowserRecorder {
   readonly #attachments = new Set<Promise<void>>();
   readonly #privateWorlds = new Map<Page, CDPSession>();
   #closed = false;
+  #acceptingPages = true;
   #queue: Promise<void> = Promise.resolve();
   #aborting?: Promise<void>;
   #closing?: Promise<void>;
   readonly #onPage = (page: Page) => {
+    if (!this.#acceptingPages) return;
     void this.attach(page).catch((error) =>
       this.options.native.recordError("recorder_attach_failed", error),
     );
@@ -134,9 +136,11 @@ export class SanitizedBrowserRecorder {
   }
   private async finishClose(): Promise<void> {
     this.assertOpen();
-    await this.checkpoint("final");
     this.stopAcceptingPages();
     await Promise.all([...this.#attachments]);
+    this.assertOpen();
+    await this.checkpoint("final");
+    this.#closed = true;
     await this.#queue;
     for (const [page, entry] of this.#pages) {
       if (!page.isClosed()) await page.screencast.stop();
@@ -155,11 +159,12 @@ export class SanitizedBrowserRecorder {
   abort(): Promise<void> {
     if (!this.#aborting) {
       this.stopAcceptingPages();
+      this.#closed = true;
       this.#aborting = Promise.all([
         this.options.native.abort(),
         this.#queue,
         this.#closing?.catch(() => undefined),
-        ...this.#attachments,
+        Promise.allSettled([...this.#attachments]),
         ...[...this.#privateWorlds.values()].map((session) =>
           session.detach().catch(() => undefined),
         ),
@@ -174,7 +179,7 @@ export class SanitizedBrowserRecorder {
     if (this.#closed) throw new Error("SCRY_BROWSER_RECORDER_CLOSED");
   }
   private stopAcceptingPages() {
-    this.#closed = true;
+    this.#acceptingPages = false;
     for (const context of this.#contexts) context.off("page", this.#onPage);
   }
   private async privateEvaluation(page: Page, expression: string): Promise<void> {
