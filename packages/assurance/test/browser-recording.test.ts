@@ -19,8 +19,7 @@ import {
 } from "@scry/veil";
 
 const browserTest = process.env.SCRY_BROWSER_E2E === "1" ? it : it.skip;
-
-const admission = { run: <T>(work: () => Promise<T>) => work() };
+import { recordingAdmission } from "./fixtures/evidence-admission.js";
 
 describe("browser recording and offline replay", () => {
   browserTest(
@@ -28,6 +27,10 @@ describe("browser recording and offline replay", () => {
     async () => {
       const root = await mkdtemp(path.join(os.tmpdir(), "browser-recording-barrier-"));
       const secret = "violet7";
+      const admission = recordingAdmission(
+        "browser-recording-barrier",
+        "00000000-0000-4000-8000-000000000202",
+      );
       const store = await new AuthenticatedEvidenceStore<Record<string, unknown>>({
         admission,
         directory: path.join(root, "evidence"),
@@ -87,6 +90,10 @@ describe("browser recording and offline replay", () => {
       const outputDirectory = path.join(root, "rendered");
       const ledgerPath = path.join(root, "action-ledger.jsonl");
       const secret = "fixtureSecret7Qp9Zx4Lm2N8Rc6V";
+      const admission = recordingAdmission(
+        "browser-recording-fixture",
+        "00000000-0000-4000-8000-000000000201",
+      );
       const store = await new AuthenticatedEvidenceStore<Record<string, unknown>>({
         admission,
         directory: evidenceDirectory,
@@ -123,7 +130,9 @@ describe("browser recording and offline replay", () => {
       expect(serialized).not.toContain(secret);
       expect(serialized).toContain("Credential created");
       expect(serialized).toContain("PROTECTED:REFERENCE:GENERATED_SECRET");
-      const files = await readdir(evidenceDirectory);
+      const files = (await readdir(evidenceDirectory, { recursive: true })).filter((file) =>
+        file.endsWith(".json"),
+      );
       const persisted = (
         await Promise.all(files.map((file) => readFile(path.join(evidenceDirectory, file), "utf8")))
       ).join("\n");

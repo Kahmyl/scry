@@ -53,7 +53,7 @@ export class BrowserDashboardRepository {
     const result = await this.database.query(
       `SELECT mr.id,mr.mission_id AS "missionId",m.project_id AS "projectId",
               m.title AS "missionTitle",m.original_instruction AS "originalInstruction",
-              mr.state,mr.summary,mr.safe_report AS "safeReport",
+              mr.state,mr.summary,mr.safe_report AS "safeReport",mr.evidence_coverage AS "evidenceCoverage",
               mr.evidence_digest AS "evidenceDigest",mr.created_at AS "createdAt",
               mr.finalized_at AS "finalizedAt"
        FROM mission_reports mr JOIN missions m ON m.id=mr.mission_id

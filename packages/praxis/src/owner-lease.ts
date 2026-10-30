@@ -1,5 +1,6 @@
 import type {
   EvidenceWriteAdmission,
+  EvidenceChunkReceipt,
   PraxisEffectsPort,
   PraxisOwnerIdentity,
   PraxisOwnerLeaseSample,
@@ -19,7 +20,16 @@ export class PraxisOwnerLease implements EvidenceWriteAdmission {
   #renewing: Promise<void> | undefined;
   constructor(
     readonly identity: PraxisOwnerIdentity,
-    private readonly effects: Pick<PraxisEffectsPort, "withOwner" | "heartbeatOwner">,
+    private readonly effects: Pick<
+      PraxisEffectsPort,
+      | "assertOwner"
+      | "heartbeatOwner"
+      | "openEvidenceStream"
+      | "readEvidenceStream"
+      | "admitEvidenceChunk"
+      | "startEvidenceCapture"
+      | "stopEvidenceCapture"
+    >,
     initial: PraxisOwnerLeaseSample,
     private readonly now: () => number = () => performance.now(),
   ) {
@@ -28,6 +38,9 @@ export class PraxisOwnerLease implements EvidenceWriteAdmission {
 
   get signal(): AbortSignal {
     return this.#controller.signal;
+  }
+  get ownerGeneration(): number {
+    return this.identity.generation;
   }
   authoritySample(): { revision: number; remainingMs: number } {
     this.assertActive();
@@ -110,19 +123,38 @@ export class PraxisOwnerLease implements EvidenceWriteAdmission {
     clearTimeout(this.#heartbeat);
     this.#controller.abort(new Error("SCRY_BROWSER_OWNER_FENCED"));
   }
-  async run<T>(work: () => Promise<T>): Promise<T> {
+  private async admitted<T>(operation: () => Promise<T>): Promise<T> {
     this.assertActive();
     try {
-      const result = await this.effects.withOwner(this.identity, async () => {
-        this.assertActive();
-        return work();
-      });
+      const result = await operation();
       this.assertActive();
       return result;
     } catch (error) {
       this.revoke();
       throw error;
     }
+  }
+  checkpoint(): Promise<void> {
+    return this.admitted(() => this.effects.assertOwner(this.identity));
+  }
+  openStream(runId: string) {
+    return this.admitted(() => this.effects.openEvidenceStream(this.identity, runId));
+  }
+  readStream() {
+    return this.admitted(() => this.effects.readEvidenceStream(this.identity));
+  }
+  admitChunk(chunk: EvidenceChunkReceipt): Promise<void> {
+    return this.admitted(() => this.effects.admitEvidenceChunk(this.identity, chunk));
+  }
+  startCapture(): Promise<void> {
+    return this.admitted(() => this.effects.startEvidenceCapture(this.identity));
+  }
+  stopCapture(receipt: {
+    browserStopped: true;
+    recordingDrained: true;
+    recordingComplete: boolean;
+  }): Promise<void> {
+    return this.admitted(() => this.effects.stopEvidenceCapture(this.identity, receipt));
   }
   async heartbeat(leaseMs: number): Promise<void> {
     this.assertActive();

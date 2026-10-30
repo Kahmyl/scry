@@ -18,12 +18,12 @@ const sample = (leaseRemainingMs = 60000, age = 0) => ({
 });
 function fixture(initial = sample()) {
   const effects = {
-    withOwner: vi.fn(async <T>(_owner: unknown, work: () => Promise<T>) => work()),
+    assertOwner: vi.fn(async (): Promise<void> => undefined),
     heartbeatOwner: vi.fn(async () => sample()),
   };
   const lease = new PraxisOwnerLease(
     { sessionId: "session", generation: 1, leaseToken: "token" },
-    effects as unknown as Pick<PraxisEffectsPort, "withOwner" | "heartbeatOwner">,
+    effects as unknown as PraxisEffectsPort,
     initial,
   );
   return { effects, lease };
@@ -33,7 +33,7 @@ describe("monotonic browser owner watchdog", () => {
     const { lease, effects } = fixture(sample(60000, 200));
     try {
       expect(lease.authoritySample()).toEqual({ revision: 0, remainingMs: 59800 });
-      await lease.run(async () => undefined);
+      await lease.checkpoint();
       expect(lease.authoritySample().revision).toBe(0);
       let deliver!: (value: ReturnType<typeof sample>) => void;
       effects.heartbeatOwner.mockImplementationOnce(
@@ -81,7 +81,7 @@ describe("monotonic browser owner watchdog", () => {
     let clock = 0;
     const lease = new PraxisOwnerLease(
       { sessionId: "clock", generation: 1, leaseToken: "token" },
-      effects as unknown as Pick<PraxisEffectsPort, "withOwner" | "heartbeatOwner">,
+      effects as unknown as PraxisEffectsPort,
       { leaseRemainingMs: 1000, sampleStartedAt: 0 },
       () => clock,
     );
@@ -163,34 +163,31 @@ describe("monotonic browser owner watchdog", () => {
     const gate = new Promise<void>((resolve) => {
       admit = resolve;
     });
-    effects.withOwner.mockImplementationOnce(async (_owner, work) => {
+    effects.assertOwner.mockImplementationOnce(async () => {
       await gate;
-      return work();
     });
-    const work = vi.fn(async () => undefined),
-      pending = lease.run(work);
+    const pending = lease.checkpoint();
     const settled = pending.catch((error) => error);
     try {
       await vi.advanceTimersByTimeAsync(1000);
       admit();
       expect(await settled).toMatchObject({ message: "SCRY_BROWSER_OWNER_FENCED" });
-      expect(work).not.toHaveBeenCalled();
     } finally {
       admit();
       await settled;
       lease.revoke();
     }
   });
-  it("cannot return valid work after local expiry during its callback", async () => {
-    const { lease } = fixture(sample(1000));
+  it("cannot return a valid checkpoint after local expiry during its admission", async () => {
+    const { lease, effects } = fixture(sample(1000));
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    const pending = lease.run(async () => {
+    effects.assertOwner.mockImplementationOnce(async () => {
       await gate;
-      return "late";
     });
+    const pending = lease.checkpoint();
     const settled = pending.catch((error) => error);
     try {
       await vi.advanceTimersByTimeAsync(1000);

@@ -159,7 +159,7 @@ live("post-lock browser owner authority", () => {
   it("preserves valid owner renewal, protected checkpoint and evidence admission", async () => {
     const owner = await owned();
     await effects.heartbeatOwner(owner.sessionId, owner.generation, owner.leaseToken, 60_000);
-    expect(await effects.withOwner(owner, async () => "admitted")).toBe("admitted");
+    await expect(effects.assertOwner(owner)).resolves.toBeUndefined();
     expect(
       await commands.saveBrowserCheckpoint(owner.sessionId, owner.generation, {
         resumeUrl: "https://fixture.example/",
@@ -209,10 +209,10 @@ live("post-lock browser owner authority", () => {
     await expect(
       effects.heartbeatOwner(owner.sessionId, owner.generation, randomUUID(), 60_000),
     ).rejects.toThrow("OWNER_FENCED");
-    await expect(
-      effects.withOwner({ ...owner, leaseToken: randomUUID() }, async () => "invalid"),
-    ).rejects.toThrow("OWNER_FENCED");
-    expect(await effects.withOwner(owner, async () => "valid")).toBe("valid");
+    await expect(effects.assertOwner({ ...owner, leaseToken: randomUUID() })).rejects.toThrow(
+      "OWNER_FENCED",
+    );
+    await expect(effects.assertOwner(owner)).resolves.toBeUndefined();
   });
   it("rejects an effect transition when its generation is no longer the session's active generation", async () => {
     const { owner, effect } = await admitted();
@@ -290,15 +290,10 @@ live("post-lock browser owner authority", () => {
   });
   it("cannot admit evidence work after expiry during an owner-row lock wait", async () => {
     const owner = await owned();
-    let entered = false;
     await expect(
-      contend(owner.sessionId, "browser_owner_generations", () =>
-        effects.withOwner(owner, async () => {
-          entered = true;
-        }),
-      ),
+      contend(owner.sessionId, "browser_owner_generations", () => effects.assertOwner(owner)),
     ).rejects.toThrow("OWNER_FENCED");
-    expect(entered).toBe(false);
+    expect(effects).not.toHaveProperty("withOwner");
   });
   it("cannot admit an effect after expiry during a session-row lock wait", async () => {
     const owner = await owned();

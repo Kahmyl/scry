@@ -11,9 +11,10 @@ import {
   ChronicleRecording,
   renderSanitizedReplay,
 } from "../src/index.js";
+import { memoryAdmission } from "./fixtures/evidence-admission.js";
 
 const scope = () => ({
-  admission: { run: <T>(work: () => Promise<T>) => work() },
+  admission: memoryAdmission().admission,
   runId: "00000000-0000-4000-8000-000000000301",
   sessionId: "fixture-session",
   protection: new EvidenceCipher(randomBytes(32)),
@@ -22,9 +23,27 @@ const scope = () => ({
 const passthrough = { snapshot: () => (value: unknown) => value };
 const unusedRenderer = { render: vi.fn<ChronicleReplayRendererPort["render"]>() };
 
-const admission = { run: <T>(work: () => Promise<T>) => work() };
-
 describe("recording custody and closure", () => {
+  it("carries a late recorder failure into the durable stopped-capture receipt", async () => {
+    const control = memoryAdmission();
+    const stop = vi.spyOn(control.admission, "stopCapture");
+    const session = await new ChronicleEvidenceService(unusedRenderer).openSession({
+      ...scope(),
+      admission: control.admission,
+      root: await mkdtemp(path.join(os.tmpdir(), "chronicle-late-failure-")),
+    });
+    await session.startCapture();
+    const recording = session.createRecording(passthrough);
+    recording.receive('{"visible":"fixture"}');
+    await session.prepareClosure();
+    recording.recordError("recorder_capture_failed", new Error("fixture_late_capture_failure"));
+    await session.stopCapture({ browserStopped: true, recordingDrained: true });
+    expect(stop).toHaveBeenCalledWith({
+      browserStopped: true,
+      recordingDrained: true,
+      recordingComplete: false,
+    });
+  });
   it("snapshots protection at receipt and serializes asynchronous append operations", async () => {
     let quarantined = true;
     const events: unknown[] = [];
@@ -82,22 +101,25 @@ describe("recording custody and closure", () => {
       root,
     });
     const recording = session.createRecording(passthrough);
+    await session.startCapture();
     recording.receive('{"type":2,"timestamp":1000}');
     await session.prepareClosure();
+    await session.stopCapture({ browserStopped: true, recordingDrained: true });
     const ledger = vi.fn();
     const result = await session.seal({ renderVideo: false, actionLedger: ledger });
     expect(result).toMatchObject({
       sessionId: sessionScope.sessionId,
       runId: sessionScope.runId,
       chunkCount: 1,
-      replayObjectKey: `local://${path.join(root, "evidence")}`,
+      state: "complete",
     });
     expect(result.chainHead).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.replayObjectKey).toMatch(/\/publications\/1\/[a-f0-9-]+\/evidence\.json$/);
     expect(result.totalBytes).toBeGreaterThan(0);
     expect(result).not.toHaveProperty("videoObjectKey");
     expect(ledger).not.toHaveBeenCalled();
     const resumed = await new AuthenticatedEvidenceStore({
-      admission,
+      admission: sessionScope.admission,
       directory: path.join(root, "evidence"),
       runId: sessionScope.runId,
       scopeId: sessionScope.sessionId,
@@ -106,7 +128,7 @@ describe("recording custody and closure", () => {
     expect((await resumed.verify()).events).toEqual([{ type: 2, timestamp: 1000 }]);
   });
 
-  it("rejects empty, recorder-failed, and partial evidence closure", async () => {
+  it("requires stopped capture and distinguishes empty, recorder-failed and interrupted coverage", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "chronicle-incomplete-"));
     const session = await new ChronicleEvidenceService(unusedRenderer).openSession({
       ...scope(),
@@ -116,22 +138,37 @@ describe("recording custody and closure", () => {
     await session.prepareClosure();
     await expect(
       session.seal({ renderVideo: false, actionLedger: async () => [] }),
-    ).rejects.toThrow("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
-    recording.receive("{");
-    await expect(session.prepareClosure()).rejects.toThrow(
+    ).rejects.toThrow("SCRY_BROWSER_EVIDENCE_STOP_UNCONFIRMED");
+    await session.stopCapture({ browserStopped: true, recordingDrained: true });
+    expect(await session.seal({ renderVideo: false, actionLedger: async () => [] })).toMatchObject({
+      state: "incomplete",
+      chainHead: null,
+      chunkCount: 0,
+    });
+    const failed = await new ChronicleEvidenceService(unusedRenderer).openSession({
+      ...scope(),
+      root: await mkdtemp(path.join(os.tmpdir(), "chronicle-failed-")),
+    });
+    failed.createRecording(passthrough).receive("{");
+    await expect(failed.prepareClosure()).rejects.toThrow(
       "SCRY_BROWSER_RECORDER_FAILED:recorder_payload_invalid",
     );
+    const partialControl = memoryAdmission();
     const partial = await new ChronicleEvidenceService(unusedRenderer).openSession({
       ...scope(),
+      admission: partialControl.admission,
       root,
     });
     const partialRecording = partial.createRecording(passthrough);
+    await partial.startCapture();
     partialRecording.receive('{"type":2}');
     await partialRecording.flush();
-    await writeFile(path.join(root, "evidence", "chunk-000001.json.partial-interrupted"), "{");
-    await expect(
-      partial.seal({ renderVideo: false, actionLedger: async () => [] }),
-    ).rejects.toThrow("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
+    partialControl.stream.interruptions = 1;
+    await partial.stopCapture({ browserStopped: true, recordingDrained: true });
+    expect(await partial.seal({ renderVideo: false, actionLedger: async () => [] })).toMatchObject({
+      state: "incomplete",
+      chunkCount: 1,
+    });
   });
 });
 
@@ -153,7 +190,7 @@ describe("replay publication", () => {
         };
       });
       const options = {
-        admission: { run: <T>(work: () => Promise<T>) => work() },
+        admission: memoryAdmission().admission,
         renderer: { render },
         events: [{ type: 2, timestamp: 1000 }],
         ledgerPath: path.join(root, "actions.jsonl"),

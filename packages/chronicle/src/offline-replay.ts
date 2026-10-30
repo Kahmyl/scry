@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ChronicleReplayRendererPort, EvidenceWriteAdmission } from "@scry/contracts";
 
@@ -65,7 +65,7 @@ export async function renderSanitizedReplay(options: {
   playbackRate?: number;
 }): Promise<ReplayPublication> {
   const admission = options.admission;
-  await admission.run(async () => undefined);
+  await admission.checkpoint();
   if (options.events.length === 0) throw new Error("replay_events_required");
   const framesPerSecond = options.framesPerSecond ?? 4;
   const playbackRate = options.playbackRate ?? 8;
@@ -110,12 +110,8 @@ export async function renderSanitizedReplay(options: {
   } catch {
     // No complete matching publication exists.
   }
-  await admission.run(async () => {
-    for (const name of await readdir(parentDirectory)) {
-      if (name.startsWith(`${outputName}.partial-`))
-        await rm(path.join(parentDirectory, name), { recursive: true, force: true });
-    }
-  });
+  // Never clean another owner's staging directory or replace a publication.
+  // The controller supplies a unique generation-scoped destination.
   const staging = path.join(
     parentDirectory,
     `${outputName}.partial-${process.pid}-${randomUUID()}`,
@@ -157,7 +153,8 @@ export async function renderSanitizedReplay(options: {
   if (networkRequests !== 0) throw new Error(`replay_network_attempts:${networkRequests}`);
   if (!rendered.videoPath) throw new Error("replay_video_unavailable");
   const videoPath = rendered.videoPath;
-  const frameFiles = await admission.run(async () => {
+  admission.assertActive();
+  const frameFiles = await (async () => {
     await rename(videoPath, path.join(staging, "sanitized-replay.webm"));
     const frameFiles = (await readdir(framesDirectory)).filter((name) => name.endsWith(".png"));
     const publication = {
@@ -173,10 +170,10 @@ export async function renderSanitizedReplay(options: {
     await writeFile(path.join(staging, "publication.json"), JSON.stringify(publication, null, 2), {
       mode: 0o600,
     });
-    await rm(options.outputDirectory, { recursive: true, force: true });
     await rename(staging, options.outputDirectory);
     return frameFiles;
-  });
+  })();
+  admission.assertActive();
   return {
     videoPath: path.join(options.outputDirectory, "sanitized-replay.webm"),
     framesDirectory: path.join(options.outputDirectory, "frames"),

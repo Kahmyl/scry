@@ -82,6 +82,7 @@ function fixture() {
     publicValuesForSession: vi.fn(async () => []),
     loadBrowserCheckpoint: vi.fn(async () => null),
     deleteBrowserCheckpoint: vi.fn(async () => undefined),
+    evidenceStatus: vi.fn(async () => null),
   };
   const effects = {
     assertCompatibleBaseline: vi.fn(async () => undefined),
@@ -92,13 +93,15 @@ function fixture() {
     })),
     retireOwner: vi.fn(async (_receipt: unknown): Promise<void> => undefined),
     durableCapturesForSession: vi.fn(async () => []),
-    withOwner: vi.fn(async <T>(_owner: unknown, work: () => Promise<T>) => work()),
+    assertOwner: vi.fn(async (_owner: unknown): Promise<void> => undefined),
     assertNoPendingEffectOutcomes: vi.fn(async () => undefined),
     unsettledCaptureIds: vi.fn(async () => []),
     completeEvidence: vi.fn(async () => undefined),
   };
   const session = {
     createRecording: vi.fn(),
+    startCapture: vi.fn(async () => undefined),
+    stopCapture: vi.fn(async () => undefined),
     prepareClosure: vi.fn(async () => undefined),
     seal: vi.fn(async () => ({
       sessionId: "session",
@@ -111,7 +114,7 @@ function fixture() {
   };
   const evidence = { openSession: vi.fn(async () => session) };
   const protection = {
-    createSession: vi.fn(() => ({
+    createSession: vi.fn((_input: unknown) => ({
       authority: {},
       vault: {},
       restoreCaptures: vi.fn(async () => undefined),
@@ -760,6 +763,29 @@ describe("browser owner lifecycle", () => {
     expect(effects.claimOwner).toHaveBeenCalledTimes(1);
     expect(effects.completeEvidence).toHaveBeenCalledTimes(1);
   });
+  it("does not reuse the prior owner's mutable capture-cache directory", async () => {
+    const { engine, effects, protection } = fixture();
+    await engine.open("session");
+    await engine.close("session");
+    effects.claimOwner.mockResolvedValueOnce({
+      ...ownerClaim(),
+      generation: 2,
+      fencingToken: 2,
+      leaseToken: "replacement-token",
+    });
+    await engine.open("session");
+    const first = protection.createSession.mock.calls[0]?.[0] as unknown as {
+      captureDirectory: string;
+    };
+    const second = protection.createSession.mock.calls[1]?.[0] as unknown as {
+      captureDirectory: string;
+    };
+    try {
+      expect(first.captureDirectory).not.toBe(second.captureDirectory);
+    } finally {
+      await engine.closeAll();
+    }
+  });
   it("does not re-admit buffered work after a failed heartbeat even if database calls recover", async () => {
     const { effects } = fixture();
     const lease = new PraxisOwnerLease(
@@ -769,9 +795,8 @@ describe("browser owner lifecycle", () => {
     );
     effects.heartbeatOwner.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(lease.heartbeat(60_000)).rejects.toThrow("database unavailable");
-    const write = vi.fn(async () => undefined);
-    await expect(lease.run(write)).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
-    expect(write).not.toHaveBeenCalled();
+    await expect(lease.checkpoint()).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
+    expect(effects.assertOwner).not.toHaveBeenCalled();
   });
 
   it("rejects work revoked while its database admission was waiting", async () => {
@@ -780,21 +805,18 @@ describe("browser owner lifecycle", () => {
     const gate = new Promise<void>((resolve) => {
       admit = resolve;
     });
-    effects.withOwner.mockImplementationOnce(async (_owner, work) => {
+    effects.assertOwner.mockImplementationOnce(async () => {
       await gate;
-      return work();
     });
     const lease = new PraxisOwnerLease(
       { sessionId: "session", generation: 1, leaseToken: "token" },
       effects as unknown as PraxisEffectsPort,
       ownerClaim(),
     );
-    const write = vi.fn(async () => undefined);
-    const pending = lease.run(write);
+    const pending = lease.checkpoint();
     lease.revoke();
     admit();
     await expect(pending).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
-    expect(write).not.toHaveBeenCalled();
   });
   it("stops the local browser on heartbeat failure without flushing or publishing evidence", async () => {
     const { engine, effects, session } = fixture();
@@ -813,7 +835,7 @@ describe("browser owner lifecycle", () => {
   it("rejects a stale command and evicts its browser without automatically claiming a new owner", async () => {
     const { engine, effects } = fixture();
     await engine.open("session");
-    effects.withOwner.mockRejectedValueOnce(new Error("SCRY_BROWSER_OWNER_FENCED"));
+    effects.assertOwner.mockRejectedValueOnce(new Error("SCRY_BROWSER_OWNER_FENCED"));
     await expect(engine.execute("session", { kind: "observe" })).rejects.toThrow(
       "SCRY_BROWSER_OWNER_FENCED",
     );

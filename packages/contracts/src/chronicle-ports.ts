@@ -1,9 +1,61 @@
 import type { Buffer } from "node:buffer";
 
-/** The application holds its owner lock throughout each short durable write.
- * Rendering and browser/network operations must not run while holding this gate. */
+export interface EvidenceChunkReceipt {
+  streamId: string;
+  ownerGeneration: number;
+  chunkIndex: number;
+  objectKey: string;
+  objectDigest: string;
+  objectBytes: number;
+  digest: string;
+  previousDigest: string;
+  firstSequence: number;
+  lastSequence: number;
+  plaintextBytes: number;
+  storedBytes: number;
+}
+
+export interface EvidenceStreamSnapshot {
+  id: string;
+  sessionId: string;
+  runId: string;
+  custodyMode: "legacy" | "admitted";
+  state: "open" | "complete" | "incomplete" | "corrupt" | "expired";
+  writerGeneration: number | null;
+  chainHead: string | null;
+  chunkCount: number;
+  totalBytes: number;
+  sealedAt: string | null;
+  captureStartedAt: string | null;
+  captureStoppedAt: string | null;
+  captureComplete: boolean | null;
+  interruptions: number;
+  chunks: EvidenceChunkReceipt[];
+}
+export interface EvidenceStatus {
+  state: EvidenceStreamSnapshot["state"];
+  sealed: boolean;
+  captureStarted: boolean;
+  captureStopped: boolean;
+  interruptions: number;
+  custodyMode: "legacy" | "admitted";
+}
+
+/** Fixed metadata operations only. No file, network, renderer or arbitrary
+ * callback may execute while application ownership locks are held. */
 export interface EvidenceWriteAdmission {
-  run<T>(work: () => Promise<T>): Promise<T>;
+  readonly ownerGeneration: number;
+  assertActive(): void;
+  checkpoint(): Promise<void>;
+  openStream(runId: string): Promise<EvidenceStreamSnapshot>;
+  readStream(): Promise<EvidenceStreamSnapshot>;
+  admitChunk(chunk: EvidenceChunkReceipt): Promise<void>;
+  startCapture(): Promise<void>;
+  stopCapture(receipt: {
+    browserStopped: true;
+    recordingDrained: true;
+    recordingComplete: boolean;
+  }): Promise<void>;
 }
 
 /** Veil supplies this capability; Chronicle never receives a master key. */
@@ -65,7 +117,8 @@ export interface ChronicleReplayRendererPort {
 export interface EvidenceCompletion {
   sessionId: string;
   runId: string;
-  chainHead: string;
+  state: "complete" | "incomplete";
+  chainHead: string | null;
   chunkCount: number;
   totalBytes: number;
   replayObjectKey: string;
@@ -86,6 +139,7 @@ export interface ChronicleEvidenceScope {
   sessionId: string;
   protection: EvidenceProtectionPort;
   maxSessionBytes: number;
+  purpose?: "capture" | "closure";
 }
 
 export interface ChronicleSealOptions {
@@ -96,6 +150,8 @@ export interface ChronicleSealOptions {
 
 export interface ChronicleEvidenceSessionPort {
   createRecording(protection: RecordingProtectionPort): ChronicleRecordingPort;
+  startCapture(): Promise<void>;
+  stopCapture(receipt: { browserStopped: true; recordingDrained: true }): Promise<void>;
   prepareClosure(): Promise<void>;
   seal(options: ChronicleSealOptions): Promise<EvidenceCompletion>;
 }

@@ -108,13 +108,16 @@ if (schemaCheck.includes("createHash") || schemaCheck.includes("pg_indexes")) {
 
 const protectedKeyring = read("packages/veil/src/protected-keyring.ts");
 const browserProtection = read("packages/veil/src/browser-protection.ts");
-const evidenceStore = read("packages/chronicle/src/authenticated-evidence-store.ts");
+const evidenceCodec = read("packages/chronicle/src/evidence-codec.ts");
+const legacyEvidenceReader = read("packages/chronicle/src/legacy-evidence-reader.ts");
 if (
   !protectedKeyring.includes("deriveLegacy") ||
   !protectedKeyring.includes("scry/browser-v2") ||
   !browserProtection.includes('deriveLegacy(scope.protectionKeyId, "evidence"') ||
   !browserProtection.includes("legacyEncryptionKeys") ||
-  !evidenceStore.includes("evidenceVersion")
+  !evidenceCodec.includes("evidenceVersion") ||
+  !legacyEvidenceReader.includes("decodeEvidenceChunk") ||
+  /async\s+(?:append|flush|initialize)\s*\(/u.test(legacyEvidenceReader)
 ) {
   fail("historical encrypted-data read compatibility is incomplete");
 }

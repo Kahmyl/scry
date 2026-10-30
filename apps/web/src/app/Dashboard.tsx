@@ -96,6 +96,9 @@ type RunDetail = Run & {
     chainHead?: string;
     chunkCount: number;
     totalBytes: string;
+    sealedAt?: string;
+    interruptions: number;
+    custodyMode: "legacy" | "admitted";
   }>;
   artifacts: Array<{
     id: string;
@@ -113,6 +116,13 @@ type Report = {
   state: string;
   summary: string;
   safeReport?: Record<string, unknown>;
+  evidenceCoverage?: {
+    runs: number;
+    complete: number;
+    incomplete: number;
+    open: number;
+    missing: number;
+  };
   evidenceDigest: string;
   createdAt: string;
   finalizedAt?: string;
@@ -429,7 +439,7 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
           <Fact
             key={item.id}
             title={`${item.chunkCount} durable chunk${item.chunkCount === 1 ? "" : "s"}`}
-            detail={`${item.totalBytes} bytes · chain ${item.chainHead?.slice(0, 12) ?? "unavailable"}`}
+            detail={`${item.totalBytes} bytes · chain ${item.chainHead?.slice(0, 12) ?? "unavailable"}${item.interruptions ? ` · ${item.interruptions} recording interruption${item.interruptions === 1 ? "" : "s"}; this is not a complete recording` : ""}${item.state === "incomplete" && !item.chunkCount ? " · Recording unavailable; no captured evidence was admitted" : ""}`}
             state={item.state}
           />
         ))}
@@ -457,6 +467,15 @@ function ReportDetail({ reportId, onBack }: { reportId: string; onBack: () => vo
       <section className="panel">
         <ListHeading title="Evidence integrity" />
         <Fact title="Evidence chain digest" detail={report.evidenceDigest} state={report.state} />
+        {report.evidenceCoverage && (
+          <p role="status">
+            Evidence coverage: {report.evidenceCoverage.complete} complete,{" "}
+            {report.evidenceCoverage.incomplete} incomplete, {report.evidenceCoverage.open} still
+            open, {report.evidenceCoverage.missing} unavailable.
+            {report.evidenceCoverage.complete < report.evidenceCoverage.runs &&
+              " Some attempts do not have a complete recording. Review those attempts before relying on their visual evidence."}
+          </p>
+        )}
       </section>
       <section className="panel">
         <ListHeading title="Sanitized result" />

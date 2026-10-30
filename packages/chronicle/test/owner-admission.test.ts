@@ -6,16 +6,11 @@ import { describe, expect, it } from "vitest";
 import type { ChronicleReplayPlan } from "@scry/contracts";
 import { EvidenceCipher } from "@scry/veil";
 import { ChronicleEvidenceService, renderSanitizedReplay } from "../src/index.js";
+import { memoryAdmission } from "./fixtures/evidence-admission.js";
 
 describe("owner admission at evidence durability", () => {
   it("rejects a stale buffered recording without changing its manifest", async () => {
-    let owned = true;
-    const admission = {
-      async run<T>(work: () => Promise<T>): Promise<T> {
-        if (!owned) throw new Error("SCRY_BROWSER_OWNER_FENCED");
-        return work();
-      },
-    };
+    const { admission, stream, revoke } = memoryAdmission("session", "run");
     const root = await mkdtemp(path.join(os.tmpdir(), "chronicle-owner-"));
     const scope = {
       root,
@@ -33,22 +28,17 @@ describe("owner admission at evidence durability", () => {
     const recording = session.createRecording({ snapshot: () => (value) => value });
     recording.receive('{"first":true}');
     await recording.flush();
-    const manifestPath = path.join(root, "evidence", "manifest.jsonl");
-    const before = await readFile(manifestPath, "utf8");
-    owned = false;
+    const objectPath = path.join(root, "evidence", stream.chunks[0]!.objectKey);
+    const before = await readFile(objectPath, "utf8");
+    revoke();
     recording.receive('{"stale":true}');
     await expect(recording.flush()).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
-    expect(await readFile(manifestPath, "utf8")).toBe(before);
+    expect(await readFile(objectPath, "utf8")).toBe(before);
+    expect(stream.chunks).toHaveLength(1);
   });
 
   it("does not publish replay artifacts after ownership is replaced during rendering", async () => {
-    let owned = true;
-    const admission = {
-      async run<T>(work: () => Promise<T>): Promise<T> {
-        if (!owned) throw new Error("SCRY_BROWSER_OWNER_FENCED");
-        return work();
-      },
-    };
+    const { admission, revoke } = memoryAdmission();
     const root = await mkdtemp(path.join(os.tmpdir(), "chronicle-render-owner-"));
     const options = {
       admission,
@@ -61,7 +51,7 @@ describe("owner admission at evidence durability", () => {
           await writeFile(videoPath, "video");
           for (const [index] of plan.frames.entries())
             await writeFile(path.join(plan.framesDirectory, `frame-${index}.png`), "frame");
-          owned = false;
+          revoke();
           return {
             videoPath,
             replayFailed: false,

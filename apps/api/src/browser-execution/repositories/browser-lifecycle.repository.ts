@@ -442,12 +442,23 @@ export class BrowserLifecycleRepository {
       const evidenceDigest = await new ChronicleRepository(client).missionEvidenceDigest(missionId);
       const protection = await this.reportSanitizer(client, missionId);
       const summary = protection.sanitizeText(input.summary, "report");
-      const safeReport = protection.sanitizeValue(input.safeReport, "report");
+      const sanitizedReport = protection.sanitizeValue(input.safeReport, "report");
+      const evidenceCoverage = await new ChronicleRepository(client).missionEvidenceCoverage(
+        missionId,
+      );
+      const safeReport = { ...(sanitizedReport as Record<string, unknown>), evidenceCoverage };
       const reportId = randomUUID();
       await client.query(
-        `INSERT INTO mission_reports(id,mission_id,state,summary,safe_report,evidence_digest,finalized_at)
-         VALUES($1,$2,'final',$3,$4::jsonb,$5,now())`,
-        [reportId, missionId, summary, JSON.stringify(safeReport), evidenceDigest],
+        `INSERT INTO mission_reports(id,mission_id,state,summary,safe_report,evidence_digest,evidence_coverage,finalized_at)
+         VALUES($1,$2,'final',$3,$4::jsonb,$5,$6::jsonb,now())`,
+        [
+          reportId,
+          missionId,
+          summary,
+          JSON.stringify(safeReport),
+          evidenceDigest,
+          JSON.stringify(evidenceCoverage),
+        ],
       );
       await client.query(
         "UPDATE missions SET state='completed',final_report_id=$2,completed_at=now(),updated_at=now(),revision=revision+1 WHERE id=$1",

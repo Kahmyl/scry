@@ -315,6 +315,9 @@ export class BrowserCommandRepository {
   async evidenceComplete(sessionId: string): Promise<boolean> {
     return new ChronicleRepository(this.database).evidenceComplete(sessionId);
   }
+  async evidenceStatus(sessionId: string) {
+    return new ChronicleRepository(this.database).evidenceStatus(sessionId);
+  }
 
   async safeActionLedger(sessionId: string) {
     return new ChronicleRepository(this.database).safeActionLedger(sessionId);

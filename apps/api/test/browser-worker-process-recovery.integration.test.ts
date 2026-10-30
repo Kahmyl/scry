@@ -153,6 +153,14 @@ run("browser baseline real worker-process recovery", () => {
       }),
     ).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
     await command({ kind: "close" }, "close-after-recovery");
+    expect(
+      (
+        await database.query(
+          "SELECT state,interruptions,completed_at FROM browser_evidence_streams WHERE session_id=$1",
+          [sessionId],
+        )
+      ).rows[0],
+    ).toMatchObject({ state: "incomplete", interruptions: 1, completed_at: null });
     const retained = await database.query<{ count: string }>(
       "SELECT count(*) FROM browser_session_checkpoints WHERE session_id=$1",
       [sessionId],
@@ -238,6 +246,14 @@ run("browser baseline real worker-process recovery", () => {
     const released = await command({ kind: "observe" }, "barrier-observe-released");
     expect(released.text).toContain("Authenticated dashboard");
     await command({ kind: "close" }, "barrier-close");
+    expect(
+      (
+        await database.query(
+          "SELECT state,interruptions FROM browser_evidence_streams WHERE session_id=$1",
+          [sessionId],
+        )
+      ).rows[0],
+    ).toMatchObject({ state: "incomplete", interruptions: 1 });
   }, 60_000);
 
   it("fails closed for corrupt or oversized checkpoints", async () => {

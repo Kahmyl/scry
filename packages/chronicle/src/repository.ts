@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ChronicleSqlPort } from "@scry/contracts";
+import type { ChronicleSqlPort, EvidenceStatus } from "@scry/contracts";
 
 export interface CaptureEvidenceInput {
   effectId: string;
@@ -171,6 +171,23 @@ export class ChronicleRepository {
     return result.rows[0]?.state === "complete";
   }
 
+  async evidenceStatus(sessionId: string, lock = false): Promise<EvidenceStatus | null> {
+    const result = await this.sql.query<{
+      state: EvidenceStatus["state"];
+      sealed: boolean;
+      captureStarted: boolean;
+      captureStopped: boolean;
+      interruptions: number;
+      custodyMode: "legacy" | "admitted";
+    }>(
+      `SELECT state,(sealed_at IS NOT NULL OR (custody_mode='legacy' AND state='complete')) AS sealed,
+      capture_started_at IS NOT NULL AS "captureStarted",capture_stopped_at IS NOT NULL AS "captureStopped",
+      interruptions,custody_mode AS "custodyMode" FROM browser_evidence_streams WHERE session_id=$1${lock ? " FOR UPDATE" : ""}`,
+      [sessionId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async safeActionLedger(
     sessionId: string,
   ): Promise<Array<{ at: string; tool: string; outcome: string; durationMs: number }>> {
@@ -195,32 +212,6 @@ export class ChronicleRepository {
         durationMs: Math.max(0, completed.getTime() - started.getTime()),
       };
     });
-  }
-
-  async completeEvidence(input: {
-    sessionId: string;
-    runId: string;
-    chainHead: string;
-    chunkCount: number;
-    totalBytes: number;
-    replayObjectKey: string;
-    videoObjectKey?: string;
-  }): Promise<void> {
-    await this.sql.query(
-      `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,
-         replay_artifact_key,video_artifact_key,retention_expires_at,completed_at)
-       VALUES(gen_random_uuid(),$1,$2,'complete',$3,$4,$5,$6,$7,now()+interval '30 days',now())
-       ON CONFLICT(session_id) DO NOTHING`,
-      [
-        input.sessionId,
-        input.runId,
-        input.chainHead,
-        input.chunkCount,
-        input.totalBytes,
-        input.replayObjectKey,
-        input.videoObjectKey ?? null,
-      ],
-    );
   }
 
   async appendEffectEvent(
@@ -350,7 +341,8 @@ export class ChronicleRepository {
       this.sql.query(
         `SELECT id,state,chain_head AS "chainHead",chunk_count AS "chunkCount",
                 total_bytes AS "totalBytes",retention_expires_at AS "retentionExpiresAt",
-                completed_at AS "completedAt"
+                completed_at AS "completedAt",sealed_at AS "sealedAt",interruptions,
+                custody_mode AS "custodyMode"
          FROM browser_evidence_streams WHERE run_id=$1 ORDER BY created_at`,
         [runId],
       ),
@@ -368,16 +360,36 @@ export class ChronicleRepository {
   }
 
   async missionEvidenceDigest(missionId: string): Promise<string> {
-    const evidence = await this.sql.query<{ chain_head: string }>(
-      `SELECT e.chain_head FROM browser_evidence_streams e JOIN runs r ON r.id=e.run_id
-         WHERE r.mission_id=$1 AND e.state='complete' ORDER BY r.created_at,e.id`,
+    const evidence = await this.sql.query<{ chain_head: string | null; state: string | null }>(
+      `SELECT r.id AS run_id,e.id AS stream_id,e.state,e.chain_head,e.chunk_count,e.total_bytes,
+        e.sealed_at,e.interruptions FROM runs r LEFT JOIN browser_evidence_streams e ON e.run_id=r.id
+         WHERE r.mission_id=$1 ORDER BY r.created_at,r.id`,
       [missionId],
     );
-    if (evidence.rows.length === 0 || evidence.rows.some((row) => !row.chain_head))
+    if (
+      !evidence.rows.some((row) => row.state === "complete" && row.chain_head) ||
+      evidence.rows.some((row) => row.state === "complete" && !row.chain_head)
+    )
       throw new Error("SCRY_BROWSER_MISSION_EVIDENCE_INCOMPLETE");
-    return createHash("sha256")
-      .update(JSON.stringify(evidence.rows.map((row) => row.chain_head)))
-      .digest("hex");
+    return createHash("sha256").update(JSON.stringify(evidence.rows)).digest("hex");
+  }
+
+  async missionEvidenceCoverage(missionId: string) {
+    const result = await this.sql.query<{
+      runs: number;
+      complete: number;
+      incomplete: number;
+      open: number;
+      missing: number;
+    }>(
+      `SELECT count(*)::int AS runs,count(*) FILTER(WHERE e.state='complete')::int AS complete,
+        count(*) FILTER(WHERE e.state IN ('incomplete','corrupt','expired'))::int AS incomplete,
+        count(*) FILTER(WHERE e.state='open')::int AS open,
+        count(*) FILTER(WHERE e.id IS NULL)::int AS missing
+        FROM runs r LEFT JOIN browser_evidence_streams e ON e.run_id=r.id WHERE r.mission_id=$1`,
+      [missionId],
+    );
+    return required(result.rows[0], "SCRY_BROWSER_MISSION_EVIDENCE_INCOMPLETE");
   }
 }
 

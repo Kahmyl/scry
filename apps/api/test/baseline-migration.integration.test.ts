@@ -10,6 +10,10 @@ import {
   migrateBrowserBaseline,
   retainedBaselineMigrationNames,
 } from "../scripts/baseline-migration.js";
+import { Database } from "../src/infrastructure/database.js";
+import { BrowserExecutionRepository } from "../src/browser-execution/repositories/browser-execution.repository.js";
+import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
+import { seedSession } from "./fixtures/browser-session.js";
 
 const adminUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const live =
@@ -116,6 +120,148 @@ async function rawBaseline(context: Context) {
 }
 
 live("guarded existing-baseline schema upgrades", () => {
+  it("atomically refuses live-owner custody cutover, preserves history and fences receipt-less old workers", () =>
+    withDatabase(async (context) => {
+      await runner({
+        dbClient: context.client,
+        dir: context.directory,
+        migrationsTable: "scry_migration_history",
+        direction: "up",
+        count: currentMigrations.indexOf("0010-evidence-admission.sql"),
+        singleTransaction: true,
+        logger: quiet,
+      });
+      await context.client.query(
+        "INSERT INTO schema_baseline(singleton,runtime_capability_id) VALUES(true,'browser-execution')",
+      );
+      const priorUrl = process.env.DATABASE_URL,
+        priorKey = process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64;
+      process.env.DATABASE_URL = context.input.databaseUrl;
+      process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64 = Buffer.alloc(32, 7).toString("base64");
+      const database = new Database();
+      const effects = new BrowserExecutionRepository(database, new BrowserProtectedValueCipher());
+      try {
+        // Bootstrap fictional relational history using the unchanged session
+        // insert fields. The current readiness check correctly requires the
+        // pending admission migration and is bypassed only for this fixture.
+        const readiness = vi
+          .spyOn(effects, "assertCompatibleBaseline")
+          .mockResolvedValue(undefined);
+        const sessionId = await seedSession(database, effects, "https://upgrade.fixture.invalid");
+        readiness.mockRestore();
+        const runId = (
+          await database.query("SELECT run_id FROM browser_execution_sessions WHERE id=$1", [
+            sessionId,
+          ])
+        ).rows[0]!.run_id;
+        await database.query(
+          `INSERT INTO browser_owner_generations(session_id,generation,worker_id,lease_token,fencing_token,state,lease_expires_at,runtime_capability_id)
+          VALUES($1,1,'historical-worker',$2,1,'active',clock_timestamp()+interval '60 seconds','browser-execution')`,
+          [sessionId, randomUUID()],
+        );
+        await database.query(
+          "UPDATE browser_execution_sessions SET active_owner_generation=1 WHERE id=$1",
+          [sessionId],
+        );
+        await database.query(
+          `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,replay_artifact_key,retention_expires_at,completed_at)
+          VALUES($1,$2,$3,'complete',$4,1,64,'local://fictional-retained-metadata',clock_timestamp()+interval '30 days',clock_timestamp())`,
+          [randomUUID(), sessionId, runId, "a".repeat(64)],
+        );
+        const before = (
+          await database.query(
+            "SELECT to_jsonb(e) AS data FROM browser_evidence_streams e WHERE session_id=$1",
+            [sessionId],
+          )
+        ).rows[0]!.data;
+        const historyBefore = await receipts(context.client);
+        await expect(migrateBrowserBaseline(context.input)).rejects.toThrow(
+          "SCRY_BROWSER_EVIDENCE_LIVE_OWNER",
+        );
+        expect(await receipts(context.client)).toEqual(historyBefore);
+        expect(
+          (
+            await database.query(
+              "SELECT 1 FROM information_schema.columns WHERE table_name='browser_owner_generations' AND column_name='evidence_admission_mode'",
+            )
+          ).rowCount,
+        ).toBe(0);
+        await database.query(
+          "UPDATE browser_owner_generations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE session_id=$1",
+          [sessionId],
+        );
+        expect((await migrateBrowserBaseline(context.input)).migrationsApplied).toBe(
+          currentCount - historyBefore.length,
+        );
+        const after = (
+          await database.query(
+            "SELECT to_jsonb(e) AS data FROM browser_evidence_streams e WHERE session_id=$1",
+            [sessionId],
+          )
+        ).rows[0]!.data as Record<string, unknown>;
+        expect(Object.fromEntries(Object.keys(before).map((key) => [key, after[key]]))).toEqual(
+          before,
+        );
+        expect(after.custody_mode).toBe("legacy");
+        await expect(
+          database.query(
+            "UPDATE browser_evidence_streams SET custody_mode='admitted',writer_generation=1 WHERE session_id=$1",
+            [sessionId],
+          ),
+        ).rejects.toThrow("evidence_legacy_immutable");
+        await expect(
+          database.query(
+            "UPDATE browser_owner_generations SET lease_expires_at=clock_timestamp()+interval '60 seconds' WHERE session_id=$1",
+            [sessionId],
+          ),
+        ).rejects.toThrow("evidence_owner_protocol_required");
+        const next = await effects.claimOwner(sessionId, "qualified-owner", 60000);
+        await expect(
+          effects.openEvidenceStream(
+            { sessionId, generation: next.generation, leaseToken: next.leaseToken },
+            runId,
+          ),
+        ).rejects.toThrow("EVIDENCE_READ_ONLY");
+        const second = await seedSession(database, effects, "https://upgrade-new.fixture.invalid");
+        const secondRun = (
+          await database.query("SELECT run_id FROM browser_execution_sessions WHERE id=$1", [
+            second,
+          ])
+        ).rows[0]!.run_id;
+        await expect(
+          database.query(
+            `INSERT INTO browser_owner_generations(session_id,generation,worker_id,lease_token,fencing_token,state,lease_expires_at,runtime_capability_id)
+          VALUES($1,1,'old-worker',$2,1,'active',clock_timestamp()+interval '60 seconds','browser-execution')`,
+            [second, randomUUID()],
+          ),
+        ).rejects.toThrow("evidence_owner_protocol_required");
+        await expect(
+          database.query(
+            `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,retention_expires_at,completed_at)
+          VALUES($1,$2,$3,'complete',$4,1,64,clock_timestamp()+interval '30 days',clock_timestamp())`,
+            [randomUUID(), second, secondRun, "b".repeat(64)],
+          ),
+        ).rejects.toThrow("evidence_admitted_shape");
+        const qualified = await effects.claimOwner(second, "qualified-new", 60000);
+        await effects.openEvidenceStream(
+          { sessionId: second, generation: qualified.generation, leaseToken: qualified.leaseToken },
+          secondRun,
+        );
+        await expect(
+          database.query(
+            `UPDATE browser_evidence_streams SET state='complete',completed_at=clock_timestamp(),sealed_at=clock_timestamp(),
+          capture_started_at=clock_timestamp(),capture_stopped_at=clock_timestamp(),capture_complete=true,chain_head=$2,chunk_count=1,total_bytes=64 WHERE session_id=$1`,
+            [second, "c".repeat(64)],
+          ),
+        ).rejects.toThrow("evidence_receipt_summary_mismatch");
+      } finally {
+        await database.onModuleDestroy();
+        if (priorUrl === undefined) delete process.env.DATABASE_URL;
+        else process.env.DATABASE_URL = priorUrl;
+        if (priorKey === undefined) delete process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64;
+        else process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64 = priorKey;
+      }
+    }));
   it("applies additive SQL once, preserves business data, and does not fingerprint applied SQL bytes", () =>
     withDatabase(async (context) => {
       expect(await migrateBrowserBaseline(context.input)).toMatchObject({

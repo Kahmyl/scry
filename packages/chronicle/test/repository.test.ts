@@ -5,23 +5,35 @@ import { ChronicleRepository } from "../src/index.js";
 describe("accepted evidence SQL boundary", () => {
   it("binds the report digest to the accepted Mission evidence in baseline order", async () => {
     const query = vi.fn().mockResolvedValue({
-      rows: [{ chain_head: "first" }, { chain_head: "second" }],
+      rows: [
+        { state: "complete", chain_head: "first" },
+        { state: "incomplete", chain_head: "second" },
+      ],
       rowCount: 2,
     });
     const digest = await new ChronicleRepository({ query }).missionEvidenceDigest("mission-a");
     expect(query).toHaveBeenCalledWith(
-      expect.stringMatching(/e.state='complete' ORDER BY r.created_at,e.id/),
+      expect.stringMatching(/LEFT JOIN browser_evidence_streams[\s\S]*ORDER BY r.created_at,r.id/),
       ["mission-a"],
     );
     expect(digest).toBe(
       createHash("sha256")
-        .update(JSON.stringify(["first", "second"]))
+        .update(
+          JSON.stringify([
+            { state: "complete", chain_head: "first" },
+            { state: "incomplete", chain_head: "second" },
+          ]),
+        )
         .digest("hex"),
     );
   });
 
   it("refuses a report digest without complete evidence heads", async () => {
-    for (const rows of [[], [{ chain_head: "" }]]) {
+    for (const rows of [
+      [],
+      [{ state: "complete", chain_head: "" }],
+      [{ state: "incomplete", chain_head: "partial" }],
+    ]) {
       const query = vi.fn().mockResolvedValue({ rows, rowCount: rows.length });
       await expect(
         new ChronicleRepository({ query }).missionEvidenceDigest("mission-a"),

@@ -10,6 +10,7 @@ import {
   ChronicleEvidenceSession,
 } from "../src/index.js";
 import type { ChronicleReplayRendererPort } from "@scry/contracts";
+import { memoryAdmission } from "./fixtures/evidence-admission.js";
 
 const protection = { snapshot: vi.fn(() => (value: unknown) => value) };
 function fixture() {
@@ -29,7 +30,7 @@ describe("recording queue quiescence", () => {
       runId: "00000000-0000-4000-8000-000000000301",
       sessionId: "fixture-session",
       protection: new EvidenceCipher(randomBytes(32)),
-      admission: { run: <T>(work: () => Promise<T>) => work() },
+      admission: memoryAdmission().admission,
       maxSessionBytes: 1024 * 1024,
     };
     const store = await new AuthenticatedEvidenceStore<Record<string, unknown>>({
@@ -40,6 +41,7 @@ describe("recording queue quiescence", () => {
     const session = new ChronicleEvidenceSession(scope, store, {
       render: vi.fn<ChronicleReplayRendererPort["render"]>(),
     });
+    await session.startCapture();
     return { root, store, session, recording: session.createRecording(protection) };
   }
   it("does not create a second recording owner for the same store lifecycle", async () => {
@@ -50,15 +52,16 @@ describe("recording queue quiescence", () => {
     const { root, session, recording } = await sessionFixture();
     recording.receive('{"visible":"fixture"}');
     await recording.flush();
-    const directory = path.join(root, "evidence"),
-      names = await readdir(directory);
-    const before = await Promise.all(names.map((name) => readFile(path.join(directory, name))));
+    const directory = path.join(root, "evidence");
+    const names = await readdir(directory, { recursive: true });
+    const files = names.filter((name) => name.endsWith(".json"));
+    const before = await Promise.all(files.map((name) => readFile(path.join(directory, name))));
     await recording.abort();
     await expect(
       session.seal({ renderVideo: false, actionLedger: async () => [] }),
     ).rejects.toThrow("RECORDER_CLOSED");
-    expect(await readdir(directory)).toEqual(names);
-    expect(await Promise.all(names.map((name) => readFile(path.join(directory, name))))).toEqual(
+    expect(await readdir(directory, { recursive: true })).toEqual(names);
+    expect(await Promise.all(files.map((name) => readFile(path.join(directory, name))))).toEqual(
       before,
     );
   });
@@ -66,6 +69,7 @@ describe("recording queue quiescence", () => {
     const { store, session, recording } = await sessionFixture();
     recording.receive('{"visible":"fixture"}');
     await recording.flush();
+    await session.stopCapture({ browserStopped: true, recordingDrained: true });
     let finish!: () => void, enter!: () => void;
     const gate = new Promise<void>((resolve) => {
         finish = resolve;
@@ -254,7 +258,7 @@ describe("recording queue quiescence", () => {
       runId: "00000000-0000-4000-8000-000000000301",
       scopeId: "fixture",
       protection: new EvidenceCipher(randomBytes(32)),
-      admission: { run: <T>(work: () => Promise<T>) => work() },
+      admission: memoryAdmission("fixture").admission,
     }).initialize();
     const appended = vi.spyOn(store, "append"),
       recording = new ChronicleRecording(store, protection);

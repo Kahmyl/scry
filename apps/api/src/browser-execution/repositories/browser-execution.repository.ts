@@ -1,10 +1,15 @@
-import { ChronicleRepository, type CaptureEvidenceInput } from "@scry/chronicle";
+import {
+  AdmittedEvidenceRepository,
+  ChronicleRepository,
+  type CaptureEvidenceInput,
+} from "@scry/chronicle";
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
   BrowserProtectionDecision,
   EvidenceCompletion,
+  EvidenceChunkReceipt,
   PraxisOwnerIdentity,
   PraxisOwnerClaim,
   PraxisOwnerLeaseSample,
@@ -119,15 +124,75 @@ export class BrowserExecutionRepository {
     @Inject(BrowserProtectedValueCipher) private readonly cipher: BrowserProtectedValueCipher,
   ) {}
 
-  async withOwner<T>(owner: PraxisOwnerIdentity, work: () => Promise<T>): Promise<T> {
-    return this.ownedTransaction(owner, async () => work());
+  async assertOwner(owner: PraxisOwnerIdentity): Promise<void> {
+    await this.ownedTransaction(owner, async () => undefined);
+  }
+
+  async openEvidenceStream(owner: PraxisOwnerIdentity, runId: string) {
+    return this.evidenceTransaction(owner, async (client, session) => {
+      if (runId !== session.run_id) throw new Error("SCRY_BROWSER_EVIDENCE_SCOPE_MISMATCH");
+      return new AdmittedEvidenceRepository(client).open(owner.sessionId, runId, owner.generation);
+    });
+  }
+
+  async readEvidenceStream(owner: PraxisOwnerIdentity) {
+    return this.evidenceTransaction(owner, (client) =>
+      new AdmittedEvidenceRepository(client).snapshot(owner.sessionId),
+    );
+  }
+
+  async admitEvidenceChunk(owner: PraxisOwnerIdentity, chunk: EvidenceChunkReceipt): Promise<void> {
+    await this.evidenceTransaction(owner, (client) =>
+      new AdmittedEvidenceRepository(client).admit(owner.sessionId, owner.generation, chunk),
+    );
+  }
+
+  async startEvidenceCapture(owner: PraxisOwnerIdentity): Promise<void> {
+    await this.evidenceTransaction(owner, (client) =>
+      new AdmittedEvidenceRepository(client).startCapture(owner.sessionId, owner.generation),
+    );
+  }
+
+  async stopEvidenceCapture(
+    owner: PraxisOwnerIdentity,
+    receipt: { browserStopped: true; recordingDrained: true; recordingComplete: boolean },
+  ): Promise<void> {
+    if (
+      receipt?.browserStopped !== true ||
+      receipt?.recordingDrained !== true ||
+      typeof receipt.recordingComplete !== "boolean"
+    )
+      throw new Error("SCRY_BROWSER_EVIDENCE_STOP_UNCONFIRMED");
+    await this.evidenceTransaction(owner, (client) =>
+      new AdmittedEvidenceRepository(client).stopCapture(
+        owner.sessionId,
+        owner.generation,
+        receipt.recordingComplete,
+      ),
+    );
   }
 
   async completeEvidence(owner: PraxisOwnerIdentity, input: EvidenceCompletion): Promise<void> {
-    await this.ownedTransaction(owner, async (client, session) => {
+    await this.evidenceTransaction(owner, async (client, session) => {
       if (input.sessionId !== owner.sessionId || input.runId !== session.run_id)
         throw new Error("SCRY_BROWSER_EVIDENCE_SCOPE_MISMATCH");
-      await new ChronicleRepository(client).completeEvidence(input);
+      await new AdmittedEvidenceRepository(client).complete(input, owner.generation);
+    });
+  }
+
+  /** Private fixed-SQL delegation only. Public ports cannot place arbitrary
+   * work here. Sample again after the last coordination lock, not before a
+   * potentially blocking stream-row acquisition. */
+  private evidenceTransaction<T>(
+    owner: PraxisOwnerIdentity,
+    metadata: (client: PoolClient, session: SessionRow) => Promise<T>,
+  ): Promise<T> {
+    return this.ownedTransaction(owner, async (client, session) => {
+      await client.query("SELECT id FROM browser_evidence_streams WHERE session_id=$1 FOR UPDATE", [
+        owner.sessionId,
+      ]);
+      await lockLiveBrowserOwner(client, owner.sessionId, owner.generation, owner.leaseToken);
+      return metadata(client, session);
     });
   }
 
@@ -277,8 +342,8 @@ export class BrowserExecutionRepository {
       const inserted = await client.query<{ leaseRemainingMs: number }>(
         `INSERT INTO browser_owner_generations(
            session_id,generation,worker_id,lease_token,fencing_token,state,lease_expires_at,
-           runtime_capability_id)
-         VALUES($1,$2,$3,$4,$2,'active',clock_timestamp()+($5::int * interval '1 millisecond'),$6)
+           runtime_capability_id,evidence_admission_mode)
+         VALUES($1,$2,$3,$4,$2,'active',clock_timestamp()+($5::int * interval '1 millisecond'),$6,'receipts')
          RETURNING GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(lease_expires_at-clock_timestamp()))*1000))::int AS "leaseRemainingMs"`,
         [sessionId, generation, workerId, leaseToken, leaseMs, CAPABILITY_ID],
       );
@@ -847,7 +912,11 @@ export class BrowserExecutionRepository {
       );
       if (incomplete.rows[0])
         throw new Error(`SCRY_BROWSER_SESSION_INCOMPLETE:${incomplete.rows[0].id}`);
-      if (!(await new ChronicleRepository(client).evidenceComplete(sessionId, true)))
+      const evidence = await new ChronicleRepository(client).evidenceStatus(sessionId, true);
+      if (
+        !evidence?.sealed ||
+        (evidence.state !== "complete" && !(allowUnknown && evidence.state === "incomplete"))
+      )
         throw new Error("SCRY_BROWSER_EVIDENCE_INCOMPLETE");
       await client.query(
         `UPDATE browser_owner_generations SET state='released',terminal_at=now(),replacement_reason='session_finalized'

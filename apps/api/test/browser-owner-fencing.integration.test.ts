@@ -13,6 +13,7 @@ import { BrowserExecutionRepository } from "../src/browser-execution/repositorie
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { Database } from "../src/infrastructure/database.js";
 import { seedSession } from "./fixtures/browser-session.js";
+import { PraxisOwnerLease } from "../../../packages/praxis/src/owner-lease.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const run = databaseUrl && process.env.SCRY_BROWSER_E2E === "1" ? describe : describe.skip;
@@ -88,14 +89,25 @@ run("browser ownership admission", () => {
     const claimed = await effects.claimOwner(sessionId, "completion-owner", 60_000);
     const owner = { sessionId, generation: claimed.generation, leaseToken: claimed.leaseToken };
     const { runId } = await commands.sessionContext(sessionId);
-    const completion = {
+    const lease = new PraxisOwnerLease(owner, effects, claimed);
+    const evidence = await new ChronicleEvidenceService({
+      render: async () => {
+        throw new Error("unused");
+      },
+    }).openSession({
+      admission: lease,
+      root: await mkdtemp(path.join(os.tmpdir(), "scry-completion-receipt-")),
       sessionId,
       runId,
-      chainHead: "a".repeat(64),
-      chunkCount: 1,
-      totalBytes: 64,
-      replayObjectKey: "local://qualification",
-    };
+      protection: new EvidenceCipher(randomBytes(32)),
+      maxSessionBytes: 1048576,
+    });
+    await evidence.startCapture();
+    evidence.createRecording({ snapshot: () => (value) => value }).receive('{"fixture":true}');
+    await evidence.prepareClosure();
+    await evidence.stopCapture({ browserStopped: true, recordingDrained: true });
+    const completion = await evidence.seal({ renderVideo: false, actionLedger: async () => [] });
+    lease.revoke();
     await expect(
       effects.completeEvidence({ ...owner, leaseToken: randomUUID() }, completion),
     ).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
@@ -144,13 +156,13 @@ run("browser ownership admission", () => {
       runId,
       protection,
       maxSessionBytes: 1024 * 1024,
-      admission: { run: (work) => effects.withOwner(owner, work) },
+      admission: new PraxisOwnerLease(owner, effects, claimed),
     });
+    await session.startCapture();
     const recording = session.createRecording({ snapshot: () => (value) => value });
     recording.receive('{"valid":true}');
     await recording.flush();
-    const manifestPath = path.join(directory, "evidence", "manifest.jsonl");
-    const before = await readFile(manifestPath, "utf8");
+    const before = (await effects.readEvidenceStream(owner)).chunks;
     await database.query(
       "UPDATE browser_owner_generations SET lease_expires_at=now()-interval '1 second' WHERE session_id=$1 AND state='active'",
       [sessionId],
@@ -158,7 +170,6 @@ run("browser ownership admission", () => {
     const replacement = await effects.claimOwner(sessionId, "replacement-recording-owner", 60_000);
     recording.receive('{"stale":true}');
     await expect(recording.flush()).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
-    expect(await readFile(manifestPath, "utf8")).toBe(before);
     const identity = {
       sessionId,
       generation: replacement.generation,
@@ -170,17 +181,21 @@ run("browser ownership admission", () => {
       runId,
       protection,
       maxSessionBytes: 1024 * 1024,
-      admission: { run: (work) => effects.withOwner(identity, work) },
+      admission: new PraxisOwnerLease(identity, effects, replacement),
     });
+    expect((await effects.readEvidenceStream(identity)).chunks).toEqual(before);
+    await resumed.startCapture();
     const continuation = resumed.createRecording({ snapshot: () => (value) => value });
     continuation.receive('{"replacement":true}');
     await continuation.flush();
-    expect(
-      (await resumed.seal({ renderVideo: false, actionLedger: async () => [] })).chunkCount,
-    ).toBe(2);
+    await resumed.stopCapture({ browserStopped: true, recordingDrained: true });
+    expect(await resumed.seal({ renderVideo: false, actionLedger: async () => [] })).toMatchObject({
+      chunkCount: 2,
+      state: "incomplete",
+    });
   });
 
-  it("serializes owner replacement after an admitted durable write, including a lease expiring during that write", async () => {
+  it("replaces an expired checkpoint owner without exposing arbitrary lock-held callbacks", async () => {
     const sessionId = await seedSession(database, effects, origin);
     const claimed = await effects.claimOwner(sessionId, "writer-owner", 60_000);
     const owner = { sessionId, generation: claimed.generation, leaseToken: claimed.leaseToken };
@@ -188,37 +203,10 @@ run("browser ownership admission", () => {
       "UPDATE browser_owner_generations SET lease_expires_at=clock_timestamp()+interval '500 milliseconds' WHERE session_id=$1 AND state='active'",
       [sessionId],
     );
-    let started!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    let finish!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    const order: string[] = [];
-    const write = effects.withOwner(owner, async () => {
-      started();
-      await gate;
-      order.push("write");
-    });
-    await entered;
+    await expect(effects.assertOwner(owner)).resolves.toBeUndefined();
+    expect(effects).not.toHaveProperty("withOwner");
     await new Promise((resolve) => setTimeout(resolve, 650));
-    const replace = effects.claimOwner(sessionId, "replacement-writer", 60_000).then((receipt) => {
-      order.push("replace");
-      return receipt;
-    });
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(order).toEqual([]);
-    } finally {
-      finish();
-    }
-    await write;
-    expect((await replace).generation).toBe(2);
-    expect(order).toEqual(["write", "replace"]);
-    await expect(effects.withOwner(owner, async () => undefined)).rejects.toThrow(
-      "SCRY_BROWSER_OWNER_FENCED",
-    );
+    expect((await effects.claimOwner(sessionId, "replacement-writer", 60_000)).generation).toBe(2);
+    await expect(effects.assertOwner(owner)).rejects.toThrow("SCRY_BROWSER_OWNER_FENCED");
   });
 });

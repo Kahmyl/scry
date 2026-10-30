@@ -6,6 +6,7 @@ import { BrowserExecutionRepository } from "../src/browser-execution/repositorie
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { Database } from "../src/infrastructure/database.js";
+import { publishFixtureEvidence } from "./fixtures/evidence-recording.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const run = databaseUrl ? describe : describe.skip;
@@ -573,11 +574,7 @@ run("browser execution baseline repository", () => {
     );
     expect(unknown.rows[0]).toBeDefined();
     await repository.prepareFailureFinalization(sessionId, ownerGeneration);
-    await database.query(
-      `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,replay_artifact_key,retention_expires_at,completed_at)
-       VALUES($1,$2,$3,'complete',$4,1,64,'local://failure-evidence',now()+interval '30 days',now())`,
-      [randomUUID(), sessionId, runId, digest("failure-evidence-chain")],
-    );
+    await publishFixtureEvidence(database, repository, sessionId, ownerGeneration);
     await repository.finalizeFailedSession(sessionId, ownerGeneration);
     expect(await repository.observeEffect(unknown.rows[0]!.id)).toMatchObject({
       mutation_outcome: "unknown",

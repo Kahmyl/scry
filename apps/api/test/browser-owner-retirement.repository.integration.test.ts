@@ -76,9 +76,8 @@ live("durable confirmed-owner retirement", () => {
     const { owner, effect } = await admitted();
     await effects.markDispatchStarted(effect.id, owner.generation);
     await effects.retireOwner(receipt(owner));
-    const write = vi.fn(async () => undefined);
-    await expect(effects.withOwner(owner, write)).rejects.toThrow("OWNER_FENCED");
-    expect(write).not.toHaveBeenCalled();
+    await expect(effects.assertOwner(owner)).rejects.toThrow("OWNER_FENCED");
+    expect(effects).not.toHaveProperty("withOwner");
     await expect(
       effects.markUnknown(effect.id, owner.generation, "late_old_owner"),
     ).rejects.toThrow("OWNER_FENCED");
