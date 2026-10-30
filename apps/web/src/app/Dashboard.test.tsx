@@ -138,6 +138,9 @@ describe("browser baseline production dashboard", () => {
         </MemoryRouter>,
       );
       expect(await screen.findByText(title)).toBeTruthy();
+      expect(screen.getByText("failed").closest(".metric")?.classList.contains("failure")).toBe(
+        true,
+      );
       expect(screen.getByText(copy)).toBeTruthy();
       expect(screen.queryByText(/decisions are pending/i)).toBeNull();
       expect(document.querySelector("video")).toBeNull();

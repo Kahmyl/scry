@@ -366,7 +366,7 @@ function MissionDetailView({ missionId, onBack }: { missionId: string; onBack: (
         copy={mission.instruction}
       />
       <section className="metric-grid metric-grid-compact">
-        <Metric label="State" value={human(mission.state)} />
+        <Metric label="State" value={human(mission.state)} state={mission.state} />
         <Metric label="Objectives" value={mission.objectives.length} />
         <Metric label="Flows / Runs" value={`${mission.flows.length} / ${mission.runs.length}`} />
       </section>
@@ -419,7 +419,7 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
         copy={`${run.environmentName} · ${run.baseOrigin}`}
       />
       <section className="metric-grid metric-grid-compact">
-        <Metric label="State" value={human(run.state)} />
+        <Metric label="State" value={human(run.state)} state={run.state} />
         <Metric
           label="Authentication effects"
           value={`${run.authenticationCommitsUsed}/${run.authenticationCommitLimit}`}
@@ -631,9 +631,23 @@ function ListHeading({ title, onOpen }: { title: string; onOpen?: () => void }) 
     </div>
   );
 }
-function Metric({ label, value }: { label: string; value: string | number }) {
+function Metric({
+  label,
+  value,
+  state,
+}: {
+  label: string;
+  value: string | number;
+  state?: string;
+}) {
+  const tone =
+    !state || ["passed", "completed", "complete", "resolved"].includes(state)
+      ? "lime"
+      : ["failed", "infrastructure_error", "timed_out", "corrupt"].includes(state)
+        ? "failure"
+        : "";
   return (
-    <div className="metric lime">
+    <div className={`metric ${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
     </div>

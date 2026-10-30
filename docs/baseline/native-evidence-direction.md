@@ -114,6 +114,13 @@ and cannot be swallowed to admit a seal. A failure seal and its artifact referen
 are immutable; repeated close observes the same facts. Historical seals/reports
 are never rewritten to add a new availability judgment.
 
+Every close path must expose the same safe evidence state and availability reason
+to the calling agent, whether it stops a live capture, recovers a stopped prefix,
+or observes an existing seal. A generic "closed" response is not a statement that
+the recording is complete. Public API/MCP qualification must include actual
+artifact failure, normal sign-in to the compiled dashboard, and responsive visual
+inspection; fetching the dashboard HTML is only an asset smoke check.
+
 This follows established artifact-handling principles, not a new cloud dependency:
 [GitHub artifact handling](https://github.com/actions/upload-artifact) makes missing
 artifacts explicit, and [S3 object-read semantics](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html)

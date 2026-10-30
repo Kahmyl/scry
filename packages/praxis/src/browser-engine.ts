@@ -8,6 +8,7 @@ import type {
   BrowserOutputSelection,
   ChronicleEvidencePort,
   ChronicleEvidenceSessionPort,
+  EvidenceCompletion,
   PraxisCommandsPort,
   PraxisEffectsPort,
   VeilBrowserProtectionPort,
@@ -92,7 +93,7 @@ function safeRedirectChain(
 export class PraxisBrowserEngine {
   readonly #sessions = new Map<string, ActiveSession>();
   readonly #opening = new Map<string, Promise<{ sessionId: string; ownerGeneration: number }>>();
-  readonly #closing = new Map<string, Promise<void>>();
+  readonly #closing = new Map<string, Promise<EvidenceCompletion | undefined>>();
   readonly #resources = new Map<string, BrowserResources>();
   readonly #incarnations = new Map<string, BrowserIncarnation>();
   readonly #commandLanes = new Map<string, CommandLane>();
@@ -491,35 +492,46 @@ export class PraxisBrowserEngine {
           command.source,
         )) as unknown as Record<string, unknown>;
       case "close":
-        await this.close(session.sessionId);
-        return { closed: true };
-      case "close_for_failure":
-        await this.closeForFailure(session.sessionId);
-        return { closed: true, unresolvedEffectsPreserved: true };
+      case "close_for_failure": {
+        const forFailure = command.kind === "close_for_failure";
+        const completion = await this.closeSession(session.sessionId, forFailure);
+        return {
+          closed: true,
+          ...(completion ? { evidenceState: completion.state } : {}),
+          ...(completion?.issue ? { evidenceIssue: completion.issue } : {}),
+          ...(forFailure ? { unresolvedEffectsPreserved: true } : {}),
+        };
+      }
     }
   }
 
   async close(sessionId: string): Promise<void> {
-    return this.closeSession(sessionId, false);
+    await this.closeSession(sessionId, false);
   }
 
   async closeForFailure(sessionId: string): Promise<void> {
-    return this.closeSession(sessionId, true);
+    await this.closeSession(sessionId, true);
   }
 
-  private async closeSession(sessionId: string, forFailure: boolean): Promise<void> {
+  private async closeSession(
+    sessionId: string,
+    forFailure: boolean,
+  ): Promise<EvidenceCompletion | undefined> {
     const existing = this.#closing.get(sessionId);
     if (existing) return existing;
     const operation = this.finishSession(sessionId, forFailure);
     this.#closing.set(sessionId, operation);
     try {
-      await operation;
+      return await operation;
     } finally {
       this.#closing.delete(sessionId);
     }
   }
 
-  private async finishSession(sessionId: string, forFailure: boolean): Promise<void> {
+  private async finishSession(
+    sessionId: string,
+    forFailure: boolean,
+  ): Promise<EvidenceCompletion | undefined> {
     const session = this.#sessions.get(sessionId);
     if (!session) return;
     await this.assertSessionOwner(session);
@@ -547,6 +559,7 @@ export class PraxisBrowserEngine {
       session.lease.assertActive();
       await this.effects.completeEvidence(this.ownerIdentity(session), completion);
       await this.commands.deleteBrowserCheckpoint(sessionId, session.ownerGeneration);
+      return completion;
     } finally {
       await this.evict(session);
     }
