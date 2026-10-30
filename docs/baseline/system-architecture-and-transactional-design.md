@@ -273,6 +273,11 @@ best-effort diagnostic persistence. These guards require coordinated worker
 replacement; they do not retrofit older binaries. Independent process supervision
 and durable uncertain-work recovery remain separate qualification requirements.
 
+Nonterminal recovery facts retain a finite runtime stage cause, distinguishing
+execution drain, process stop, recorder stop and durable owner retirement.
+Unknown/private cause strings are never persisted. This does not turn an
+unconfirmed runtime result into a terminal command outcome.
+
 ## Browser ownership and fencing
 
 A Browser session has at most one active owner. Each new claim increments the
@@ -309,16 +314,21 @@ When an owner is replaced:
 
 This preserves external-side-effect truth across worker crashes and lease loss.
 
-The selected isolated owner-lifecycle correction extends that same rule to
-confirmed process retirement, rather than waiting for an abandoned lease to
-expire. Database owner clocks are evaluated after their locks; local owner
-validity uses acknowledged database-relative samples and a monotonic watchdog.
-An owner cannot renew or act after local revocation. Physical process exit and
-recording drain must be confirmed before admitting retirement. Pending effects
-are reconciled by one shared rule for both retirement and replacement, before
-authority is released. Retirement of an older generation cannot release a newer
-owner. Unconfirmed containment remains fenced and requires failed host recovery.
-This is the next candidate correction, not an assertion of current activation.
+Confirmed local retirement now uses a private exact-owner receipt after browser
+custody has stopped and the recorder has drained. Replacement, retirement and
+failure finalization use one pending-effect reconciliation rule. Reconciliation
+and owner release commit together, making immediate replacement possible without
+waiting for the old lease. An expired current owner may reduce its authority this
+way; it may not renew or dispatch work. An old terminal generation's repeated
+receipt cannot settle newer effects or release a newer owner. Existing determined
+facts and historical evidence remain unchanged. There is no separate unverified
+startup-release shortcut. A failed durable retirement retains the unavailable
+resource cell and requires nonterminal host recovery even after physical exit.
+
+These are isolated candidate corrections, not customer activation of the native
+evidence producer. Independent process supervision and immutable short evidence
+admission remain separate required boundaries. Unconfirmed containment or durable
+reconciliation remains fenced and requires failed host recovery.
 
 ## Controlled mutation transaction
 

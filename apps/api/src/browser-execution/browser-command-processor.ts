@@ -2,6 +2,7 @@ import { DelayedError, type Job } from "bullmq";
 import type { PraxisExecutionPort } from "@scry/contracts";
 import type { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
 import { CommandExecutionLease } from "./command-execution-lease.js";
+import { runtimeRecoveryCode } from "./command-recovery.js";
 
 /** Ordered admission is not a failed browser action or an infrastructure retry.
  * Both production and integration workers use this processor, not copied logic.
@@ -46,18 +47,14 @@ export async function processBrowserCommand(
     await commands.complete(command.id, claimToken, result);
     return result;
   } catch (error) {
-    if (
-      error instanceof Error &&
-      [
-        "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED",
-        "SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED",
-        "SCRY_BROWSER_RECORDER_STOP_TIMEOUT",
-      ].includes(error.message)
-    ) {
+    const recoveryCode = error instanceof Error ? runtimeRecoveryCode(error.message) : undefined;
+    if (recoveryCode) {
       // Diagnostic persistence is best effort; host containment never depends on
       // a database still being available or this claimant still being current.
       options.onUnconfirmedDrain?.();
-      await commands.noteRecoveryRequired(command.id, claimToken).catch(() => undefined);
+      await commands
+        .noteRecoveryRequired(command.id, claimToken, recoveryCode)
+        .catch(() => undefined);
       throw new Error("SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED");
     }
     await commands.fail(command.id, claimToken, lease.failure ?? error);

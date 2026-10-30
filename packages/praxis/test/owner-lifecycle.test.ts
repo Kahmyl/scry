@@ -87,7 +87,7 @@ function fixture() {
       leaseRemainingMs: 60000,
       sampleStartedAt: performance.now(),
     })),
-    releaseOwner: vi.fn(async () => undefined),
+    retireOwner: vi.fn(async (_receipt: unknown): Promise<void> => undefined),
     durableCapturesForSession: vi.fn(async () => []),
     withOwner: vi.fn(async <T>(_owner: unknown, work: () => Promise<T>) => work()),
     assertNoPendingEffectOutcomes: vi.fn(async () => undefined),
@@ -141,6 +141,43 @@ afterEach(() => {
 });
 
 describe("browser owner lifecycle", () => {
+  it("waits for durable retirement admission before making the stopped incarnation vacant", async () => {
+    const { engine, effects } = fixture();
+    await engine.open("session");
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    effects.retireOwner.mockImplementationOnce(() => gate);
+    effects.heartbeatOwner.mockRejectedValueOnce(new Error("database unavailable"));
+    await vi.advanceTimersByTimeAsync(20000);
+    const replacement = engine.open("session");
+    try {
+      await Promise.resolve();
+      expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
+      expect(effects.retireOwner).toHaveBeenCalledTimes(1);
+      expect(effects.claimOwner).toHaveBeenCalledTimes(1);
+      finish();
+      await replacement;
+      expect(effects.claimOwner).toHaveBeenCalledTimes(2);
+    } finally {
+      finish();
+      await replacement.catch(() => undefined);
+      await engine.closeAll();
+    }
+  });
+  it("retains failed durable retirement after physical stop and requires host recovery", async () => {
+    const { engine, effects } = fixture();
+    await engine.open("session");
+    effects.retireOwner.mockRejectedValueOnce(new Error("private_database_failure"));
+    effects.heartbeatOwner.mockRejectedValueOnce(new Error("database unavailable"));
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
+    await expect(engine.open("session")).rejects.toThrow("OWNER_RETIREMENT_UNCONFIRMED");
+    await expect(engine.closeAll()).rejects.toThrow("OWNER_RETIREMENT_UNCONFIRMED");
+    expect(effects.claimOwner).toHaveBeenCalledTimes(1);
+    expect(effects.retireOwner).toHaveBeenCalledTimes(1);
+  });
   async function clocked(work: () => Promise<void>): Promise<void> {
     vi.useFakeTimers();
     const origin = Date.now();
@@ -491,7 +528,7 @@ describe("browser owner lifecycle", () => {
     await expect(engine.open("session")).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
     await expect(engine.closeAll()).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
     expect(effects.claimOwner).toHaveBeenCalledTimes(1);
-    expect(effects.releaseOwner).not.toHaveBeenCalled();
+    expect(effects.retireOwner).not.toHaveBeenCalled();
   });
   it("does not release a startup owner when failed acquisition reports an unconfirmed child", async () => {
     const { engine, effects } = fixture();
@@ -501,7 +538,7 @@ describe("browser owner lifecycle", () => {
     await expect(engine.open("session")).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
     await expect(engine.open("session")).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
     expect(effects.claimOwner).toHaveBeenCalledTimes(1);
-    expect(effects.releaseOwner).not.toHaveBeenCalled();
+    expect(effects.retireOwner).not.toHaveBeenCalled();
   });
   it("stops a process whose context creation finishes after host shutdown", async () => {
     const { engine } = fixture();
@@ -570,7 +607,7 @@ describe("browser owner lifecycle", () => {
     release(ownerClaim());
     await expect(opening).rejects.toThrow("SESSION_CLOSING");
     expect(browserFixture.ownedLaunch).not.toHaveBeenCalled();
-    expect(effects.releaseOwner).toHaveBeenCalledTimes(1);
+    expect(effects.retireOwner).toHaveBeenCalledTimes(1);
   });
   it("maintains and revokes ownership during pre-browser startup rather than waiting for a page", async () => {
     const { engine, effects, commands } = fixture();
@@ -615,7 +652,7 @@ describe("browser owner lifecycle", () => {
     expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(2);
   });
   it("physically stops before waiting for a stalled recorder detach and retains failed drain", async () => {
-    const { engine } = fixture();
+    const { engine, effects } = fixture();
     await engine.open("session");
     browserFixture.recorder.abort.mockImplementationOnce(() => new Promise(() => {}));
     const stopping = engine.closeAll();
@@ -626,6 +663,7 @@ describe("browser owner lifecycle", () => {
     expect(browserFixture.custody.terminate).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(2001);
     await refused;
+    expect(effects.retireOwner).not.toHaveBeenCalled();
     await expect(engine.closeAll()).rejects.toThrow("PROCESS_TERMINATION_UNCONFIRMED");
   });
   it("retires unexpected browser disconnection without sealing or releasing product truth", async () => {
@@ -727,7 +765,11 @@ describe("browser owner lifecycle", () => {
       throw new Error("protection unavailable");
     });
     await expect(engine.open("session")).rejects.toThrow("protection unavailable");
-    expect(effects.releaseOwner).toHaveBeenCalledWith("session", 1, "token");
+    expect(effects.retireOwner).toHaveBeenCalledWith({
+      owner: { sessionId: "session", generation: 1, leaseToken: "token" },
+      browserStopped: true,
+      recordingDrained: true,
+    });
     expect(browserFixture.ownedLaunch).not.toHaveBeenCalled();
   });
 

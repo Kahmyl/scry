@@ -17,6 +17,7 @@ import type { PraxisStorageState } from "@scry/contracts";
 
 import { Database } from "../../infrastructure/database.js";
 import { commandExecutionBudgetMs } from "../command-budget.js";
+import { runtimeRecoveryCode, type RuntimeRecoveryCode } from "../command-recovery.js";
 import { lockLiveBrowserOwner } from "./browser-owner-admission.js";
 import {
   BrowserProtectedValueCipher,
@@ -491,12 +492,17 @@ export class BrowserCommandRepository {
     });
   }
 
-  async noteRecoveryRequired(commandId: string, claimToken: string): Promise<void> {
+  async noteRecoveryRequired(
+    commandId: string,
+    claimToken: string,
+    cause: RuntimeRecoveryCode = "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED",
+  ): Promise<void> {
+    const code = runtimeRecoveryCode(cause) ?? "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED";
     await this.withLiveClaim(commandId, claimToken, "fail", async (client) => {
-      await client.query(
-        "UPDATE browser_commands SET error_code='SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED' WHERE id=$1",
-        [commandId],
-      );
+      await client.query("UPDATE browser_commands SET error_code=$2 WHERE id=$1", [
+        commandId,
+        code,
+      ]);
     });
   }
 

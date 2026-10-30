@@ -169,15 +169,18 @@ describe("carried command processor lifetime", () => {
       await observed;
     }
   });
-  it("keeps unconfirmed runtime work nonterminal and requests host recovery", async () => {
+  it.each([
+    "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED",
+    "SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED",
+    "SCRY_BROWSER_RECORDER_STOP_TIMEOUT",
+    "SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED",
+  ])("keeps %s nonterminal and requests host recovery", async (code) => {
     const f = fixture();
-    f.praxis.executeCommand.mockRejectedValueOnce(
-      new Error("SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED"),
-    );
+    f.praxis.executeCommand.mockRejectedValueOnce(new Error(code));
     await expect(f.run()).rejects.toThrow("COMMAND_DRAIN_UNCONFIRMED");
     expect(f.commands.fail).not.toHaveBeenCalled();
     expect(f.commands.complete).not.toHaveBeenCalled();
-    expect(f.commands.noteRecoveryRequired).toHaveBeenCalledWith("command", "claim");
+    expect(f.commands.noteRecoveryRequired).toHaveBeenCalledWith("command", "claim", code);
     expect(f.onUnconfirmedDrain).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
