@@ -39,6 +39,26 @@ function fixture(initial = sample()) {
   return { lease, commands };
 }
 describe("carried command execution and claim clocks", () => {
+  it("exports relative authority and changes renewal revision only after an acknowledged heartbeat", async () => {
+    const { lease, commands } = fixture(sample(120000, 60000, 200));
+    try {
+      expect(lease.authoritySample()).toEqual({
+        executionRemainingMs: 119800,
+        claimRemainingMs: 59800,
+        claimRevision: 0,
+      });
+      await lease.checkpoint();
+      expect(lease.authoritySample().claimRevision).toBe(0);
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(commands.heartbeatClaim).toHaveBeenCalledTimes(1);
+      expect(lease.authoritySample().claimRevision).toBe(1);
+      await lease.checkpoint();
+      expect(lease.authoritySample().claimRevision).toBe(1);
+    } finally {
+      lease.dispose();
+    }
+    expect(() => lease.authoritySample()).toThrow("ATTEMPT_ENDED");
+  });
   it("does not roll back an acknowledged renewal when a pre-renewal checkpoint arrives late", async () => {
     const { lease, commands } = fixture();
     let deliver!: (value: CommandClaimSample) => void;

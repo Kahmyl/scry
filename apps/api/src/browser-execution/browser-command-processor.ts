@@ -42,6 +42,7 @@ export async function processBrowserCommand(
       remainingMs: lease.remainingMs(),
       signal: lease.signal,
       assertCurrent: () => lease.checkpoint(),
+      sampleAuthority: () => lease.authoritySample(),
     });
     lease.assertActive();
     await commands.complete(command.id, claimToken, result);

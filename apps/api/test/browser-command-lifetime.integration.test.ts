@@ -6,7 +6,7 @@ import path from "node:path";
 import { Queue, QueueEvents, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { OwnedBrowser } from "@scry/praxis";
+import { SupervisedBrowser } from "@scry/praxis";
 import { composePraxisExecutionPort } from "../src/browser-execution/browser-boundary-composition.js";
 import { processBrowserCommand } from "../src/browser-execution/browser-command-processor.js";
 import {
@@ -71,7 +71,7 @@ live("actual queue carried command lifetime", () => {
       name = "command-lifetime-" + randomUUID();
     const queue = new Queue<{ commandId: string }>(name, { connection }),
       events = new QueueEvents(name, { connection });
-    const launch = vi.spyOn(OwnedBrowser, "launch");
+    const launch = vi.spyOn(SupervisedBrowser, "launch");
     let shutdown!: () => Promise<void>;
     const worker = new Worker<{ commandId: string }>(
       name,
@@ -160,9 +160,14 @@ live("actual queue carried command lifetime", () => {
       expect(browser.browser.isConnected()).toBe(false);
       const result = await f.commands.observe(commandId);
       expect(result.state).toBe("failed");
-      expect(["SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED", "SCRY_BROWSER_ACTION_TIMEOUT"]).toContain(
-        result.errorCode,
-      );
+      // Custodian budgets conservatively include transport time. It may fence
+      // dispatch just before the controller's timer; positive stop is still
+      // required, and unconfirmed termination is never an accepted outcome.
+      expect([
+        "SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED",
+        "SCRY_BROWSER_ACTION_TIMEOUT",
+        "SCRY_BROWSER_OWNER_FENCED",
+      ]).toContain(result.errorCode);
     } finally {
       requested = undefined;
       await f.close();

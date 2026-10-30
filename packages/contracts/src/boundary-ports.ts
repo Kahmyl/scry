@@ -11,10 +11,23 @@ export const praxisSessionReceiptSchema = z.object({
 export type PraxisSessionReceipt = z.infer<typeof praxisSessionReceiptSchema>;
 
 /** Private application-to-runtime control, never accepted from an HTTP command. */
+export interface PraxisCommandAuthoritySample {
+  executionRemainingMs: number;
+  claimRemainingMs: number;
+  claimRevision: number;
+}
 export interface PraxisCommandOptions {
   remainingMs: number;
   signal?: AbortSignal;
   assertCurrent?: () => Promise<void>;
+  /** Synchronous mirror of already acknowledged database authority; no query or
+   * token crosses the custodian boundary. A liveness ping never renews it. */
+  sampleAuthority?: () => PraxisCommandAuthoritySample;
+}
+/** Host containment notification, including failures observed while no command
+ * is active. Not a customer callback or permission to replay an effect. */
+export interface PraxisRuntimeOptions {
+  onUnconfirmedRuntime?: () => void;
 }
 
 /** Application-facing browser execution capability. */

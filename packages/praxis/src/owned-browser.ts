@@ -8,6 +8,8 @@ export interface OwnedBrowserOptions {
   connectTimeoutMs?: number;
   gracefulCloseMs?: number;
   killTimeoutMs?: number;
+  /** A private custodian installs its own shutdown handlers. */
+  handleSignals?: boolean;
 }
 
 export interface BrowserTerminationReceipt {
@@ -20,6 +22,20 @@ function budget(value: number | undefined, fallback: number, maximum: number, al
   if (!Number.isSafeInteger(result) || result < (allowZero ? 0 : 1) || result > maximum)
     throw new Error("SCRY_BROWSER_PROCESS_CONFIGURATION_INVALID");
   return result;
+}
+export function assertBrowserProcessOptions(options: OwnedBrowserOptions): void {
+  budget(options.launchTimeoutMs, 15000, 120000);
+  budget(options.connectTimeoutMs, 5000, 30000);
+  budget(options.gracefulCloseMs, 2000, 30000, true);
+  budget(options.killTimeoutMs, 5000, 30000);
+  if (
+    (options.headless !== undefined && typeof options.headless !== "boolean") ||
+    (options.channel !== undefined &&
+      (typeof options.channel !== "string" || !/^[a-z0-9-]{1,64}$/u.test(options.channel))) ||
+    (options.executablePath !== undefined &&
+      (typeof options.executablePath !== "string" || options.executablePath.length > 4096))
+  )
+    throw new Error("SCRY_BROWSER_PROCESS_CONFIGURATION_INVALID");
 }
 
 async function bounded<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -43,7 +59,7 @@ async function bounded<T>(operation: Promise<T>, timeoutMs: number): Promise<T> 
  * release execution authority only after an exit-confirmed receipt. Endpoint
  * credentials remain private. No authority is inferred from a timeout alone.
  */
-export class OwnedBrowser {
+export class BrowserProcessCustody {
   #disposal: Promise<BrowserTerminationReceipt> | undefined;
   #terminationState: "active" | "terminating" | "exited" | "unconfirmed" = "active";
   #forceRequested = false;
@@ -53,23 +69,15 @@ export class OwnedBrowser {
   });
 
   private constructor(
-    readonly browser: Browser,
     private readonly server: BrowserServer,
     private readonly gracefulCloseMs: number,
     private readonly killTimeoutMs: number,
-  ) {
-    browser.once("disconnected", () => {
-      if (this.#terminationState !== "active") return;
-      // A lost control connection must not leave an autonomous child acting.
-      // Retain a rejected disposal and explicit unconfirmed state for callers;
-      // this observer prevents an unhandled background rejection, not a waiver.
-      void this.terminate().catch(() => undefined);
-    });
-  }
+  ) {}
 
-  static async launch(options: OwnedBrowserOptions = {}): Promise<OwnedBrowser> {
+  static async launch(options: OwnedBrowserOptions = {}): Promise<BrowserProcessCustody> {
+    assertBrowserProcessOptions(options);
     const launchTimeout = budget(options.launchTimeoutMs, 15000, 120000);
-    const connectTimeout = budget(options.connectTimeoutMs, 5000, 30000);
+    budget(options.connectTimeoutMs, 5000, 30000);
     const grace = budget(options.gracefulCloseMs, 2000, 30000, true);
     const killTimeout = budget(options.killTimeoutMs, 5000, 30000);
     let server: BrowserServer;
@@ -79,34 +87,21 @@ export class OwnedBrowser {
         port: 0,
         timeout: launchTimeout,
         headless: options.headless ?? true,
+        ...(options.handleSignals === false
+          ? { handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false }
+          : {}),
         ...(options.channel ? { channel: options.channel } : {}),
         ...(options.executablePath ? { executablePath: options.executablePath } : {}),
       });
     } catch {
       throw new Error("SCRY_BROWSER_PROCESS_LAUNCH_FAILED");
     }
-    let code = "SCRY_BROWSER_PROCESS_CONNECT_FAILED";
-    try {
-      const endpointText = server.wsEndpoint();
-      const endpoint = new URL(endpointText);
-      if (
-        endpoint.protocol !== "ws:" ||
-        endpoint.hostname !== "127.0.0.1" ||
-        !endpoint.port ||
-        endpoint.username ||
-        endpoint.password
-      ) {
-        code = "SCRY_BROWSER_PROCESS_ENDPOINT_INVALID";
-        throw new Error(code);
-      }
-      const browser = await chromium.connect(endpointText, { timeout: connectTimeout });
-      if (!browser.isConnected()) throw new Error(code);
-      return new OwnedBrowser(browser, server, grace, killTimeout);
-    } catch {
-      // A failed client connection does not relinquish ownership of the child.
-      await terminateServer(server, grace, killTimeout);
-      throw new Error(code);
-    }
+    return new BrowserProcessCustody(server, grace, killTimeout);
+  }
+
+  /** Private loopback connection capability. Never persist or disclose it. */
+  endpoint(): string {
+    return this.server.wsEndpoint();
   }
 
   get exitConfirmed(): boolean {
@@ -119,8 +114,6 @@ export class OwnedBrowser {
   close(): Promise<BrowserTerminationReceipt> {
     if (!this.#disposal) {
       this.#terminationState = "terminating";
-      // Assign the shared operation before invoking driver callbacks, including
-      // a synchronous disconnect emitted during close.
       this.#disposal = Promise.resolve()
         .then(() =>
           terminateServer(
@@ -145,12 +138,66 @@ export class OwnedBrowser {
     return this.#disposal;
   }
 
-  /** Escalates an already-running graceful close, rather than starting a second
-   * disposal or waiting out an unrelated grace interval. */
   terminate(): Promise<BrowserTerminationReceipt> {
     this.#forceRequested = true;
     this.#requestForce();
     return this.close();
+  }
+}
+
+/** Local client adapter retained for supported replay and native tests. The
+ * exact BrowserServer custody is shared with the separate execution custodian. */
+export class OwnedBrowser {
+  private constructor(
+    readonly browser: Browser,
+    private readonly custody: BrowserProcessCustody,
+  ) {
+    browser.once("disconnected", () => {
+      if (custody.terminationState === "active") void custody.terminate().catch(() => undefined);
+    });
+  }
+  static async launch(options: OwnedBrowserOptions = {}): Promise<OwnedBrowser> {
+    const connectTimeout = budget(options.connectTimeoutMs, 5000, 30000);
+    const custody = await BrowserProcessCustody.launch(options);
+    let code = "SCRY_BROWSER_PROCESS_CONNECT_FAILED";
+    try {
+      const endpointText = custody.endpoint();
+      const endpoint = new URL(endpointText);
+      if (
+        endpoint.protocol !== "ws:" ||
+        endpoint.hostname !== "127.0.0.1" ||
+        !endpoint.port ||
+        endpoint.username ||
+        endpoint.password
+      ) {
+        code = "SCRY_BROWSER_PROCESS_ENDPOINT_INVALID";
+        throw new Error(code);
+      }
+      const browser = await chromium.connect(endpointText, { timeout: connectTimeout });
+      if (!browser.isConnected()) throw new Error(code);
+      return new OwnedBrowser(browser, custody);
+    } catch {
+      // A failed client connection does not relinquish ownership of the child.
+      await custody.close();
+      throw new Error(code);
+    }
+  }
+
+  get exitConfirmed(): boolean {
+    return this.custody.exitConfirmed;
+  }
+  get terminationState(): "active" | "terminating" | "exited" | "unconfirmed" {
+    return this.custody.terminationState;
+  }
+
+  close(): Promise<BrowserTerminationReceipt> {
+    return this.custody.close();
+  }
+
+  /** Escalates an already-running graceful close, rather than starting a second
+   * disposal or waiting out an unrelated grace interval. */
+  terminate(): Promise<BrowserTerminationReceipt> {
+    return this.custody.terminate();
   }
 }
 

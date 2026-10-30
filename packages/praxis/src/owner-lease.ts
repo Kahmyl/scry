@@ -12,6 +12,7 @@ export class PraxisOwnerLease implements EvidenceWriteAdmission {
   #state: "active" | "revoked" = "active";
   readonly #controller = new AbortController();
   #deadline = Infinity;
+  #revision = 0;
   #watch: NodeJS.Timeout | undefined;
   #heartbeat: NodeJS.Timeout | undefined;
   #renewalBudget: number | undefined;
@@ -27,6 +28,13 @@ export class PraxisOwnerLease implements EvidenceWriteAdmission {
 
   get signal(): AbortSignal {
     return this.#controller.signal;
+  }
+  authoritySample(): { revision: number; remainingMs: number } {
+    this.assertActive();
+    return {
+      revision: this.#revision,
+      remainingMs: Math.max(0, Math.floor(this.#deadline - this.now())),
+    };
   }
 
   startHeartbeat(leaseMs: number): void {
@@ -131,6 +139,7 @@ export class PraxisOwnerLease implements EvidenceWriteAdmission {
         this.assertActive();
         this.apply(sample);
         this.assertActive();
+        this.#revision += 1;
       })
       .catch((error) => {
         this.revoke();

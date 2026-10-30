@@ -15,14 +15,17 @@ import type {
   VeilBrowserCapturePort,
   PraxisOwnerIdentity,
   PraxisCommandOptions,
+  PraxisRuntimeOptions,
 } from "@scry/contracts";
 import { SanitizedBrowserRecorder } from "./recorder.js";
 import { PraxisOwnerLease } from "./owner-lease.js";
-import { OwnedBrowser } from "./owned-browser.js";
+import { SupervisedBrowser } from "./supervised-browser.js";
+import { ExecutionSupervision } from "./execution-supervision.js";
 import { CommandLane, type CommandAttempt } from "./command-lane.js";
 
 interface BrowserIncarnation {
   sessionId: string;
+  supervision: ExecutionSupervision;
   state: "active" | "retired" | "command_cancelled";
   resources?: BrowserResources;
 }
@@ -33,7 +36,7 @@ interface BrowserResources {
   lease: PraxisOwnerLease;
   state: "opening" | "active" | "retiring" | "retired" | "unconfirmed";
   expectedExit: boolean;
-  launch?: Promise<OwnedBrowser>;
+  launch?: Promise<SupervisedBrowser>;
   recorder?: SanitizedBrowserRecorder;
   session?: ActiveSession;
   retirement?: Promise<void>;
@@ -94,12 +97,14 @@ export class PraxisBrowserEngine {
   readonly #incarnations = new Map<string, BrowserIncarnation>();
   readonly #commandLanes = new Map<string, CommandLane>();
   #stopping = false;
+  #runtimeUnconfirmed = false;
   constructor(
     private readonly commands: PraxisCommandsPort,
     private readonly effects: PraxisEffectsPort,
     private readonly evidenceService: ChronicleEvidencePort,
     private readonly protection: VeilBrowserProtectionPort,
     private readonly executionBudgetMs: (kind: BrowserCommand["kind"]) => number,
+    private readonly runtimeOptions: PraxisRuntimeOptions = {},
   ) {}
 
   async open(
@@ -194,9 +199,14 @@ export class PraxisBrowserEngine {
       this.assertOpening(resources);
       await lease.run(async () => undefined);
       this.assertOpening(resources);
-      resources.launch = OwnedBrowser.launch({
+      resources.launch = SupervisedBrowser.launch({
         headless: process.env.SCRY_BROWSER_HEADLESS !== "false",
         channel: process.env.SCRY_BROWSER_CHANNEL ?? "chrome",
+        onUnconfirmedStop: () => this.containRuntimeFailure(),
+        sampleAuthority: () => {
+          this.assertIncarnation(incarnation);
+          return { owner: lease.authoritySample(), command: incarnation.supervision.sample() };
+        },
       });
       const custody = await resources.launch;
       custody.browser.once("disconnected", () => {
@@ -261,6 +271,8 @@ export class PraxisBrowserEngine {
       }
       await lease.run(async () => undefined);
       this.assertOpening(resources);
+      await custody.completeSetup();
+      this.assertOpening(resources);
       resources.state = "active";
       this.#sessions.set(sessionId, session);
       return { sessionId, ownerGeneration: owner.generation };
@@ -296,12 +308,14 @@ export class PraxisBrowserEngine {
             },
           });
           try {
+            incarnation.supervision.begin(attempt, options?.sampleAuthority);
             const current = async () => {
               attempt.assertActive();
               await options?.assertCurrent?.();
               attempt.assertActive();
             };
             const session = await this.requiredSession(sessionId, incarnation);
+            await (await session.resources.launch!).synchronize();
             try {
               const result = await this.executeInSession(session, command, attempt, current);
               attempt.assertActive();
@@ -341,6 +355,9 @@ export class PraxisBrowserEngine {
             }
           } finally {
             attempt.signal.removeEventListener("abort", revoke);
+            const resources = incarnation.resources;
+            incarnation.supervision.finish(resources?.state === "retired");
+            if (resources?.state === "active") await (await resources.launch!).synchronize();
           }
         },
       );
@@ -372,7 +389,9 @@ export class PraxisBrowserEngine {
     switch (command.kind) {
       case "navigate": {
         this.assertOrigin(session, command.url);
-        await session.page.goto(command.url, { timeout: attempt.remainingMs() });
+        await this.nativePhase(session, 15000, () =>
+          session.page.goto(command.url, { timeout: attempt.remainingMs(15000) }),
+        );
         return this.observe(session);
       }
       case "observe":
@@ -386,17 +405,27 @@ export class PraxisBrowserEngine {
           );
           try {
             await current();
-            await handle.fill(value, { timeout: attempt.remainingMs() });
+            await this.nativePhase(session, 15000, () =>
+              handle.fill(value, { timeout: attempt.remainingMs(15000) }),
+            );
           } finally {
             value = "";
           }
-        } else await handle.fill(command.publicValue ?? "", { timeout: attempt.remainingMs() });
+        } else
+          await this.nativePhase(session, 15000, () =>
+            handle.fill(command.publicValue ?? "", { timeout: attempt.remainingMs(15000) }),
+          );
         return { documentEpoch: session.documentEpoch, filled: true };
       }
       case "click":
         await this.readOnlyInteraction(
           session,
-          () => this.handle(session, command.reference).click({ timeout: attempt.remainingMs() }),
+          () =>
+            this.nativePhase(session, 15000, () =>
+              this.handle(session, command.reference).click({
+                timeout: attempt.remainingMs(15000),
+              }),
+            ),
           attempt,
           current,
         );
@@ -405,9 +434,11 @@ export class PraxisBrowserEngine {
         await this.readOnlyInteraction(
           session,
           () =>
-            this.handle(session, command.reference).press(command.key, {
-              timeout: attempt.remainingMs(),
-            }),
+            this.nativePhase(session, 15000, () =>
+              this.handle(session, command.reference).press(command.key, {
+                timeout: attempt.remainingMs(15000),
+              }),
+            ),
           attempt,
           current,
         );
@@ -588,6 +619,7 @@ export class PraxisBrowserEngine {
       })
       .catch((error) => {
         resources.state = "unconfirmed";
+        this.containRuntimeFailure();
         // Retain the exact retirement promise. No later local open may mistake
         // an unconfirmed process/recorder drain for a vacant session.
         throw error;
@@ -598,10 +630,24 @@ export class PraxisBrowserEngine {
     return resources.retirement;
   }
 
+  private containRuntimeFailure(): void {
+    if (this.#runtimeUnconfirmed) return;
+    this.#runtimeUnconfirmed = true;
+    this.#stopping = true;
+    // Background failures must not wait for another command to notice them.
+    // Stop sibling browser resources even when the library has no host observer.
+    void this.closeAll().catch(() => undefined);
+    try {
+      this.runtimeOptions.onUnconfirmedRuntime?.();
+    } catch {
+      /* no admission resumes */
+    }
+  }
+
   private incarnation(sessionId: string): BrowserIncarnation {
     let incarnation = this.#incarnations.get(sessionId);
     if (!incarnation) {
-      incarnation = { sessionId, state: "active" };
+      incarnation = { sessionId, state: "active", supervision: new ExecutionSupervision() };
       this.#incarnations.set(sessionId, incarnation);
     }
     return incarnation;
@@ -622,7 +668,42 @@ export class PraxisBrowserEngine {
     return this.#sessions.get(sessionId)!;
   }
 
-  private async observe(session: ActiveSession): Promise<Record<string, unknown>> {
+  private async nativePhase<T>(
+    session: ActiveSession,
+    limitMs: number,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const control = session.resources.incarnation.supervision;
+    const token = control.enterPhase(limitMs);
+    const custody = await session.resources.launch!;
+    try {
+      await custody.synchronize();
+      // An acknowledged phase can be fenced while this continuation is queued.
+      // Keep the final checks and native invocation in one synchronous turn.
+      if (custody.terminationState === "unconfirmed")
+        throw new Error("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED");
+      if (custody.terminationState !== "active" || session.resources.state !== "active")
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      this.assertIncarnation(session.resources.incarnation);
+      session.lease.assertActive();
+      control.sample();
+      return await work();
+    } finally {
+      try {
+        control.leavePhase(token);
+      } catch {
+        await this.evict(session);
+        throw new Error("SCRY_BROWSER_ACTION_TIMEOUT");
+      }
+      if (session.resources.state === "active" && custody.terminationState === "active")
+        await custody.synchronize();
+    }
+  }
+
+  private observe(session: ActiveSession): Promise<Record<string, unknown>> {
+    return this.nativePhase(session, 15000, () => this.observeNative(session));
+  }
+  private async observeNative(session: ActiveSession): Promise<Record<string, unknown>> {
     session.references.clear();
     const controls: Array<Record<string, unknown>> = [];
     const locator = session.page.locator(
@@ -717,14 +798,18 @@ export class PraxisBrowserEngine {
     const resumeUrl = session.page.url();
     if (resumeUrl === "about:blank") return;
     this.assertOrigin(session, resumeUrl);
-    const storageState = await session.context.storageState({ indexedDB: true });
+    const storageState = await this.nativePhase(session, 10000, () =>
+      session.context.storageState({ indexedDB: true }),
+    );
     attempt.assertActive();
-    const sessionStorage = await session.page.evaluate(() =>
-      Object.fromEntries(
-        Array.from({ length: window.sessionStorage.length }, (_, index) => {
-          const key = window.sessionStorage.key(index) ?? "";
-          return [key, window.sessionStorage.getItem(key) ?? ""] as const;
-        }).filter(([key]) => key.length > 0),
+    const sessionStorage = await this.nativePhase(session, 10000, () =>
+      session.page.evaluate(() =>
+        Object.fromEntries(
+          Array.from({ length: window.sessionStorage.length }, (_, index) => {
+            const key = window.sessionStorage.key(index) ?? "";
+            return [key, window.sessionStorage.getItem(key) ?? ""] as const;
+          }).filter(([key]) => key.length > 0),
+        ),
       ),
     );
     attempt.assertActive();
@@ -816,13 +901,15 @@ export class PraxisBrowserEngine {
             await current();
             dispatchBegan = true;
             const fetched = await bounded(
-              route.fetch({ timeout: attempt.remainingMs(command.timeoutMs), maxRedirects: 0 }),
+              this.nativePhase(session, command.timeoutMs, () =>
+                route.fetch({ timeout: attempt.remainingMs(command.timeoutMs), maxRedirects: 0 }),
+              ),
               attempt.remainingMs(command.timeoutMs),
               "SCRY_BROWSER_PROVIDER_RESPONSE_TIMEOUT",
             );
             const body = Buffer.from(
               await bounded(
-                fetched.body(),
+                this.nativePhase(session, command.timeoutMs, () => fetched.body()),
                 attempt.remainingMs(command.timeoutMs),
                 "SCRY_BROWSER_RESPONSE_BODY_TIMEOUT",
               ),
@@ -884,11 +971,15 @@ export class PraxisBrowserEngine {
       try {
         await session.page.route("**/*", gate);
         await current();
-        await target.click({ noWaitAfter: true, timeout: attempt.remainingMs(command.timeoutMs) });
-        const owned = await bounded(
-          ownedResult,
-          attempt.remainingMs(command.timeoutMs),
-          "SCRY_BROWSER_MUTATION_REQUEST_TIMEOUT",
+        await this.nativePhase(session, command.timeoutMs, () =>
+          target.click({ noWaitAfter: true, timeout: attempt.remainingMs(command.timeoutMs) }),
+        );
+        const owned = await this.nativePhase(session, command.timeoutMs, () =>
+          bounded(
+            ownedResult,
+            attempt.remainingMs(command.timeoutMs),
+            "SCRY_BROWSER_MUTATION_REQUEST_TIMEOUT",
+          ),
         );
         if ("error" in owned) throw owned.error;
         const { receipt } = owned;
@@ -974,11 +1065,14 @@ export class PraxisBrowserEngine {
       lastNetworkActivity = performance.now();
       await action();
       const deadline = performance.now() + Math.min(10000, attempt.remainingMs());
-      while (pendingReads.size > 0 || performance.now() - lastNetworkActivity < 100) {
-        attempt.assertActive();
-        if (performance.now() >= deadline) throw new Error("SCRY_BROWSER_READ_ONLY_SETTLE_TIMEOUT");
-        await session.page.waitForTimeout(25);
-      }
+      await this.nativePhase(session, 10000, async () => {
+        while (pendingReads.size > 0 || performance.now() - lastNetworkActivity < 100) {
+          attempt.assertActive();
+          if (performance.now() >= deadline)
+            throw new Error("SCRY_BROWSER_READ_ONLY_SETTLE_TIMEOUT");
+          await session.page.waitForTimeout(25);
+        }
+      });
     } finally {
       session.page.off("request", onRequest);
       session.page.off("requestfinished", onRequestSettled);
@@ -1001,51 +1095,52 @@ export class PraxisBrowserEngine {
         throw new Error("SCRY_BROWSER_DOM_CAPTURE_EFFECT_INVALID");
       await this.effects.assertCaptureSlotAvailable(effectId, session.sessionId);
       const handle = this.handle(session, reference);
-      const structured = await handle.evaluate((root) => {
-        const result: Record<string, unknown> = {};
-        const stack: Array<{ element: Element; depth: number; target: Record<string, unknown> }> = [
-          { element: root, depth: 0, target: result },
-        ];
-        let nodes = 0;
-        while (stack.length > 0) {
-          const current = stack.pop()!;
-          nodes += 1;
-          if (nodes > 500 || current.depth > 12) {
-            current.target.truncated = true;
-            continue;
-          }
-          const html = current.element as HTMLElement;
-          const form = current.element as HTMLInputElement;
-          let ownText = "";
-          for (const node of current.element.childNodes) {
-            if (node.nodeType === Node.TEXT_NODE) ownText += `${node.textContent ?? ""} `;
-          }
-          current.target.tag = current.element.tagName.toLowerCase();
-          current.target.role = current.element.getAttribute("role") ?? "";
-          current.target.label = current.element.getAttribute("aria-label") ?? "";
-          ownText = ownText.trim().slice(0, 4_000);
-          if (ownText) current.target.text = ownText;
-          if (["INPUT", "TEXTAREA", "SELECT"].includes(current.element.tagName))
-            current.target.value = form.value;
-          current.target.visible = Boolean(
-            html.offsetWidth || html.offsetHeight || html.getClientRects().length,
-          );
-          const elements = [...current.element.children].slice(0, 100);
-          if (elements.length > 0) {
-            const children: Array<Record<string, unknown>> = [];
-            for (let index = 0; index < elements.length; index += 1) children.push({});
-            current.target.children = children;
-            for (let index = elements.length - 1; index >= 0; index -= 1) {
-              stack.push({
-                element: elements[index]!,
-                depth: current.depth + 1,
-                target: children[index]!,
-              });
+      const structured = await this.nativePhase(session, 15000, () =>
+        handle.evaluate((root) => {
+          const result: Record<string, unknown> = {};
+          const stack: Array<{ element: Element; depth: number; target: Record<string, unknown> }> =
+            [{ element: root, depth: 0, target: result }];
+          let nodes = 0;
+          while (stack.length > 0) {
+            const current = stack.pop()!;
+            nodes += 1;
+            if (nodes > 500 || current.depth > 12) {
+              current.target.truncated = true;
+              continue;
+            }
+            const html = current.element as HTMLElement;
+            const form = current.element as HTMLInputElement;
+            let ownText = "";
+            for (const node of current.element.childNodes) {
+              if (node.nodeType === Node.TEXT_NODE) ownText += `${node.textContent ?? ""} `;
+            }
+            current.target.tag = current.element.tagName.toLowerCase();
+            current.target.role = current.element.getAttribute("role") ?? "";
+            current.target.label = current.element.getAttribute("aria-label") ?? "";
+            ownText = ownText.trim().slice(0, 4_000);
+            if (ownText) current.target.text = ownText;
+            if (["INPUT", "TEXTAREA", "SELECT"].includes(current.element.tagName))
+              current.target.value = form.value;
+            current.target.visible = Boolean(
+              html.offsetWidth || html.offsetHeight || html.getClientRects().length,
+            );
+            const elements = [...current.element.children].slice(0, 100);
+            if (elements.length > 0) {
+              const children: Array<Record<string, unknown>> = [];
+              for (let index = 0; index < elements.length; index += 1) children.push({});
+              current.target.children = children;
+              for (let index = elements.length - 1; index >= 0; index -= 1) {
+                stack.push({
+                  element: elements[index]!,
+                  depth: current.depth + 1,
+                  target: children[index]!,
+                });
+              }
             }
           }
-        }
-        return result;
-      });
+          return result;
+        }),
+      );
       sanitizeDomSemanticHints(structured, session.semanticHint);
       const body = Buffer.from(JSON.stringify(structured));
       const receipt = await session.vault.captureHttpResponse({

@@ -1,6 +1,13 @@
 import path from "node:path";
 import ts from "typescript";
 
+/** Runtime tooling is explicit; adding the private TS custodian loader does not
+ * permit another implementation owner or arbitrary new runtime dependencies. */
+export function unsupportedPraxisDependencies(dependencies = {}) {
+  const allowed = new Set(["@scry/contracts", "playwright", "rrweb", "tsx"]);
+  return Object.keys(dependencies).filter((name) => !allowed.has(name));
+}
+
 const protectionClasses = new Set([
   "SensitiveValueClassifier",
   "ProtectionAuthority",

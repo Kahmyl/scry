@@ -28,8 +28,13 @@ const redis = app.get(RedisConnection);
 const commands = app.get(BrowserCommandRepository);
 const execution = app.get(BrowserExecutionRepository);
 await execution.assertCompatibleBaseline();
-const praxis = composePraxisExecutionPort(commands, execution);
 const work = new BrowserWorkRegistry();
+const praxis = composePraxisExecutionPort(commands, execution, {
+  onUnconfirmedRuntime: () => {
+    work.failRuntime();
+    stop();
+  },
+});
 
 const sessionWorker = new Worker<BrowserExecutionJob>(
   BROWSER_EXECUTION_QUEUE,
