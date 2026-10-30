@@ -20,6 +20,7 @@ import {
 } from "../src/browser-execution/browser-boundary-composition.js";
 import { Database } from "../src/infrastructure/database.js";
 import { RedisConnection } from "../src/infrastructure/redis.js";
+import { processBrowserCommand } from "../src/browser-execution/browser-command-processor.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const run = databaseUrl && process.env.SCRY_BROWSER_E2E === "1" ? describe : describe.skip;
@@ -69,20 +70,7 @@ run("browser baseline durable command worker", () => {
     );
     commandWorker = new Worker(
       BROWSER_COMMAND_QUEUE,
-      async (job) => {
-        const command = await commands.claim(job.data.commandId);
-        if (!command) return { replay: true };
-        const claimToken = command.claim_token;
-        if (!claimToken) throw new Error("claim_token_missing");
-        try {
-          const result = await praxis.executeCommand(command.session_id, command.safe_input);
-          await commands.complete(command.id, claimToken, result);
-          return result;
-        } catch (error) {
-          await commands.fail(command.id, claimToken, error);
-          return { failed: true };
-        }
-      },
+      (job, token) => processBrowserCommand(commands, praxis, job, token),
       { connection: redis.client },
     );
   });

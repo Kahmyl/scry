@@ -295,10 +295,22 @@ describe("qualification outcomes", () => {
       checks.find((entry) => entry.id === "deployed-baseline")?.terminationGraceMs,
     ).toBeGreaterThanOrEqual(125000);
     const database = checks.find((entry) => entry.id === "database-lifecycle")!;
-    expect(database.command.filter((value) => value.endsWith(".integration.test.ts"))).toHaveLength(
-      5,
+    expect(database.command).toEqual(
+      expect.arrayContaining([
+        "test/browser-execution.repository.integration.test.ts",
+        "test/browser-execution.process-failure.integration.test.ts",
+        "test/browser-lifecycle.repository.integration.test.ts",
+        "test/browser-auth-scope.integration.test.ts",
+        "test/browser-scope-integrity.integration.test.ts",
+        "test/browser-command-order.integration.test.ts",
+      ]),
     );
-    expect(database.tests).toEqual({ minimumPassed: 13, allowSkipped: false });
+    expect(database.tests).toEqual({ minimumPassed: 16, allowSkipped: false });
+    expect(profiles.worker).toContain("command-queue");
+    expect(checks.find((entry) => entry.id === "command-queue")?.prerequisites).toEqual([
+      "database",
+      "redis",
+    ]);
     expect(checks.find((entry) => entry.id === "owner-admission")?.tests?.minimumPassed).toBe(5);
   });
 });

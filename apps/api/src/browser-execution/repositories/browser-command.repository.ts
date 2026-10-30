@@ -37,6 +37,7 @@ interface CommandRow extends QueryResultRow {
   claim_token: string | null;
   claim_lease_expires_at: Date | null;
   attempt_count: number;
+  command_ordinal: string;
 }
 
 type InlineStorageState = PraxisStorageState;
@@ -286,12 +287,28 @@ export class BrowserCommandRepository {
     if (!Number.isSafeInteger(leaseMs) || leaseMs < 30_000)
       throw new Error("SCRY_BROWSER_COMMAND_LEASE_INVALID");
     return this.database.transaction(async (client) => {
+      // Match submit's session-first lock order. The lock covers only the claim
+      // transaction, never browser execution, network waits or evidence file I/O.
+      const scope = await client.query<{ session_id: string }>(
+        "SELECT session_id FROM browser_commands WHERE id=$1",
+        [commandId],
+      );
+      if (!scope.rows[0]) return null;
+      await client.query("SELECT id FROM browser_execution_sessions WHERE id=$1 FOR UPDATE", [
+        scope.rows[0].session_id,
+      ]);
       const result = await client.query<CommandRow>(
         "SELECT * FROM browser_commands WHERE id=$1 FOR UPDATE",
         [commandId],
       );
       const row = result.rows[0];
       if (!row || row.state === "completed" || row.state === "failed") return null;
+      const predecessor = await client.query(
+        `SELECT 1 FROM browser_commands WHERE session_id=$1 AND command_ordinal<$2
+         AND state IN ('queued','running') LIMIT 1`,
+        [row.session_id, row.command_ordinal],
+      );
+      if (predecessor.rowCount) throw new Error("SCRY_BROWSER_COMMAND_PREDECESSOR_PENDING");
       if (
         row.state === "running" &&
         row.claim_lease_expires_at &&
