@@ -1,0 +1,97 @@
+name: scry-decisive-holdouts
+services:
+  nodered:
+    image: nodered/node-red:latest
+    volumes: [nodered:/data]
+    networks:
+      targets:
+        aliases: [scry-decisive-nodered]
+    mem_limit: 400m
+  epdb:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: etherpad
+      POSTGRES_PASSWORD: isolated-only
+      POSTGRES_DB: etherpad
+    volumes: [epdb:/var/lib/postgresql/data]
+    networks: [targets]
+    mem_limit: 160m
+  etherpad:
+    image: etherpad/etherpad:latest
+    environment:
+      DB_TYPE: postgres
+      DB_HOST: epdb
+      DB_PORT: "5432"
+      DB_NAME: etherpad
+      DB_USER: etherpad
+      DB_PASS: isolated-only
+    volumes: [etherpad:/opt/etherpad-lite/var]
+    networks:
+      targets:
+        aliases: [scry-decisive-etherpad]
+    mem_limit: 450m
+    depends_on: [epdb]
+  wpdb:
+    image: sha256:3607e75203fd9f69fb7e0829ec2d8fe55c30ec9d8aa266f7580719711bb4a4e1
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: isolated-only
+      MARIADB_ROOT_PASSWORD: isolated-root-only
+    volumes: [wpdb:/var/lib/mysql]
+    networks: [targets]
+    mem_limit: 400m
+  wordpress:
+    image: wordpress:php8.3-apache
+    environment:
+      WORDPRESS_DB_HOST: wpdb
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: isolated-only
+      WORDPRESS_DB_NAME: wordpress
+    volumes: [wordpress:/var/www/html]
+    ports: ["127.0.0.1:45521:80"]
+    networks:
+      targets:
+        aliases: [scry-decisive-wordpress]
+    mem_limit: 650m
+    depends_on: [wpdb]
+  hddb:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: hedgedoc
+      POSTGRES_PASSWORD: isolated-only
+      POSTGRES_DB: hedgedoc
+    volumes: [hddb:/var/lib/postgresql/data]
+    networks: [targets]
+    mem_limit: 200m
+  hedgedoc:
+    image: quay.io/hedgedoc/hedgedoc:1.12.0
+    environment:
+      CMD_DB_URL: postgres://hedgedoc:isolated-only@hddb:5432/hedgedoc
+      CMD_DOMAIN: scry-decisive-hedgedoc
+      CMD_URL_ADDPORT: "true"
+      CMD_PROTOCOL_USESSL: "false"
+      CMD_HSTS_ENABLE: "false"
+      CMD_ALLOW_ANONYMOUS: "true"
+      CMD_ALLOW_ANONYMOUS_EDITS: "true"
+      CMD_ALLOW_EMAIL_REGISTER: "false"
+      CMD_DEFAULT_PERMISSION: freely
+    volumes: [uploads:/hedgedoc/public/uploads]
+    ports: ["127.0.0.1:45522:3000"]
+    networks:
+      targets:
+        aliases: [scry-decisive-hedgedoc]
+    mem_limit: 450m
+    depends_on: [hddb]
+volumes:
+  nodered:
+  epdb:
+  etherpad:
+  wpdb:
+  wordpress:
+  hddb:
+  uploads:
+networks:
+  targets:
+    external: true
+    name: scry-ten-app-architecture

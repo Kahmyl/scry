@@ -1,5 +1,9 @@
 # Browser interaction causes and repair recommendation
 
+Follow-up: [the decisive interaction experiment](./DECISIVE-EXPERIMENT.md) rejects
+universal paste/keyboard replacements and records the tested shared control,
+native-capability and outcome boundary. The original findings below remain intact.
+
 ## Recommendation
 
 Keep the official Playwright adapter and Scry's existing API, durable command
