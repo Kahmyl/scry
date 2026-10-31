@@ -9,6 +9,7 @@ import { BrowserRuntimeVeilReportProtection } from "../src/browser-execution/bro
 import { Database } from "../src/infrastructure/database.js";
 import { publishFixtureEvidence } from "./fixtures/evidence-recording.js";
 import { ChronicleRepository } from "@scry/chronicle";
+import { seedSession } from "./fixtures/browser-session.js";
 
 const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 const run = databaseUrl ? describe : describe.skip;
@@ -30,6 +31,137 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
 
   afterAll(async () => {
     if (database) await database.onModuleDestroy();
+  });
+
+  it("publishes an honest failure-only report from sealed admitted partial evidence", async () => {
+    const sessionId = await seedSession(database, execution, "https://fixture.example");
+    const scope = (
+      await database.query<any>(
+        `SELECT s.run_id AS "runId",s.mission_id AS "missionId",s.agent_session_id AS "agentSessionId",p.workspace_id AS "workspaceId"
+       FROM browser_execution_sessions s JOIN projects p ON p.id=s.project_id WHERE s.id=$1`,
+        [sessionId],
+      )
+    ).rows[0]!;
+    const owner = await execution.claimOwner(sessionId, "partial-report-fixture", 60000);
+    const completion = await publishFixtureEvidence(
+      database,
+      execution,
+      sessionId,
+      owner.generation,
+      false,
+      { recordingComplete: false },
+    );
+    expect(completion.state).toBe("incomplete");
+    await expect(execution.finalizeSession(sessionId, owner.generation)).rejects.toThrow(
+      "SCRY_BROWSER_EVIDENCE_INCOMPLETE",
+    );
+    await execution.finalizeFailedSession(sessionId, owner.generation);
+    await lifecycle.markRunTerminal(
+      scope.workspaceId,
+      scope.runId,
+      "environment_failure",
+      "Recording unavailable; no business outcome inferred.",
+    );
+    const report = await lifecycle.publishReport(scope.workspaceId, scope.missionId, {
+      agentSessionId: scope.agentSessionId,
+      summary: "The attempt failed with incomplete recording coverage.",
+      safeReport: {
+        presentation: { limitations: ["Recording unavailable; testing was not completed."] },
+        evidenceCoverage: { complete: 999 },
+      },
+    });
+    const stored = (
+      await database.query<any>(
+        "SELECT state,evidence_coverage,safe_report FROM mission_reports WHERE id=$1",
+        [report.reportId],
+      )
+    ).rows[0]!;
+    expect(stored.state).toBe("final");
+    expect(stored.evidence_coverage).toMatchObject({
+      runs: 1,
+      complete: 0,
+      incomplete: 1,
+      open: 0,
+    });
+    expect(stored.safe_report.evidenceCoverage).toEqual(stored.evidence_coverage);
+    expect(
+      (
+        await database.query<any>(
+          "SELECT state FROM browser_evidence_streams WHERE session_id=$1",
+          [sessionId],
+        )
+      ).rows[0]?.state,
+    ).toBe("incomplete");
+  });
+
+  it("keeps a retried Objective running until all active attempts finish while retaining individual conclusions", async () => {
+    const session = await seedSession(database, execution, "https://fixture.example");
+    const scope = (
+      await database.query<any>(
+        `SELECT s.project_id AS "projectId",s.mission_id AS "missionId",s.objective_id AS "objectiveId",s.environment_id AS "environmentId",s.agent_session_id AS "agentSessionId",s.run_id AS "runId",r.flow_id AS "flowId",r.flow_revision_id AS "flowRevisionId",p.workspace_id AS "workspaceId" FROM browser_execution_sessions s JOIN runs r ON r.id=s.run_id JOIN projects p ON p.id=s.project_id WHERE s.id=$1`,
+        [session],
+      )
+    ).rows[0]!;
+    const objective = async () =>
+      (
+        await database.query<{ state: string; conclusion: string | null }>(
+          "SELECT state,conclusion FROM mission_objectives WHERE id=$1",
+          [scope.objectiveId],
+        )
+      ).rows[0]!;
+    await lifecycle.markRunTerminal(
+      scope.workspaceId,
+      scope.runId,
+      "blocked",
+      "First trial was refused.",
+    );
+    const start = () =>
+      lifecycle.startRun(scope.workspaceId, {
+        projectId: scope.projectId,
+        missionId: scope.missionId,
+        objectiveId: scope.objectiveId,
+        agentSessionId: scope.agentSessionId,
+        flowId: scope.flowId,
+        flowRevisionId: scope.flowRevisionId,
+        environmentId: scope.environmentId,
+        idempotencyKey: randomUUID(),
+        authenticationCommitLimit: 1,
+        businessCommitLimit: 1,
+        protectedInputIds: [],
+      });
+    const a = await start(),
+      b = await start();
+    expect(await objective()).toEqual({ state: "running", conclusion: null });
+    await lifecycle.markRunTerminal(
+      scope.workspaceId,
+      a.runId,
+      "passed",
+      "First follow-up inspected.",
+    );
+    expect(await objective()).toEqual({ state: "running", conclusion: null });
+    const c = await start();
+    await Promise.all([
+      lifecycle.markRunTerminal(
+        scope.workspaceId,
+        b.runId,
+        "passed",
+        "Second follow-up inspected.",
+      ),
+      lifecycle.markRunTerminal(scope.workspaceId, c.runId, "passed", "Third follow-up inspected."),
+    ]);
+    expect((await objective()).state).toBe("passed");
+    const history = await database.query<{ conclusion: string }>(
+      "SELECT conclusion FROM runs WHERE objective_id=$1 ORDER BY created_at,id",
+      [scope.objectiveId],
+    );
+    expect(history.rows.map((row) => row.conclusion)).toEqual(
+      expect.arrayContaining([
+        "First trial was refused.",
+        "First follow-up inspected.",
+        "Second follow-up inspected.",
+        "Third follow-up inspected.",
+      ]),
+    );
   });
 
   it("lets the agent create multiple Flows in one Mission and reports only after durable completion", async () => {
@@ -141,6 +273,19 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
       "passed",
       "Exact resource completed and verified",
     );
+    await lifecycle.markRunTerminal(
+      workspaceId,
+      started.runId,
+      "failed",
+      "A replay must not rewrite the original conclusion",
+    );
+    expect(
+      (
+        await database.query<{ conclusion: string }>("SELECT conclusion FROM runs WHERE id=$1", [
+          started.runId,
+        ])
+      ).rows[0]?.conclusion,
+    ).toBe("Exact resource completed and verified");
     const report = await lifecycle.publishReport(workspaceId, mission.missionId, {
       agentSessionId: mission.agentSessionId,
       summary: "Mission completed",
@@ -162,7 +307,11 @@ run("browser baseline Mission/Flow/Run lifecycle", () => {
     expect(observed.state).toBe("completed");
     expect(observed.flows).toHaveLength(2);
     expect(observed.runs).toEqual([
-      expect.objectContaining({ flowId: resumed.flowId, state: "passed" }),
+      expect.objectContaining({
+        flowId: resumed.flowId,
+        state: "passed",
+        conclusion: "Exact resource completed and verified",
+      }),
     ]);
     const storedReport = await database.query<{
       evidence_digest: string;

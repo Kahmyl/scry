@@ -176,7 +176,13 @@ process.on("message", (value) => {
           if (stopping) return;
           authority.assertCurrent();
           setupDeadline = performance.now() + 15000;
-          if (!send({ kind: "ready", endpoint: value.endpoint() }))
+          if (
+            !send({
+              kind: "ready",
+              endpoint: value.endpoint(),
+              ...(capture ? { display: capture.display } : {}),
+            })
+          )
             void stop("transport_failed", true);
         })
         .catch(() => {

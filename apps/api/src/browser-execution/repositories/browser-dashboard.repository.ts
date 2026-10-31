@@ -51,7 +51,9 @@ export class BrowserDashboardRepository {
 
   async listMedia(workspaceId: string | undefined, runId: string) {
     // Require the same Run/workspace visibility even when no recording exists.
-    await this.getRun(workspaceId, runId);
+    const run = await this.getRun(workspaceId, runId);
+    const flowName =
+      "flowName" in run && typeof run.flowName === "string" ? run.flowName : "Test journey";
     const publication = await this.nativePublication(workspaceId, runId);
     return {
       warning:
@@ -63,12 +65,42 @@ export class BrowserDashboardRepository {
           : ""),
       playbackRate: 1,
       items: (publication?.media ?? []).map(
-        ({ kind, timestamp, label, durationMs, coverage, digest }, index) => ({
+        (
+          {
+            kind,
+            timestamp,
+            label,
+            durationMs,
+            coverage,
+            digest,
+            title,
+            description,
+            interruptionReason,
+          },
+          index,
+        ) => ({
           index,
           artifactId: digest,
           kind,
           timestamp,
           label,
+          title:
+            title ??
+            (kind === "video"
+              ? `${flowName} — recorded attempt`
+              : ((
+                  {
+                    initial: "Starting page",
+                    navigate: "After navigation",
+                    fill: "After entering text",
+                    click: "After clicking",
+                    press: "After keyboard input",
+                    commit: "After submitting",
+                  } as Record<string, string>
+                )[label] ??
+                `Screenshot at ${new Date(timestamp).toISOString().slice(11, 19)} UTC`)),
+          ...(description ? { description } : {}),
+          ...(interruptionReason ? { interruptionReason } : {}),
           ...(coverage ? { coverage } : {}),
           ...(durationMs === undefined ? {} : { durationMs }),
         }),
@@ -104,7 +136,7 @@ export class BrowserDashboardRepository {
       `SELECT r.id,r.project_id AS "projectId",r.mission_id AS "missionId",
               r.objective_id AS "objectiveId",r.flow_id AS "flowId",f.name AS "flowName",
               f.purpose AS "flowPurpose",fr.definition AS "flowDefinition",
-              r.state,r.outcome_classification AS "outcomeClassification",
+              r.state,r.conclusion,r.outcome_classification AS "outcomeClassification",
               r.created_at AS "createdAt",r.updated_at AS "updatedAt",r.started_at AS "startedAt",
               r.completed_at AS "completedAt",e.name AS "environmentName",e.base_origin AS "baseOrigin",
               s.id AS "browserSessionId",s.state AS "browserSessionState",

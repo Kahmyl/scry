@@ -6,10 +6,12 @@ const [root, app, operation, name, argument = "{}"] = process.argv.slice(2);
 if (!root || !/^[a-z]+$/u.test(app ?? ""))
   throw new Error("Usage: client ROOT APP tools|schema|call [NAME] [JSON]");
 const directory = root + "/" + app;
-const { token } = JSON.parse(await readFile(directory + "/connection.json", "utf8"));
+const { token, mcpUrl = "http://127.0.0.1:45410/mcp" } = JSON.parse(
+  await readFile(directory + "/connection.json", "utf8"),
+);
 let state = JSON.parse(await readFile(directory + "/session.json", "utf8").catch(() => "{}"));
 const rpc = async (method, params) => {
-  const r = await fetch("http://127.0.0.1:45410/mcp", {
+  const r = await fetch(mcpUrl, {
     method: "POST",
     headers: {
       authorization: "Bearer " + token,

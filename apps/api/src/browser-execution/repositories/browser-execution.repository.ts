@@ -28,6 +28,7 @@ import { BrowserProtectedValueCipher } from "../protected-value-cipher.js";
 import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
 import { assertBrowserSchema } from "../browser-schema.js";
 import { lockLiveBrowserOwner, validateBrowserOwnerLease } from "./browser-owner-admission.js";
+import { admitBrowserSession } from "./browser-session-capacity.js";
 
 const CAPABILITY_ID = BROWSER_RUNTIME_CAPABILITY_ID;
 
@@ -250,58 +251,66 @@ export class BrowserExecutionRepository {
   async createSession(input: CreateBrowserSessionInput): Promise<SessionRow> {
     await this.assertCompatibleBaseline();
     return this.database.transaction(async (client) => {
-      const existing = await client.query<SessionRow>(
-        "SELECT * FROM browser_execution_sessions WHERE run_id=$1 FOR UPDATE",
-        [input.runId],
-      );
-      if (existing.rows[0]) {
-        const row = existing.rows[0];
-        if (
-          row.id !== input.id ||
-          row.project_id !== input.projectId ||
-          row.mission_id !== input.missionId ||
-          input.idempotencyKey.length === 0
-        ) {
-          throw new Error("SCRY_BROWSER_SESSION_IDEMPOTENCY_CONFLICT");
-        }
-        return row;
-      }
-      const environment = await client.query<{ disclosure_mode: string }>(
-        "SELECT disclosure_mode FROM environments WHERE id=$1 AND project_id=$2",
-        [input.environmentId, input.projectId],
-      );
-      if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
-      const inserted = await client.query<SessionRow>(
-        `INSERT INTO browser_execution_sessions(
+      return admitBrowserSession(
+        client,
+        async () => {
+          const existing = await client.query<SessionRow>(
+            "SELECT * FROM browser_execution_sessions WHERE run_id=$1 FOR UPDATE",
+            [input.runId],
+          );
+          if (existing.rows[0]) {
+            const row = existing.rows[0];
+            if (
+              row.id !== input.id ||
+              row.project_id !== input.projectId ||
+              row.mission_id !== input.missionId ||
+              input.idempotencyKey.length === 0
+            ) {
+              throw new Error("SCRY_BROWSER_SESSION_IDEMPOTENCY_CONFLICT");
+            }
+            return row;
+          }
+          return undefined;
+        },
+        async () => {
+          const environment = await client.query<{ disclosure_mode: string }>(
+            "SELECT disclosure_mode FROM environments WHERE id=$1 AND project_id=$2",
+            [input.environmentId, input.projectId],
+          );
+          if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
+          const inserted = await client.query<SessionRow>(
+            `INSERT INTO browser_execution_sessions(
            id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
            authentication_commit_limit,business_commit_limit,allowed_first_party_origins,
            allowed_service_origins,runtime_capability_id,protection_key_id,
            disclosure_mode,idempotency_key,state,runtime_adapter)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,'active',$16) RETURNING *`,
-        [
-          input.id,
-          input.runId,
-          input.projectId,
-          input.missionId,
-          input.objectiveId,
-          input.environmentId,
-          input.agentSessionId,
-          input.authenticationCommitLimit,
-          input.businessCommitLimit,
-          JSON.stringify(input.allowedFirstPartyOrigins),
-          JSON.stringify(input.allowedServiceOrigins ?? []),
-          CAPABILITY_ID,
-          this.cipher.activeKeyId(),
-          environment.rows[0].disclosure_mode,
-          input.idempotencyKey,
-          selectedBrowserAdapter(),
-        ],
+            [
+              input.id,
+              input.runId,
+              input.projectId,
+              input.missionId,
+              input.objectiveId,
+              input.environmentId,
+              input.agentSessionId,
+              input.authenticationCommitLimit,
+              input.businessCommitLimit,
+              JSON.stringify(input.allowedFirstPartyOrigins),
+              JSON.stringify(input.allowedServiceOrigins ?? []),
+              CAPABILITY_ID,
+              this.cipher.activeKeyId(),
+              environment.rows[0].disclosure_mode,
+              input.idempotencyKey,
+              selectedBrowserAdapter(),
+            ],
+          );
+          await client.query(
+            "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
+            [input.id, CAPABILITY_ID],
+          );
+          return required(inserted.rows[0], "SCRY_BROWSER_SESSION_INSERT_FAILED");
+        },
       );
-      await client.query(
-        "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
-        [input.id, CAPABILITY_ID],
-      );
-      return required(inserted.rows[0], "SCRY_BROWSER_SESSION_INSERT_FAILED");
     });
   }
 

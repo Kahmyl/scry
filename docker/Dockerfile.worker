@@ -7,6 +7,8 @@ ENV PATH=$PNPM_HOME:$PATH
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN corepack enable
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg xvfb xclip \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
@@ -20,6 +22,7 @@ COPY packages/chronicle/package.json packages/chronicle/package.json
 
 RUN --mount=type=cache,id=scry-pnpm-worker,target=/pnpm/store \
     pnpm install --frozen-lockfile
+RUN PLAYWRIGHT_SKIP_BROWSER_GC=1 node packages/praxis/node_modules/playwright-mcp-runtime/cli.js install chromium
 
 COPY . .
 

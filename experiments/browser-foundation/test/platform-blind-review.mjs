@@ -3,17 +3,21 @@
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+const port = Number(process.env.SCRY_REVIEW_PORT ?? 45492),
+  origin = "http://127.0.0.1:" + port;
+const apiOrigin = process.env.SCRY_REVIEW_API_ORIGIN ?? "http://127.0.0.1:45400",
+  fixtureOrigin = process.env.SCRY_REVIEW_FIXTURE_ORIGIN ?? "http://127.0.0.1:45491";
 
 createServer(async (request, response) => {
   try {
-    const url = new URL(request.url, "http://127.0.0.1:45492");
+    const url = new URL(request.url, origin);
     if (url.pathname === "/config.js") {
       response.setHeader("content-type", "text/javascript; charset=utf-8");
       response.setHeader("cache-control", "no-store");
       response.end(
         `window.__SCRY_CONFIG__=${JSON.stringify({
           apiBaseUrl: "/api",
-          supabaseUrl: "http://127.0.0.1:45492",
+          supabaseUrl: origin,
           supabasePublishableKey: "isolated-fixture-only",
           mcpServerUrl: "/mcp",
         })};`,
@@ -21,8 +25,7 @@ createServer(async (request, response) => {
       return;
     }
     const media = /^\/api\/runs\/[a-f0-9-]+\/media\/\d+$/u.test(url.pathname);
-    const target =
-      (media ? "http://127.0.0.1:45400" : "http://127.0.0.1:45491") + url.pathname + url.search;
+    const target = (media ? apiOrigin : fixtureOrigin) + url.pathname + url.search;
     const headers = {};
     for (const key of ["authorization", "content-type", "range"])
       if (request.headers[key]) headers[key] = request.headers[key];
@@ -43,4 +46,4 @@ createServer(async (request, response) => {
     if (!response.headersSent) response.writeHead(502, { "content-type": "application/json" });
     response.end('{"message":"isolated_streaming_review_unavailable"}');
   }
-}).listen(45492, "127.0.0.1", () => console.log("Blind review bridge: http://127.0.0.1:45492"));
+}).listen(port, "127.0.0.1", () => console.log("Isolated review bridge: " + origin));

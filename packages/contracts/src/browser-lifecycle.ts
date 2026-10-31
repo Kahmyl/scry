@@ -84,10 +84,43 @@ export const finalizeBrowserRunSchema = z.object({
   conclusion: z.string().min(1).max(4_000),
 });
 
+export const missionReportPresentationSchema = z.strictObject({
+  verified: z.array(z.string().min(1).max(4000)).max(200).default([]),
+  observations: z
+    .array(
+      z.strictObject({
+        title: z.string().min(1).max(200),
+        detail: z.string().min(1).max(4000),
+        suggestion: z.string().max(2000).optional(),
+        evidence: z
+          .array(z.strictObject({ runId: uuid, artifactId: z.string().regex(/^[a-f0-9]{64}$/) }))
+          .max(50)
+          .default([]),
+      }),
+    )
+    .max(200)
+    .default([]),
+  limitations: z.array(z.string().min(1).max(4000)).max(100).default([]),
+});
 export const publishBrowserMissionReportSchema = z.object({
   agentSessionId: uuid,
   summary: z.string().min(1).max(10_000),
-  safeReport: z.record(z.string(), z.unknown()),
+  safeReport: z
+    .record(z.string(), z.unknown())
+    .superRefine((value, ctx) => {
+      if (value.presentation !== undefined) {
+        const result = missionReportPresentationSchema.safeParse(value.presentation);
+        if (!result.success)
+          ctx.addIssue({
+            code: "custom",
+            message: "Invalid report presentation",
+            path: ["presentation"],
+          });
+      }
+    })
+    .describe(
+      "For a readable report include presentation: {verified: string[], observations: [{title, detail, suggestion?, evidence?: [{runId,artifactId}]}], limitations: string[]}. Keep recovered failures visible. Additional domain details remain available for diagnostics.",
+    ),
 });
 
 export type StartBrowserMissionInput = z.infer<typeof startBrowserMissionSchema>;

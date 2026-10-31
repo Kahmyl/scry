@@ -108,6 +108,9 @@ export interface ChronicleRecordingPort {
 
 /** Native, already best-effort-masked pixels. No DOM or application values. */
 export interface NativeMediaReceipt {
+  title?: string;
+  description?: string;
+  interruptionReason?: string;
   masking?: "best_effort" | "best_effort_partial" | "unavailable";
   coverage?: "complete" | "partial";
   kind: "video" | "screenshot";
@@ -127,6 +130,9 @@ export interface ChronicleNativeRecordingPort {
     kind: NativeMediaReceipt["kind"];
     timestamp: number;
     label: string;
+    title?: string;
+    description?: string;
+    interruptionReason?: string;
     durationMs?: number;
     masking?: NativeMediaReceipt["masking"];
     coverage?: "complete" | "partial";

@@ -115,6 +115,11 @@ A named journey, approach, retry path, or experiment created by the agent. A
 Flow organizes Runs but is not automatically interpreted as an executable
 test script.
 
+A Flow can contain several attempts of the same direction: a trial, an
+interrupted attempt and a follow-up do not require inventing unrelated Flows.
+Human names and purposes explain the direction; technical identity is not its
+display title.
+
 ### Flow revision
 
 An immutable definition attached to a Flow. A Run points to exactly one Flow
@@ -128,6 +133,12 @@ changes.
 One execution of one Flow revision for one Objective and one Environment. It
 belongs to one Mission and one Agent session. A Run stores both execution state
 and the agent's outcome classification.
+
+The journey-reliability candidate also retains each Run's own sanitized
+conclusion. Earlier conclusions are not overwritten when an Objective is tried
+again. An Objective is in progress while any of its attempts remains active;
+once those attempts finish, its current assessment and the full attempt history
+remain separate facts. An input readback is not a persisted-business assertion.
 
 Terminal outcome classifications are:
 
@@ -226,8 +237,16 @@ reserved and has no active writer.
 ### Final report
 
 The Mission's immutable, sanitized conclusion. It stores a human-readable
-summary, structured safe report data, and one digest derived from the complete
-evidence streams belonging to the Mission.
+summary, structured safe report data, authoritative coverage and one digest
+derived from the Mission's evidence inventory. A sealed, admitted partial stream
+can anchor an honest failure report; it remains incomplete. Publication does not
+invent successful testing or complete recording coverage.
+
+The Mission remains the execution workspace; its linked final Report is the
+compiled review. Readable sections distinguish verified scope, observations,
+optional suggestions and limitations. Exact evidence references point back to
+the Mission's authorized Run artifacts. Reports do not create a second evidence
+store or automatically classify every observation as an application defect.
 
 ## Planned ownership of domain behavior
 

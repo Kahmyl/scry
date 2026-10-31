@@ -93,16 +93,32 @@ are final-asset admission limits, not a claim of continuous disk-quota enforceme
 while the browser encoder is running. Missing or unreadable captured media is an
 evidence failure, distinct from an unmasked region or an application defect.
 
-The controlled official-adapter recorder additionally bounds each capture to
-120 MiB or 15 minutes. Reaching either limit produces partial footage, not a
-claim of complete recording. Its fixed viewport is 1280 × 720 at 20 frames/second.
+The journey-reliability candidate removes the arbitrary fifteen-minute capture
+cutoff. A journey does not stop or split its video merely because time elapsed.
+The recorder retains its 120 MiB capture allowance: exhausted storage or a real
+interruption produces explicitly partial footage, never a claim of continuity.
+Its fixed viewport is 1280 × 720 at 20 frames/second. Continuous recording is not
+a promise of unlimited storage or unqualified concurrency.
+
+Separate videos are appropriate for explicitly requested sections, distinct
+attempts or genuine capture interruptions. They have meaningful titles and
+coverage explanations. Do not reconstruct missing footage or splice screenshots
+to imply an uninterrupted native recording.
 
 ## Dashboard and API
 
-Mission pages expose each Run's recordings and screenshots. Run pages include
-a native evidence viewer with explicit selection, native video controls,
-normal-speed playback, loading/error states and the best-effort warning.
-Collapsed Mission sections do not fetch recordings until opened.
+The Mission is the live workspace: named Flows organize numbered Run attempts,
+including unsuccessful trials and recovery. One selected evidence gallery loads
+at a time. Run pages retain the focused attempt view. The linked final Report
+compiles verified scope, observations, suggestions and limitations while pointing
+to the same evidence, not another gallery copy.
+
+The viewer offers meaningful evidence titles and descriptions, native video
+controls, normal-speed playback by default, optional slower/faster review,
+loading/error states and the best-effort warning. Technical identifiers, digests
+and raw report data belong in optional details, not primary reviewer labels.
+Selecting a missing report reference shows an explicit gap. It never opens a
+different item as if it supported the observation.
 
 `GET /api/runs/{runId}/media` lists admitted native evidence, including screenshots
 already admitted while a Run is open. A video appears after encoder finalization

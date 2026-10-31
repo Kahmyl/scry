@@ -2,6 +2,27 @@
 
 Status: canonical baseline contract
 
+## Live browser capacity
+
+Both supported session-creation paths share database-wide admission. A Session
+reserves capacity from creation through startup, between commands, and until its
+normal or recovered finalization completes. Losing an owner lease, finishing a
+queue job, or marking a Run terminal does not by itself release that reservation.
+Existing commands and finalization remain available when capacity is full.
+
+`SCRY_BROWSER_MAX_LIVE_SESSIONS` defaults to `1`; all API/worker replicas serving
+the same database must use the same setting. A new start at capacity returns
+`SCRY_BROWSER_SESSION_CAPACITY_EXHAUSTED` with HTTP 503 and plain-English next
+actions, before launching another browser or dispatching application work. Exact
+retries of admitted starts return their existing Session even at capacity. A
+refused start can be retried with the same identity after capacity is available.
+There is no new mission-duration cutoff, automatic business-action replay, or
+app-specific limit. Capacity refusal is not an application defect.
+
+The qualified baseline has one browser-owning worker. Admission is not a
+distributed worker-routing scheduler; increasing this limit requires measured
+resource qualification and does not establish multi-worker routing support.
+
 This document defines the external operations for the product described in the
 [Scry baseline brief](../product/baseline-brief.md). It describes product
 behavior and resource identity without adopting temporary labels from source
@@ -75,7 +96,33 @@ Browser-tool completion is not proof of an applied business change. The agent
 must inspect the resulting application state. The dashboard distinguishes these
 interaction receipts from historical mutation-effect records.
 
-See the local [controlled integration record](../../experiments/browser-foundation/INTEGRATION.md)
+The journey-reliability candidate adds `browser_edit_text` with an observed
+opaque target reference, explicit `replace` or `insert` intent, and a selected
+native `paste` or `keyboard` method. It does not run app-private editor APIs or
+automatically try another input after possible dispatch. Input observations are
+`observed`, `mismatch`, `unverified`, `not_dispatched`, or `unknown`; even matching
+readback does not establish saved application state. A new snapshot or explicit
+business readback is the recovery path, not blind replay. Ordinary Playwright
+typing keeps its existing semantics, including insertion for sequential typing.
+
+The MCP `start_run` tool accepts an optional `attemptId`. A new identity creates
+a deliberate new attempt within the same Flow; reusing it retrieves the same
+start request. Older clients that omit it retain their existing idempotent
+behavior. This is distinct from a browser command's `actionId`.
+
+Native screenshots accept optional `evidenceTitle` and `evidenceDescription`.
+These are bounded, sanitized presentation data attached to Chronicle's admitted
+receipt, not claims that Scry automatically verified the described outcome.
+Media descriptors may include these fields and a fixed interruption reason.
+
+Reports may supply `safeReport.presentation` with `verified` text, titled
+`observations` (detail, optional suggestion and exact Run/artifact references),
+and explicit `limitations`. Historical report data remains readable. A report
+links the Mission's existing authorized evidence; it does not manufacture or
+duplicate artifacts. A missing reference is shown as unavailable, never silently
+replaced with a different screenshot.
+
+See the local [controlled integration record](../../experiments/journey-reliability/INTEGRATION.md)
 for the activation gate and qualification results.
 
 ## Health
@@ -174,6 +221,12 @@ session, mutation budgets, and optional protected-input selections. On success,
 Scry atomically creates the Run, creates its Browser session, snapshots policy,
 binds selected protected inputs, and schedules browser ownership.
 
+Each terminal Run retains its own sanitized conclusion. Starting a follow-up
+attempt returns its Objective to `running`; the Objective stays running while
+any sibling attempt is active. Finalization does not erase earlier attempt
+conclusions. Historical Runs without a separately stored conclusion stay empty;
+the migration does not attribute an Objective's later conclusion to old attempts.
+
 ### Read or list Runs
 
 `GET /api/runs/{runId}`
@@ -234,7 +287,11 @@ integration request.
 `POST /api/missions/{missionId}/report`
 
 Requires every Objective and Run to be terminal, no pending mutation, and
-complete evidence. Scry sanitizes the supplied report, derives its Mission
+at least one complete evidence head or sealed, admitted partial evidence head.
+A failure report does not require an unrelated successful recording. Partial,
+missing and unavailable coverage remain explicit; publication never marks those
+attempts or recordings complete. Unsealed or corrupt partial evidence cannot
+anchor a report. Scry sanitizes the supplied report, derives its Mission
 evidence digest, stores one final report, and completes the Mission and agent
 session atomically.
 

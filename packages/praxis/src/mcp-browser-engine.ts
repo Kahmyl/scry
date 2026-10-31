@@ -6,8 +6,8 @@ import path from "node:path";
 import {
   nativeBrowserTools,
   nativeObservationTools,
-  nativeToolInputSchema,
-  playwrightToolDefinitions,
+  editBrowserTextSchema,
+  nativeBrowserToolSchema,
   type BrowserCommand,
   type ChronicleEvidencePort,
   type ChronicleEvidenceSessionPort,
@@ -26,7 +26,27 @@ import { SupervisedBrowser } from "./supervised-browser.js";
 
 const failure = (code: string) => new Error(`SCRY_BROWSER_${code}`);
 type Content = { type: string; text?: string; data?: string; mimeType?: string };
-type ToolResult = { content: Content[]; isError?: boolean };
+type ToolResult = {
+  content: Content[];
+  isError?: boolean;
+  interaction?: {
+    status: string;
+    inputState: string;
+    reason: string;
+    intent: string;
+    method: string;
+  };
+  evidence?: { title?: string; description?: string };
+};
+const adapterFailureCodes = new Set([
+  "ADAPTER_INVALID_TOOL_ARGUMENTS",
+  "ADAPTER_SNAPSHOT_CAPACITY",
+  "ADAPTER_OUTPUT_CAPACITY",
+  "ADAPTER_TARGET_NOT_READY",
+  "ADAPTER_REFERENCE_UNAVAILABLE",
+  "ADAPTER_CLIPBOARD_UNAVAILABLE",
+  "ADAPTER_COMMAND_CONCURRENT",
+]);
 type Proxy = { url: string; close(): Promise<void> };
 type Cell = {
   id: string;
@@ -71,7 +91,7 @@ class AdapterWorker {
     });
     this.child.on("message", (raw: unknown) => {
       if (!raw || typeof raw !== "object") return;
-      const m = raw as { id?: number; ok?: boolean; data?: unknown; type?: string };
+      const m = raw as { id?: number; ok?: boolean; data?: unknown; type?: string; code?: string };
       if (m.type === "masking") {
         onWarning();
         return;
@@ -82,7 +102,10 @@ class AdapterWorker {
       clearTimeout(call.timer);
       this.#pending.delete(m.id);
       if (m.ok) call.resolve(m.data);
-      else call.reject(failure("ADAPTER_CALL_FAILED"));
+      else
+        call.reject(
+          failure(m.code && adapterFailureCodes.has(m.code) ? m.code : "ADAPTER_CALL_FAILED"),
+        );
     });
     const lost = () => {
       for (const p of this.#pending.values()) {
@@ -239,7 +262,16 @@ export class PraxisMcpBrowserEngine {
     const secrets = await this.commands.protectedValuesForSession(c.id);
     this.active(c);
     c.policyDigest = createHash("sha256").update(JSON.stringify(secrets)).digest("hex");
-    await c.worker.call({ type: "init", endpoint: c.custody.endpoint(), secrets, output }, 15000);
+    await c.worker.call(
+      {
+        type: "init",
+        endpoint: c.custody.endpoint(),
+        display: c.custody.privateDisplay(),
+        secrets,
+        output,
+      },
+      15000,
+    );
     this.active(c);
     await c.custody.completeSetup();
   }
@@ -292,6 +324,13 @@ export class PraxisMcpBrowserEngine {
       await c.custody!.synchronize();
     }
   }
+  /** Explicit tools and independent observations share one native-call policy.
+   * Neither path may extend the exact command's remaining lifetime. */
+  private nativeCall(c: Cell, attempt: CommandAttempt, message: Record<string, unknown>) {
+    return this.phase(c, attempt, 30000, () =>
+      c.worker!.call(message, attempt.remainingMs(29000)),
+    ) as Promise<ToolResult>;
+  }
   async execute(
     id: string,
     command: BrowserCommand,
@@ -335,13 +374,11 @@ export class PraxisMcpBrowserEngine {
           secret = await this.commands.protectedValueForBrowser(id, protectedValueId);
           tool = "browser_type";
           args = { target, text: "", ...(submit === undefined ? {} : { submit }) };
+        } else if (tool === "browser_edit_text") {
+          args = editBrowserTextSchema.parse(command.args);
         } else {
           if (!nativeBrowserTools.has(tool as never)) throw failure("INVALID_TOOL_ARGUMENTS");
-          const definition = playwrightToolDefinitions.find((t) => t.name === tool)!;
-          args = nativeToolInputSchema(definition.inputSchema).parse(command.args) as Record<
-            string,
-            unknown
-          >;
+          args = nativeBrowserToolSchema(tool).parse(command.args) as Record<string, unknown>;
         }
         if (tool === "browser_navigate") {
           const url = new URL(String(args.url));
@@ -368,19 +405,33 @@ export class PraxisMcpBrowserEngine {
           observation: "unavailable",
           reason: "dispatch_started",
         });
-        const response = (await this.phase(c, attempt, 30000, () =>
-          c.worker!.call(
-            { type: "call", tool, args, ...(secret ? { secret } : {}) },
-            attempt.remainingMs(29000),
-          ),
-        )) as ToolResult;
+        const response = await this.nativeCall(c, attempt, {
+          type: "call",
+          tool,
+          args,
+          ...(secret ? { secret } : {}),
+        });
         const outcome: Record<string, unknown> = {
-          execution: response.isError ? "tool_error" : "completed",
-          businessOutcome: mutating ? "unverified" : "not_dispatched",
+          execution:
+            response.interaction?.status === "unknown"
+              ? "unknown"
+              : response.isError
+                ? "tool_error"
+                : "completed",
+          businessOutcome:
+            response.interaction?.status === "unknown"
+              ? "unknown"
+              : response.interaction?.status === "not_dispatched" &&
+                  response.interaction.inputState === "not_started"
+                ? "not_dispatched"
+                : mutating
+                  ? "unverified"
+                  : "not_dispatched",
           observation: "available",
           content: [],
           masking: c.maskingPartial ? "best_effort_partial" : "best_effort",
         };
+        if (response.interaction) outcome.inputObservation = response.interaction;
         // Action truth is durable before independent observation or media IO.
         outcome.content = response.content.filter((v) => v.type === "text");
         await options.persistAction?.(outcome);
@@ -409,6 +460,7 @@ export class PraxisMcpBrowserEngine {
             kind: "screenshot",
             timestamp: Date.now(),
             label: "page",
+            ...response.evidence,
             masking: c.maskingPartial ? "best_effort_partial" : "best_effort",
           });
           media.push({ artifactId: createHash("sha256").update(bytes).digest("hex") });
@@ -416,20 +468,36 @@ export class PraxisMcpBrowserEngine {
         if (media.length) outcome.media = media;
         if (!response.isError && mutating && tool !== "browser_handle_dialog") {
           try {
-            const observation = (await this.phase(c, attempt, 6000, () =>
-              c.worker!.call({ type: "call", tool: "browser_snapshot", args: {} }, 5000),
-            )) as ToolResult;
+            const observation = await this.nativeCall(c, attempt, {
+              type: "call",
+              tool: "browser_snapshot",
+              args: {},
+            });
             outcome.observation = observation.isError ? "unavailable" : "available";
             if (!observation.isError)
               outcome.content = [
                 ...(outcome.content as Content[]),
                 ...observation.content.filter((v) => v.type === "text"),
               ];
-          } catch {
+          } catch (error) {
             outcome.observation = "unavailable";
             outcome.warning =
               "Action result retained; subsequent observation was unavailable. Do not repeat the action without checking the app.";
-            await this.stop(c, true);
+            if (
+              error instanceof Error &&
+              /ADAPTER_(?:TIMEOUT|LOST|COMMAND_CONCURRENT)|COMMAND_PHASE_EXPIRED/u.test(
+                error.message,
+              )
+            )
+              await this.stop(c, true);
+            outcome.observationIssue =
+              error instanceof Error &&
+              (adapterFailureCodes.has(error.message.replace(/^SCRY_BROWSER_/, "")) ||
+                /^SCRY_BROWSER_(?:ADAPTER_TIMEOUT|ADAPTER_LOST|COMMAND_PHASE_EXPIRED|OWNER_FENCED)$/.test(
+                  error.message,
+                ))
+                ? error.message
+                : "SCRY_BROWSER_OBSERVATION_UNAVAILABLE";
           }
         }
         await options.persistAction?.(outcome);
@@ -437,7 +505,7 @@ export class PraxisMcpBrowserEngine {
       } catch (error) {
         if (
           error instanceof Error &&
-          /ADAPTER_(?:TIMEOUT|LOST)|COMMAND_PHASE_EXPIRED/u.test(error.message)
+          /ADAPTER_(?:TIMEOUT|LOST|COMMAND_CONCURRENT)|COMMAND_PHASE_EXPIRED/u.test(error.message)
         )
           await this.stop(c, true);
         throw error;

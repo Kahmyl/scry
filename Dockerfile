@@ -27,6 +27,8 @@ FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble AS runner
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /workspace
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg xvfb xclip \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=prod-deps /workspace/package.json /workspace/pnpm-workspace.yaml /workspace/tsconfig.base.json ./
 COPY --from=prod-deps /workspace/node_modules ./node_modules
@@ -38,6 +40,7 @@ COPY packages/praxis packages/praxis
 COPY packages/contracts packages/contracts
 COPY packages/veil packages/veil
 COPY packages/chronicle packages/chronicle
+RUN PLAYWRIGHT_SKIP_BROWSER_GC=1 node packages/praxis/node_modules/playwright-mcp-runtime/cli.js install chromium
 COPY scripts/verify-deployment-preflight.mjs ./scripts/
 COPY --from=build /workspace/apps/web/dist ./apps/web/dist
 COPY apps/web/scripts ./apps/web/scripts

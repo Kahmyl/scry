@@ -17,6 +17,7 @@ export async function publishFixtureEvidence(
   sessionId: string,
   generation: number,
   incomplete = false,
+  stopReceipt: { recordingComplete?: boolean } = {},
 ) {
   const row = (
     await database.query<{ run_id: string; lease_token: string }>(
@@ -48,7 +49,7 @@ export async function publishFixtureEvidence(
       recording.receive('{"fixture":"relational_lifecycle","timestamp":1000}');
     }
     await evidence.prepareClosure();
-    await evidence.stopCapture({ browserStopped: true, recordingDrained: true });
+    await evidence.stopCapture({ browserStopped: true, recordingDrained: true, ...stopReceipt });
     const completion = await evidence.seal({ renderVideo: false, actionLedger: async () => [] });
     await effects.completeEvidence(owner, completion);
     return completion;

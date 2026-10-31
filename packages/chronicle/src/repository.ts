@@ -364,14 +364,24 @@ export class ChronicleRepository {
   }
 
   async missionEvidenceDigest(missionId: string): Promise<string> {
-    const evidence = await this.sql.query<{ chain_head: string | null; state: string | null }>(
+    const evidence = await this.sql.query<{
+      chain_head: string | null;
+      state: string | null;
+      sealed_at: unknown;
+      custody_mode: string | null;
+    }>(
       `SELECT r.id AS run_id,e.id AS stream_id,e.state,e.chain_head,e.chunk_count,e.total_bytes,
-        e.sealed_at,e.interruptions,e.closure_issue FROM runs r LEFT JOIN browser_evidence_streams e ON e.run_id=r.id
+        e.sealed_at,e.interruptions,e.closure_issue,e.custody_mode FROM runs r LEFT JOIN browser_evidence_streams e ON e.run_id=r.id
          WHERE r.mission_id=$1 ORDER BY r.created_at,r.id`,
       [missionId],
     );
     if (
-      !evidence.rows.some((row) => row.state === "complete" && row.chain_head) ||
+      !evidence.rows.some(
+        (row) =>
+          row.chain_head &&
+          (row.state === "complete" ||
+            (row.state === "incomplete" && row.sealed_at && row.custody_mode === "admitted")),
+      ) ||
       evidence.rows.some((row) => row.state === "complete" && !row.chain_head)
     )
       throw new Error("SCRY_BROWSER_MISSION_EVIDENCE_INCOMPLETE");

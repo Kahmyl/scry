@@ -32,7 +32,7 @@ export async function inspectRecording(directory) {
 }
 export async function recording(
   directory,
-  { maxBytes = 256 * 1024 * 1024, maxMs = 15 * 60 * 1000, capture = displayLayout.capture } = {},
+  { maxBytes = 256 * 1024 * 1024, maxMs = Infinity, capture = displayLayout.capture } = {},
 ) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const child = fork(

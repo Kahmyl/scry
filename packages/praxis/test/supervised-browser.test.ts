@@ -13,6 +13,7 @@ class Helper extends EventEmitter {
   automatic = true;
   pending = false;
   refresh = false;
+  display: unknown = undefined;
   authorities: Array<Record<string, any>> = [];
   browser = { isConnected: vi.fn(() => true), once: vi.fn() };
   challenge() {
@@ -54,6 +55,7 @@ class Helper extends EventEmitter {
           this.emit("message", {
             kind: "ready",
             endpoint: "ws://127.0.0.1:12345/private-fixture-endpoint",
+            ...(this.display === undefined ? {} : { display: this.display }),
           });
       }
     } else if (value.kind === "setup_complete") this.emit("message", { kind: "setup_completed" });
@@ -97,6 +99,57 @@ function active(phase = 0): BrowserAuthoritySnapshot {
   };
 }
 describe("bounded parent custodian transport", () => {
+  it("uses the launch budget before the first authority reply, then enforces the active heartbeat", async () => {
+    let clock = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => clock);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const send = helper.send;
+    helper.send = vi.fn((value, callback) => {
+      if (value.kind === "initialize") {
+        callback?.(null);
+        return true;
+      }
+      return send(value, callback);
+    });
+    const observer = vi.fn();
+    const launching = SupervisedBrowser.launch({
+      sampleAuthority: idle,
+      onUnconfirmedStop: observer,
+    });
+    void launching.catch(() => undefined);
+    try {
+      clock = 6000;
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(helper.kill).not.toHaveBeenCalled();
+      helper.challenge();
+      const owned = await launching;
+      clock = 8001;
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(observer).toHaveBeenCalledTimes(1);
+      await expect(owned.terminate()).rejects.toThrow("TERMINATION_UNCONFIRMED");
+    } finally {
+      helper.exit();
+      await launching.catch(() => undefined);
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+  it("keeps the exact private display capability out of serialized browser state", async () => {
+    helper.display = ":77";
+    const owned = await SupervisedBrowser.launch({ sampleAuthority: idle });
+    expect(owned.privateDisplay()).toBe(":77");
+    expect(JSON.stringify(owned)).not.toContain(":77");
+    await owned.close();
+  });
+  it.each([":1;echo unsafe", "http://localhost:1", 7])(
+    "rejects malformed private display %#",
+    async (display) => {
+      helper.display = display;
+      await expect(SupervisedBrowser.launch({ sampleAuthority: idle })).rejects.toThrow(
+        "TERMINATION_UNCONFIRMED",
+      );
+    },
+  );
   it("does not serialize callbacks or application environment into the launch control message", async () => {
     const observer = vi.fn();
     const owned = await SupervisedBrowser.launch({

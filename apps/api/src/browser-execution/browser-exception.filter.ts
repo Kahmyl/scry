@@ -30,6 +30,11 @@ export class BrowserExceptionFilter implements ExceptionFilter {
 }
 
 export function browserErrorStatus(code: string): number {
+  if (
+    code === "SCRY_BROWSER_SESSION_CAPACITY_EXHAUSTED" ||
+    code === "SCRY_BROWSER_CAPACITY_CONFIGURATION_INVALID"
+  )
+    return HttpStatus.SERVICE_UNAVAILABLE;
   if (code.includes("DISABLED") || code.includes("RUNTIME_UNAVAILABLE"))
     return HttpStatus.SERVICE_UNAVAILABLE;
   if (code.includes("FORBIDDEN")) return HttpStatus.FORBIDDEN;
@@ -40,6 +45,13 @@ export function browserErrorStatus(code: string): number {
 }
 
 function browserSafeActions(code: string): string[] {
+  if (code === "SCRY_BROWSER_SESSION_CAPACITY_EXHAUSTED")
+    return [
+      "Browser capacity is currently in use. This start request launched no browser and performed no application action.",
+      "Wait for capacity, or finish a Run you own through normal finalization; then retry the same start request. Do not repeat any prior business action.",
+    ];
+  if (code === "SCRY_BROWSER_CAPACITY_CONFIGURATION_INVALID")
+    return ["Browser capacity configuration is unavailable. Contact the deployment operator."];
   if (code.includes("NOT_FOUND") || code.includes("CONTEXT_INVALID"))
     return ["verify_workspace_scope_and_identifiers"];
   if (code.includes("BUDGET_EXHAUSTED")) return ["stop_without_dispatch", "report_budget_refusal"];

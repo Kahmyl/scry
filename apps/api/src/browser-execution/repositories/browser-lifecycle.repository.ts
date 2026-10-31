@@ -21,6 +21,7 @@ import {
   type EncryptedProtectedValue,
 } from "../protected-value-cipher.js";
 import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
+import { admitBrowserSession } from "./browser-session-capacity.js";
 
 interface IdRow extends QueryResultRow {
   id: string;
@@ -237,95 +238,108 @@ export class BrowserLifecycleRepository {
         input.agentSessionId,
         input.projectId,
       );
-      const existing = await client.query<{ runId: string; browserSessionId: string }>(
-        `SELECT r.id AS "runId",s.id AS "browserSessionId" FROM runs r
+      return admitBrowserSession(
+        client,
+        async () => {
+          const existing = await client.query<{ runId: string; browserSessionId: string }>(
+            `SELECT r.id AS "runId",s.id AS "browserSessionId" FROM runs r
          JOIN browser_execution_sessions s ON s.run_id=r.id
          WHERE r.mission_id=$1 AND r.idempotency_key=$2 FOR UPDATE`,
-        [input.missionId, input.idempotencyKey],
-      );
-      if (existing.rows[0]) return { ...existing.rows[0], replay: true };
-      const environment = await client.query<{
-        base_origin: string;
-        allowed_service_origins: unknown;
-        disclosure_mode: "confidential" | "trusted_application_output";
-      }>(
-        "SELECT base_origin,allowed_service_origins,disclosure_mode FROM environments WHERE id=$1 AND project_id=$2 AND state='active'",
-        [input.environmentId, input.projectId],
-      );
-      if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
-      const protectedInputIds = [...new Set(input.protectedInputIds)];
-      if (protectedInputIds.length !== input.protectedInputIds.length)
-        throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
-      if (protectedInputIds.length > 0) {
-        const available = await client.query<{ id: string }>(
-          `SELECT id FROM protected_values
+            [input.missionId, input.idempotencyKey],
+          );
+          return existing.rows[0] ? { ...existing.rows[0], replay: true } : undefined;
+        },
+        async () => {
+          const environment = await client.query<{
+            base_origin: string;
+            allowed_service_origins: unknown;
+            disclosure_mode: "confidential" | "trusted_application_output";
+          }>(
+            "SELECT base_origin,allowed_service_origins,disclosure_mode FROM environments WHERE id=$1 AND project_id=$2 AND state='active'",
+            [input.environmentId, input.projectId],
+          );
+          if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
+          const protectedInputIds = [...new Set(input.protectedInputIds)];
+          if (protectedInputIds.length !== input.protectedInputIds.length)
+            throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
+          if (protectedInputIds.length > 0) {
+            const available = await client.query<{ id: string }>(
+              `SELECT id FROM protected_values
            WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
              AND (expires_at IS NULL OR expires_at>now()) FOR UPDATE`,
-          [protectedInputIds, input.projectId],
-        );
-        if (available.rowCount !== protectedInputIds.length)
-          throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
-      }
-      const runId = randomUUID();
-      const browserSessionId = randomUUID();
-      await client.query(
-        `INSERT INTO runs(id,project_id,mission_id,objective_id,agent_session_id,flow_id,flow_revision_id,environment_id,idempotency_key,state,started_at)
+              [protectedInputIds, input.projectId],
+            );
+            if (available.rowCount !== protectedInputIds.length)
+              throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
+          }
+          const runId = randomUUID();
+          const browserSessionId = randomUUID();
+          await client.query(
+            `INSERT INTO runs(id,project_id,mission_id,objective_id,agent_session_id,flow_id,flow_revision_id,environment_id,idempotency_key,state,started_at)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'running',now())`,
-        [
-          runId,
-          input.projectId,
-          input.missionId,
-          input.objectiveId,
-          input.agentSessionId,
-          input.flowId,
-          input.flowRevisionId,
-          input.environmentId,
-          input.idempotencyKey,
-        ],
-      );
-      await client.query(
-        `INSERT INTO browser_execution_sessions(id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
+            [
+              runId,
+              input.projectId,
+              input.missionId,
+              input.objectiveId,
+              input.agentSessionId,
+              input.flowId,
+              input.flowRevisionId,
+              input.environmentId,
+              input.idempotencyKey,
+            ],
+          );
+          // The Objective is the current assessment, not the last failed attempt.
+          // Individual conclusions remain immutable on their respective Runs.
+          await client.query(
+            "UPDATE mission_objectives SET state='running',conclusion=NULL,updated_at=now() WHERE id=$1",
+            [input.objectiveId],
+          );
+          await client.query(
+            `INSERT INTO browser_execution_sessions(id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
            state,authentication_commit_limit,business_commit_limit,allowed_first_party_origins,allowed_service_origins,
            runtime_capability_id,protection_key_id,disclosure_mode,idempotency_key,runtime_adapter)
          VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16)`,
-        [
-          browserSessionId,
-          runId,
-          input.projectId,
-          input.missionId,
-          input.objectiveId,
-          input.environmentId,
-          input.agentSessionId,
-          input.authenticationCommitLimit,
-          input.businessCommitLimit,
-          JSON.stringify([environment.rows[0].base_origin]),
-          JSON.stringify(environment.rows[0].allowed_service_origins),
-          BROWSER_RUNTIME_CAPABILITY_ID,
-          this.cipher.activeKeyId(),
-          environment.rows[0].disclosure_mode,
-          `browser:${input.idempotencyKey}`,
-          selectedBrowserAdapter(),
-        ],
+            [
+              browserSessionId,
+              runId,
+              input.projectId,
+              input.missionId,
+              input.objectiveId,
+              input.environmentId,
+              input.agentSessionId,
+              input.authenticationCommitLimit,
+              input.businessCommitLimit,
+              JSON.stringify([environment.rows[0].base_origin]),
+              JSON.stringify(environment.rows[0].allowed_service_origins),
+              BROWSER_RUNTIME_CAPABILITY_ID,
+              this.cipher.activeKeyId(),
+              environment.rows[0].disclosure_mode,
+              `browser:${input.idempotencyKey}`,
+              selectedBrowserAdapter(),
+            ],
+          );
+          await client.query(
+            "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
+            [browserSessionId, BROWSER_RUNTIME_CAPABILITY_ID],
+          );
+          for (const protectedValueId of protectedInputIds) {
+            await client.query(
+              "INSERT INTO browser_session_protected_inputs(session_id,protected_value_id,project_id) VALUES($1,$2,$3)",
+              [browserSessionId, protectedValueId, input.projectId],
+            );
+          }
+          await client.query(
+            "UPDATE missions SET state='running',updated_at=now(),revision=revision+1,current_objective_id=$2 WHERE id=$1",
+            [input.missionId, input.objectiveId],
+          );
+          await client.query(
+            "UPDATE mission_objectives SET state='running',updated_at=now() WHERE id=$1 AND state='pending'",
+            [input.objectiveId],
+          );
+          return { runId, browserSessionId, replay: false };
+        },
       );
-      await client.query(
-        "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
-        [browserSessionId, BROWSER_RUNTIME_CAPABILITY_ID],
-      );
-      for (const protectedValueId of protectedInputIds) {
-        await client.query(
-          "INSERT INTO browser_session_protected_inputs(session_id,protected_value_id,project_id) VALUES($1,$2,$3)",
-          [browserSessionId, protectedValueId, input.projectId],
-        );
-      }
-      await client.query(
-        "UPDATE missions SET state='running',updated_at=now(),revision=revision+1,current_objective_id=$2 WHERE id=$1",
-        [input.missionId, input.objectiveId],
-      );
-      await client.query(
-        "UPDATE mission_objectives SET state='running',updated_at=now() WHERE id=$1 AND state='pending'",
-        [input.objectiveId],
-      );
-      return { runId, browserSessionId, replay: false };
     });
   }
 
@@ -349,7 +363,7 @@ export class BrowserLifecycleRepository {
         [missionId],
       ),
       this.database.query(
-        `SELECT r.id,r.flow_id AS "flowId",r.flow_revision_id AS "flowRevisionId",r.objective_id AS "objectiveId",r.state,r.outcome_classification AS "outcomeClassification",s.id AS "browserSessionId",s.active_owner_generation AS "activeOwnerGeneration",s.disclosure_mode AS "disclosureMode" FROM runs r LEFT JOIN browser_execution_sessions s ON s.run_id=r.id WHERE r.mission_id=$1 ORDER BY r.created_at`,
+        `SELECT r.id,r.flow_id AS "flowId",r.flow_revision_id AS "flowRevisionId",r.objective_id AS "objectiveId",r.state,r.conclusion,r.created_at AS "createdAt",r.outcome_classification AS "outcomeClassification",s.id AS "browserSessionId",s.active_owner_generation AS "activeOwnerGeneration",s.disclosure_mode AS "disclosureMode" FROM runs r LEFT JOIN browser_execution_sessions s ON s.run_id=r.id WHERE r.mission_id=$1 ORDER BY r.created_at,r.id`,
         [missionId],
       ),
     ]);
@@ -395,15 +409,27 @@ export class BrowserLifecycleRepository {
       if (!row) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
       if (["passed", "failed", "cancelled", "infrastructure_error"].includes(row.state))
         return { replay: true };
+      // Serialize sibling finalizations before sampling their active states.
+      // This separate post-lock statement gets a fresh READ COMMITTED snapshot.
+      await client.query("SELECT id FROM mission_objectives WHERE id=$1 FOR UPDATE", [
+        row.objective_id,
+      ]);
       const state =
         outcome === "passed" ? "passed" : outcome === "cancelled" ? "cancelled" : "failed";
-      await client.query(
-        "UPDATE runs SET state=$2,outcome_classification=$3,completed_at=now(),updated_at=now() WHERE id=$1",
-        [runId, state, outcome],
+      const safeConclusion = (await this.reportSanitizer(client, row.mission_id)).sanitizeText(
+        conclusion,
+        "report",
       );
       await client.query(
-        "UPDATE mission_objectives SET state=$2,conclusion=$3,updated_at=now() WHERE id=$1",
-        [row.objective_id, outcome === "passed" ? "passed" : "failed", conclusion],
+        "UPDATE runs SET state=$2,outcome_classification=$3,conclusion=$4,completed_at=now(),updated_at=now() WHERE id=$1",
+        [runId, state, outcome, safeConclusion],
+      );
+      await client.query(
+        `UPDATE mission_objectives SET
+          state=CASE WHEN EXISTS(SELECT 1 FROM runs WHERE objective_id=$1 AND state NOT IN ('passed','failed','cancelled','infrastructure_error')) THEN 'running' ELSE $2 END,
+          conclusion=CASE WHEN EXISTS(SELECT 1 FROM runs WHERE objective_id=$1 AND state NOT IN ('passed','failed','cancelled','infrastructure_error')) THEN NULL ELSE $3 END,
+          updated_at=now() WHERE id=$1`,
+        [row.objective_id, outcome === "passed" ? "passed" : "failed", safeConclusion],
       );
       return { replay: false };
     });

@@ -1,15 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
-  nativeToolInputSchema,
   playwrightToolDefinitions,
   nativeObservationTools,
+  editBrowserTextSchema,
+  nativeBrowserToolSchema,
 } from "@scry/contracts";
 import { z } from "zod";
 import { BrowserApiClient } from "./api-client.js";
 import { uuid } from "./tool-registry.js";
 
 export const nativeBrowserInstructions =
-  "Use one Mission for the user's objective and an Environment containing only the assigned app origins. Resume a matching active Mission when present. Create a Flow and Run, then use browser tools with the Run's browserSessionId. Each actionId must be unique for a new action; reuse it only to retrieve that same action, never to perform another one. Current snapshots and browser_find provide current element targets. Use screenshots for visual checks; accessibility text alone does not prove layout or edited values. Normal browser errors are observations, not successful actions. UNKNOWN means an action may have happened: inspect the app or stop accurately, never repeat it blindly. Request explicit user selection before binding saved credentials; browser_type_secret accepts a bound opaque reference, not plaintext. Automatic black masking is best effort for access secrets and financial details, not a guarantee of complete protection. Native video preserves original UI and timing. Finish the Run and record findings factually before publishing the Mission report.";
+  "Use one Mission for the user's objective and an Environment containing only the assigned app origins. Resume a matching active Mission when present. Give each Flow a meaningful testing purpose and each Run an accurate conclusion, keeping failed or recovered attempts visible. Use browser tools with the Run's browserSessionId. Each actionId must be unique for a new action; reuse it only to retrieve that same action, never to perform another one. Current snapshots and browser_find provide current element targets. Use screenshots for visual checks; accessibility text alone does not prove layout or edited values. For rich text use browser_edit_text with explicit replace/insert intent and keyboard/paste method. Its readback is input observation, not proof of saved state; verify persistence separately. browser_type with slowly=true inserts rather than clears. Normal browser errors are observations, not successful actions. UNKNOWN means an action may have happened: inspect the app or stop accurately, never repeat it blindly. Request explicit user selection before binding saved credentials; browser_type_secret accepts a bound opaque reference, not plaintext. Automatic black masking is best effort for access secrets and financial details, not a guarantee of complete protection. Native video preserves original UI and timing without a fixed journey time cutoff. Capture meaningful changed states, not repeated identical screenshots, and provide evidenceTitle/evidenceDescription when helpful. Finish the Run and publish a factual Mission report with verified scope, observations, evidence references and limitations. The report links the same evidence as the Mission, not a second copy.";
 
 export async function nativeCommandResult(
   client: BrowserApiClient,
@@ -45,7 +46,7 @@ export async function nativeCommandResult(
   }
   return {
     content,
-    structuredContent: { command },
+    structuredContent: { message: "Browser command facts loaded.", command },
     isError:
       command.state === "failed" ||
       result?.execution === "tool_error" ||
@@ -66,8 +67,14 @@ export function registerNativeBrowserTools(
     ...playwrightToolDefinitions.map((d) => ({
       name: d.name,
       description: d.description,
-      schema: nativeToolInputSchema(d.inputSchema) as z.ZodObject,
+      schema: nativeBrowserToolSchema(d.name),
     })),
+    {
+      name: "browser_edit_text",
+      description:
+        "Edit text through the browser's native keyboard or private clipboard, with explicit replace/insert intent and an owned current reference. Useful for rich editors that reject fill. Reports observed input, not saved business success. On mismatch or uncertainty inspect the app before choosing another action; never blindly replay. Ordinary browser_type keeps Playwright semantics: slowly=true inserts at the selection, it does not clear implicitly.",
+      schema: editBrowserTextSchema,
+    },
     {
       name: "browser_type_secret",
       description:

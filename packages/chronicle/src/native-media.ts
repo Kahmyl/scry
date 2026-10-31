@@ -65,7 +65,8 @@ export async function createNativeRecording(options: {
           ? !/\.(webm|mp4)$/u.test(input.filename)
           : !/\.(png|jpeg|webp)$/u.test(input.filename)) ||
         (input.durationMs !== undefined &&
-          (!Number.isFinite(input.durationMs) || input.durationMs < 0))
+          (!Number.isFinite(input.durationMs) || input.durationMs < 0)) ||
+        !validPresentation(input)
       )
         throw new Error("native_media_receipt_invalid");
       if (admitted.has(input.filename)) return;
@@ -99,6 +100,9 @@ export async function createNativeRecording(options: {
         bytes: bytes.length,
         timestamp: input.timestamp,
         label: input.label,
+        ...(input.title ? { title: input.title } : {}),
+        ...(input.description ? { description: input.description } : {}),
+        ...(input.interruptionReason ? { interruptionReason: input.interruptionReason } : {}),
         ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs }),
       };
       options.assertActive();
@@ -120,6 +124,36 @@ export async function createNativeRecording(options: {
 
 function hash(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+const interruptionReasons = new Set([
+  "recording_capacity",
+  "recording_duration",
+  "browser_interrupted",
+  "parent_lost",
+  "recorder_lost",
+  "encoder_start_failed",
+  "recorder_terminated",
+  "unknown",
+]);
+function validPresentation(item: {
+  title?: unknown;
+  description?: unknown;
+  interruptionReason?: unknown;
+}): boolean {
+  return (
+    (item.title === undefined ||
+      (typeof item.title === "string" &&
+        item.title.length > 0 &&
+        item.title.length <= 200 &&
+        !/[\u0000-\u001f\u007f]/.test(item.title))) &&
+    (item.description === undefined ||
+      (typeof item.description === "string" &&
+        item.description.length <= 2000 &&
+        !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(item.description))) &&
+    (item.interruptionReason === undefined ||
+      (typeof item.interruptionReason === "string" &&
+        interruptionReasons.has(item.interruptionReason)))
+  );
 }
 
 /** Both metadata and bytes stay behind authorized API reads. Never resolve an
@@ -177,7 +211,8 @@ export function nativeMediaReceipts(events: Array<Record<string, unknown>>): Nat
       ) ||
       !/^[a-f0-9]{64}$/u.test(item.digest) ||
       !Number.isSafeInteger(item.bytes) ||
-      item.bytes < 1
+      item.bytes < 1 ||
+      !validPresentation(item)
     )
       throw new Error("native_media_manifest_invalid");
   }
@@ -225,7 +260,7 @@ export async function recoverNativeCaptures(
     const directory = capture.directory;
     if (typeof directory !== "string" || !/^native\/\d+\/[a-f0-9-]{36}\/capture$/u.test(directory))
       throw new Error("native_media_path_invalid");
-    let manifest: { coverage?: string; started?: number; duration?: string };
+    let manifest: { coverage?: string; started?: number; duration?: string; reason?: string };
     try {
       manifest = JSON.parse(
         (await privateFile(path.join(root, directory, "recording.json"), root, 8192)).toString(
@@ -255,6 +290,13 @@ export async function recoverNativeCaptures(
       label: "final",
       durationMs: Number(manifest.duration) * 1000,
       coverage: manifest.coverage as "complete" | "partial",
+      ...(manifest.coverage === "partial"
+        ? {
+            interruptionReason: interruptionReasons.has(manifest.reason ?? "")
+              ? manifest.reason
+              : "unknown",
+          }
+        : {}),
     });
     recovered++;
   }

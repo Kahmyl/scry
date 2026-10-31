@@ -1954,6 +1954,95 @@ select:focus-visible {
   gap: 8px;
   margin: 16px 0;
 }
+.native-evidence-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.native-evidence-layout .native-evidence-selector {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  margin: 0;
+  max-height: 70vh;
+  overflow: auto;
+}
+.native-evidence-selector button {
+  text-align: left;
+}
+.native-evidence-selector small {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+.native-evidence-viewer {
+  min-width: 0;
+}
+.native-evidence-viewer h4 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+.native-evidence video {
+  aspect-ratio: 16/9;
+}
+.native-evidence select {
+  font: inherit;
+  padding: 8px;
+  max-width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.native-evidence-mobile {
+  display: none;
+}
+.journey-attempt {
+  border-top: 1px solid var(--line);
+  padding: 16px 20px 0;
+  margin-top: 16px;
+}
+.journey-attempt button,
+.report-observation button {
+  font: inherit;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.journey-attempt button[aria-pressed="true"] {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+.mission-journeys > .panel > h3,
+.mission-journeys > .panel > p {
+  margin-left: 20px;
+  margin-right: 20px;
+}
+.report-observation {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+@media (max-width: 800px) {
+  .native-evidence-layout {
+    grid-template-columns: 1fr;
+  }
+  .native-evidence-layout .native-evidence-selector {
+    display: none;
+  }
+  .native-evidence-mobile {
+    display: block;
+    margin: 16px 0;
+  }
+  .native-evidence-mobile select {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+  }
+}
 .native-evidence-selector button {
   padding: 8px 12px;
   border: 1px solid #555;
@@ -7727,6 +7816,10 @@ select:focus-visible {
 }
 /* Privacy-safe operator diagnostics */
 .operational-alert-panel,
+.mission-journeys > section[tabindex="-1"] {
+  scroll-margin-top: 80px;
+}
+
 .operational-event-panel {
   margin-bottom: 24px;
 }

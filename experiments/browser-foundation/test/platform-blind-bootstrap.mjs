@@ -5,9 +5,12 @@ import { randomUUID } from "node:crypto";
 const root = process.env.SCRY_BLIND_ROOT;
 if (!root || !process.env.SCRY_BLIND_INPUTS) throw new Error("Explicit lab paths required");
 const inputs = JSON.parse(await readFile(process.env.SCRY_BLIND_INPUTS, "utf8"));
-const { token } = await (await fetch("http://127.0.0.1:45491/fixture-input")).json();
+const apiBase = process.env.SCRY_BLIND_API_URL ?? "http://127.0.0.1:45400/api",
+  fixtureBase = process.env.SCRY_BLIND_FIXTURE_URL ?? "http://127.0.0.1:45491",
+  mcpUrl = process.env.SCRY_BLIND_MCP_URL ?? "http://127.0.0.1:45410/mcp";
+const { token } = await (await fetch(fixtureBase + "/fixture-input")).json();
 const api = async (path, body) => {
-  const r = await fetch("http://127.0.0.1:45400/api" + path, {
+  const r = await fetch(apiBase + path, {
     method: "POST",
     headers: { authorization: "Bearer " + token, "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -45,7 +48,7 @@ for (const app of [
   const access = await api("/mcp-tokens", { name: "Disposable blind " + app + " 20261031" });
   await writeFile(
     directory + "/connection.json",
-    JSON.stringify({ token: access.token, tokenId: access.id }),
+    JSON.stringify({ token: access.token, tokenId: access.id, mcpUrl }),
     { mode: 0o600, flag: "wx" },
   );
   assignments[app] = {

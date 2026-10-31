@@ -30,10 +30,23 @@ const tests = (
   id,
   guarantee,
   command: ["pnpm", "--filter", owner, "exec", "vitest", "run", ...files, "--maxWorkers=1"],
+  // Database fixtures retain many independent metadata-only Sessions. Their
+  // explicit budget is not the deployed public-path capacity qualification.
+  // These command-contract fixtures use the retained adapter, independently
+  // of the selected adapter in the surrounding deployed candidate.
   environment: options.integrated
-    ? { SCRY_BROWSER_E2E: "1" }
+    ? {
+        SCRY_BROWSER_E2E: "1",
+        ...(options.database
+          ? { SCRY_BROWSER_MAX_LIVE_SESSIONS: "1000", SCRY_BROWSER_ADAPTER: "legacy" }
+          : {}),
+      }
     : options.database
-      ? { SCRY_BROWSER_E2E: "0" }
+      ? {
+          SCRY_BROWSER_E2E: "0",
+          SCRY_BROWSER_MAX_LIVE_SESSIONS: "1000",
+          SCRY_BROWSER_ADAPTER: "legacy",
+        }
       : componentEnvironment,
   prerequisites: [
     ...(options.database ? ["database" as const] : []),
@@ -186,6 +199,7 @@ export const checks: readonly CheckDefinition[] = [
       "test/browser-execution.repository.integration.test.ts",
       "test/browser-execution.process-failure.integration.test.ts",
       "test/browser-lifecycle.repository.integration.test.ts",
+      "test/browser-session-capacity.integration.test.ts",
       "test/browser-auth-scope.integration.test.ts",
       "test/browser-scope-integrity.integration.test.ts",
       "test/browser-command-order.integration.test.ts",

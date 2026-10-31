@@ -345,25 +345,36 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
       ),
   );
 
-  const startRunInput = startBrowserRunSchema.omit({ idempotencyKey: true });
+  const startRunInput = startBrowserRunSchema.omit({ idempotencyKey: true }).extend({
+    attemptId: z
+      .string()
+      .min(8)
+      .max(256)
+      .optional()
+      .describe(
+        "Identity of this intended attempt. Use a new value for a deliberate new attempt in the same Flow; reuse it only to recover this exact start request. Omit only for compatibility with an older single-attempt client.",
+      ),
+  });
   server.registerTool(
     "start_run",
     {
       title: "Start Flow Run",
       description:
-        "Start one browser Run under exactly one current Flow revision. Include protected input IDs only after the current user has explicitly selected them; credentials discovered later can be bound to this active Run after user choice. This queues a browser owner but does not itself dispatch an external application mutation.",
+        "Start one browser Run under exactly one current Flow revision. Include protected input IDs only after the current user has explicitly selected them; credentials discovered later can be bound to this active Run after user choice. This queues a browser owner but does not itself dispatch an external application mutation. Browser capacity is reserved until finalization; if capacity is full, no browser is launched by this request. Wait for availability or finish a Run you own, then retry this exact start identity. Existing browser commands and finalization remain available.",
       inputSchema: startRunInput.shape,
       outputSchema: { message, runId: uuid, browserSessionId: uuid, replay: z.boolean() },
       annotations: idempotentDurableWrite,
     },
-    async (input) =>
-      toolResult(
+    async (input) => {
+      const { attemptId, ...run } = input;
+      return toolResult(
         await client.post("/runs", {
-          ...input,
-          idempotencyKey: stableKey("browser-run", input),
+          ...run,
+          idempotencyKey: stableKey("browser-run", attemptId === undefined ? run : input),
         }),
         "Run started and queued.",
-      ),
+      );
+    },
   );
 
   server.registerTool(
@@ -400,7 +411,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
     {
       title: "Publish Mission report",
       description:
-        "Publish the final safe Mission report. The API derives its evidence digest from complete authenticated Run evidence; the agent cannot supply or invent that digest.",
+        "Publish the final safe Mission report. Include safeReport.presentation with verified steps, titled observations (not automatic defect judgments), optional suggestions/evidence references, and explicit limitations. Include unsuccessful/recovered attempts; tool completion alone is not business success. The API derives evidence coverage and digest; do not invent them.",
       inputSchema: { missionId: uuid, ...publishBrowserMissionReportSchema.shape },
       outputSchema: { message, reportId: uuid, replay: z.boolean() },
       annotations: idempotentDurableWrite,

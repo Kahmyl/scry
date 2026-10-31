@@ -2,6 +2,13 @@
 
 Status: canonical baseline relational model
 
+The active `browser_execution_sessions` inventory also represents live browser
+capacity reservations. Creation is serialized across both entry paths by one
+short database transaction lock, with exact replay checked before the capacity
+count. The additive live-capacity partial index covers only active Sessions;
+historical evidence, owners and attempts are not rewritten. Capacity is released
+only by the existing confirmed finalization lifecycle, never by lease expiry alone.
+
 This document describes the PostgreSQL model supporting the
 [Scry baseline brief](../product/baseline-brief.md). PostgreSQL is the durable
 authority for identity scope, assignment state, execution truth, protected
@@ -89,6 +96,14 @@ A Mission in `completed`, `failed`, or `cancelled` state must have a completion
 time; a non-terminal Mission must not. A Run in `passed`, `failed`, `cancelled`,
 or `infrastructure_error` state must have both a completion time and outcome
 classification; a non-terminal Run must not.
+
+The additive attempt-conclusions migration adds nullable `runs.conclusion`.
+New finalizations persist a sanitized per-attempt conclusion in the same
+transaction as terminal state. Terminal replay cannot replace it. Historical
+nulls remain null; there is no speculative backfill from Objective summaries.
+Starting another attempt resets the Objective's current assessment to running,
+without changing older Run conclusions. Sibling finalizations serialize on the
+Objective before checking whether another attempt remains active.
 
 ## Browser-session and queue tables
 

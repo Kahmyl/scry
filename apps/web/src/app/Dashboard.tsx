@@ -1,5 +1,5 @@
 import { Activity, AlertTriangle, ArrowRight, Eye, FileText, ShieldCheck } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { matchPath, useLocation, useNavigate } from "react-router-dom";
 
 import { Integrations } from "../features/settings/integrations.js";
@@ -15,6 +15,7 @@ import {
 } from "./components/index.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { RunEvidence } from "./RunEvidence.js";
+import { ReportNarrative, type EvidenceSelection } from "./ReportNarrative.js";
 
 type Mission = {
   id: string;
@@ -34,6 +35,7 @@ type Mission = {
 
 type MissionDetail = {
   id: string;
+  projectId: string;
   title: string;
   instruction: string;
   state: string;
@@ -53,6 +55,7 @@ type MissionDetail = {
     objectiveId: string;
     state: string;
     outcomeClassification?: string;
+    conclusion?: string | null;
   }>;
 };
 
@@ -75,6 +78,7 @@ type Run = {
 };
 
 type RunDetail = Run & {
+  projectId: string;
   runtimeAdapter?: "legacy" | "playwright_mcp";
   activity?: Array<{
     id: string;
@@ -122,6 +126,7 @@ type RunDetail = Run & {
 
 type Report = {
   id: string;
+  projectId: string;
   missionId: string;
   missionTitle: string;
   originalInstruction?: string;
@@ -160,6 +165,16 @@ export function Dashboard({
   const runId = matchPath("/dashboard/runs/:runId", location.pathname)?.params.runId;
   const reportId = matchPath("/dashboard/reports/:reportId", location.pathname)?.params.reportId;
   const view = dashboardView(location.pathname);
+  const resolveResourceProject = useCallback(
+    (id: string) => {
+      // Only the authorized resource response can select its project, and only
+      // among this workspace's loaded projects. Never trust a guessed route ID.
+      if (!projects.some((project) => project.id === id)) return;
+      setProjectId(id);
+      localStorage.setItem("scry:project", id);
+    },
+    [projects],
+  );
 
   const loadProjects = useCallback(async () => {
     try {
@@ -216,12 +231,24 @@ export function Dashboard({
           ) : view === "settings" ? (
             <ProjectSettings projectId={projectId} />
           ) : reportId ? (
-            <ReportDetail reportId={reportId} onBack={() => navigate("/dashboard/reports")} />
+            <ReportDetail
+              key={reportId}
+              reportId={reportId}
+              onProjectResolved={resolveResourceProject}
+              onBack={() => navigate("/dashboard/reports")}
+            />
           ) : runId ? (
-            <RunDetailView runId={runId} onBack={() => navigate("/dashboard/runs")} />
+            <RunDetailView
+              key={runId}
+              runId={runId}
+              onProjectResolved={resolveResourceProject}
+              onBack={() => navigate("/dashboard/runs")}
+            />
           ) : missionId ? (
             <MissionDetailView
+              key={missionId}
               missionId={missionId}
+              onProjectResolved={resolveResourceProject}
               onBack={() => navigate("/dashboard/missions")}
             />
           ) : view === "missions" ? (
@@ -363,8 +390,23 @@ function ReportList({ projectId, onOpen }: { projectId: string; onOpen: (id: str
   );
 }
 
-function MissionDetailView({ missionId, onBack }: { missionId: string; onBack: () => void }) {
+type ProjectResolution = { onProjectResolved: (projectId: string) => void };
+function useResourceProject(
+  projectId: string | undefined,
+  onResolved: ProjectResolution["onProjectResolved"],
+) {
+  useEffect(() => {
+    if (projectId) onResolved(projectId);
+  }, [projectId, onResolved]);
+}
+function MissionDetailView({
+  missionId,
+  onBack,
+  onProjectResolved,
+}: { missionId: string; onBack: () => void } & ProjectResolution) {
+  const navigate = useNavigate();
   const state = useResource<MissionDetail>(`/missions/${missionId}`, 2_000);
+  useResourceProject(state.data?.projectId, onProjectResolved);
   if (state.error) return <LoadFailure value={state.error} />;
   if (!state.data) return <PageSkeleton />;
   const mission = state.data;
@@ -372,10 +414,22 @@ function MissionDetailView({ missionId, onBack }: { missionId: string; onBack: (
     <>
       <Back onClick={onBack} />
       <PageTitle
-        eyebrow={`MISSION · REVISION ${mission.revision}`}
+        eyebrow="MISSION"
         title={mission.title}
-        copy={mission.instruction}
+        copy="Review progress, test journeys and their supporting evidence."
       />
+      {mission.finalReportId && (
+        <button
+          className="primary-button"
+          onClick={() => navigate(`/dashboard/reports/${mission.finalReportId}`)}
+        >
+          View test report <ArrowRight size={16} />
+        </button>
+      )}
+      <details className="panel">
+        <summary>Original request</summary>
+        <p>{mission.instruction}</p>
+      </details>
       <section className="metric-grid metric-grid-compact">
         <Metric label="State" value={human(mission.state)} state={mission.state} />
         <Metric label="Objectives" value={mission.objectives.length} />
@@ -393,29 +447,96 @@ function MissionDetailView({ missionId, onBack }: { missionId: string; onBack: (
             />
           ))}
         </div>
-        <div className="panel">
-          <ListHeading title="Flows" />
-          {mission.flows.map((item) => (
-            <Fact key={item.id} title={item.name} detail={item.purpose} state={item.state} />
-          ))}
-        </div>
       </section>
-      {mission.runs.map((run) => (
-        <MissionRunEvidence key={run.id} run={run} />
-      ))}
+      <MissionJourneys mission={mission} />
     </>
   );
 }
 
-function MissionRunEvidence({ run }: { run: MissionDetail["runs"][number] }) {
-  const [open, setOpen] = useState(false);
+function MissionJourneys({
+  mission,
+  selection,
+  onSelect,
+}: {
+  mission: MissionDetail;
+  selection?: EvidenceSelection;
+  onSelect?: (selection: EvidenceSelection) => void;
+}) {
+  const [local, setLocal] = useState<EvidenceSelection>();
+  const evidenceDestination = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!selection && !local) return;
+    evidenceDestination.current?.scrollIntoView({ block: "start", behavior: "auto" });
+    evidenceDestination.current?.focus({ preventScroll: true });
+  }, [selection, local]);
+  const selected =
+    selection ?? local ?? (mission.runs.at(-1) ? { runId: mission.runs.at(-1)!.id } : undefined);
+  const run = mission.runs.find((r) => r.id === selected?.runId),
+    flow = mission.flows.find((f) => f.id === run?.flowId);
+  const choose = (value: EvidenceSelection) => {
+    setLocal(value);
+    onSelect?.(value);
+  };
   return (
-    <details className="panel" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>
-        Run {run.id.slice(0, 8)} · {human(run.state)} · evidence
-      </summary>
-      {open && <RunEvidence runId={run.id} />}
-    </details>
+    <section className="mission-journeys" aria-label="Mission test journeys">
+      <h2>Test journeys</h2>
+      <p>
+        Flows are directions within this mission. Each run is an attempt; earlier failures and
+        recovery attempts remain visible.
+      </p>
+      {mission.flows.map((flow) => (
+        <section className="panel" key={flow.id}>
+          <h3>{flow.name}</h3>
+          {flow.purpose && <p>{flow.purpose}</p>}
+          {mission.runs
+            .filter((r) => r.flowId === flow.id)
+            .map((run, index) => (
+              <div className="journey-attempt" key={run.id}>
+                <button
+                  aria-pressed={selected?.runId === run.id}
+                  onClick={() => choose({ runId: run.id })}
+                >
+                  Attempt {index + 1} · {human(run.outcomeClassification ?? run.state)}
+                </button>
+                <p>
+                  {run.conclusion ??
+                    (["passed", "failed", "cancelled", "infrastructure_error"].includes(run.state)
+                      ? "This historical attempt has no separately recorded conclusion."
+                      : "This attempt is still in progress.")}
+                </p>
+              </div>
+            ))}
+          {!mission.runs.some((r) => r.flowId === flow.id) && (
+            <p>No attempts have started for this journey.</p>
+          )}
+        </section>
+      ))}
+      {!mission.flows.length && <p>No test journeys have been created yet.</p>}
+      {(run || selected) && (
+        <section aria-label="Selected attempt evidence" ref={evidenceDestination} tabIndex={-1}>
+          {run ? (
+            <>
+              <h3>
+                {flow?.name ?? "Selected test journey"} · Attempt{" "}
+                {mission.runs
+                  .filter((r) => r.flowId === run.flowId)
+                  .findIndex((r) => r.id === run.id) + 1}
+              </h3>
+              <RunEvidence
+                key={run.id}
+                runId={run.id}
+                {...(selected?.artifactId ? { initialArtifactId: selected.artifactId } : {})}
+              />
+            </>
+          ) : (
+            <p role="alert">
+              That evidence reference does not belong to an available attempt in this mission.
+              Choose an attempt above.
+            </p>
+          )}
+        </section>
+      )}
+    </section>
   );
 }
 
@@ -431,8 +552,13 @@ const evidenceIssueMessages: Readonly<Record<string, string>> = {
   publication_unavailable:
     "Scry could not publish the recording artifacts. No replay is available; this is an evidence-publication issue, not a finding about your application.",
 };
-function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void }) {
+function RunDetailView({
+  runId,
+  onBack,
+  onProjectResolved,
+}: { runId: string; onBack: () => void } & ProjectResolution) {
   const state = useResource<RunDetail>(`/runs/${runId}`, 2_000);
+  useResourceProject(state.data?.projectId, onProjectResolved);
   if (state.error) return <LoadFailure value={state.error} />;
   if (!state.data) return <PageSkeleton />;
   const run = state.data;
@@ -440,7 +566,7 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
     <>
       <Back onClick={onBack} />
       <PageTitle
-        eyebrow={`RUN #${run.id.slice(0, 8)}`}
+        eyebrow="RUN ATTEMPT"
         title={run.flowName}
         copy={`${run.environmentName} · ${run.baseOrigin}`}
       />
@@ -500,7 +626,7 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
       )}
       <RunEvidence runId={runId} />
       <section className="panel">
-        <ListHeading title="Evidence" />
+        <ListHeading title="Recording status" />
         {run.evidence.map((item) => (
           <Fact
             key={item.id}
@@ -509,17 +635,32 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
                 ? item.closureIssue === "video_unavailable"
                   ? "Video unavailable"
                   : "Recording unavailable"
-                : `${item.chunkCount} durable chunk${item.chunkCount === 1 ? "" : "s"}`
+                : item.state === "complete"
+                  ? "Recording saved"
+                  : item.state === "incomplete"
+                    ? "Partial recording"
+                    : "Recording in progress"
             }
             detail={
               item.closureIssue
                 ? (evidenceIssueMessages[item.closureIssue] ??
                   "This recording is unavailable. Scry has not published unverifiable evidence.")
-                : `${item.totalBytes} bytes · chain ${item.chainHead?.slice(0, 12) ?? "unavailable"}${item.interruptions ? ` · ${item.interruptions} recording interruption${item.interruptions === 1 ? "" : "s"}; this is not a complete recording` : ""}${item.state === "incomplete" && !item.chunkCount ? " · Recording unavailable; no captured evidence was admitted" : ""}`
+                : `${item.state === "complete" ? "The captured evidence was saved for review." : "Review the available evidence and any gaps before relying on this attempt."}${item.interruptions ? ` ${item.interruptions} recording interruption${item.interruptions === 1 ? "" : "s"}; this is not a complete recording.` : ""}${item.state === "incomplete" && !item.chunkCount ? " Recording unavailable; no captured evidence was admitted." : ""}`
             }
             state={item.state}
           />
         ))}
+        {!!run.evidence.length && (
+          <details>
+            <summary>Technical evidence details</summary>
+            {run.evidence.map((item) => (
+              <p key={item.id}>
+                {item.chunkCount} admitted chunks · {item.totalBytes} bytes · chain{" "}
+                {item.chainHead ?? "unavailable"}
+              </p>
+            ))}
+          </details>
+        )}
         {!run.evidence.length && (
           <EmptyBlock
             icon={<FileText />}
@@ -532,8 +673,15 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
   );
 }
 
-function ReportDetail({ reportId, onBack }: { reportId: string; onBack: () => void }) {
+function ReportDetail({
+  reportId,
+  onBack,
+  onProjectResolved,
+}: { reportId: string; onBack: () => void } & ProjectResolution) {
+  const navigate = useNavigate();
+  const [selection, setSelection] = useState<EvidenceSelection>();
   const state = useResource<Report>(`/reports/${reportId}`);
+  useResourceProject(state.data?.projectId, onProjectResolved);
   if (state.error) return <LoadFailure value={state.error} />;
   if (!state.data) return <PageSkeleton />;
   const report = state.data;
@@ -541,9 +689,11 @@ function ReportDetail({ reportId, onBack }: { reportId: string; onBack: () => vo
     <>
       <Back onClick={onBack} />
       <PageTitle eyebrow="FINAL MISSION REPORT" title={report.missionTitle} copy={report.summary} />
+      <button onClick={() => navigate(`/dashboard/missions/${report.missionId}`)}>
+        Back to mission
+      </button>
       <section className="panel">
-        <ListHeading title="Evidence integrity" />
-        <Fact title="Evidence chain digest" detail={report.evidenceDigest} state={report.state} />
+        <ListHeading title="Recording coverage" />
         {report.evidenceCoverage && (
           <p role="status">
             Evidence coverage: {report.evidenceCoverage.complete} complete,{" "}
@@ -556,13 +706,43 @@ function ReportDetail({ reportId, onBack }: { reportId: string; onBack: () => vo
           </p>
         )}
       </section>
-      <section className="panel">
-        <ListHeading title="Sanitized result" />
+      <ReportNarrative
+        {...(report.safeReport ? { value: report.safeReport } : {})}
+        onEvidence={setSelection}
+      />
+      <ReportMissionEvidence
+        missionId={report.missionId}
+        {...(selection ? { selection } : {})}
+        onSelect={setSelection}
+      />
+      <details className="panel">
+        <summary>Technical details and original report data</summary>
+        <Fact title="Evidence reference" detail={report.evidenceDigest} state={report.state} />
         <pre className="browser-safe-report">
           {JSON.stringify(report.safeReport ?? {}, null, 2)}
         </pre>
-      </section>
+      </details>
     </>
+  );
+}
+function ReportMissionEvidence({
+  missionId,
+  selection,
+  onSelect,
+}: {
+  missionId: string;
+  selection?: EvidenceSelection;
+  onSelect: (selection: EvidenceSelection) => void;
+}) {
+  const state = useResource<MissionDetail>(`/missions/${missionId}`);
+  if (state.error) return <LoadFailure value={state.error} />;
+  if (!state.data) return <p role="status">Loading mission attempts and evidence…</p>;
+  return (
+    <MissionJourneys
+      mission={state.data}
+      {...(selection ? { selection } : {})}
+      onSelect={onSelect}
+    />
   );
 }
 

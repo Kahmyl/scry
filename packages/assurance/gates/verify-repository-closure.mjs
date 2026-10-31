@@ -61,7 +61,7 @@ for (const filename of files) {
   )
     fail(`non-baseline workspace remains: ${filename}`);
   if (
-    /^(?:apps\/agent-lab\/|apps\/api\/migrations\/|apps\/mcp\/scripts\/|experiments\/(?!browser-foundation\/)|packages\/(?:executor|policy|observability)\/|scripts\/fixtures\/)/u.test(
+    /^(?:apps\/agent-lab\/|apps\/api\/migrations\/|apps\/mcp\/scripts\/|experiments\/(?!(?:browser-foundation|journey-reliability)\/)|packages\/(?:executor|policy|observability)\/|scripts\/fixtures\/)/u.test(
       filename,
     )
   )

@@ -2,6 +2,7 @@ import { fork, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { performance } from "node:perf_hooks";
 import { chromium, type Browser } from "playwright";
+import { chromium as mcpChromium } from "playwright-mcp-runtime";
 import {
   assertBrowserProcessOptions,
   type BrowserTerminationReceipt,
@@ -83,10 +84,11 @@ export class SupervisedBrowser {
   #browser: Pick<Browser, "isConnected" | "close"> | undefined;
   #legacyBrowser: Browser | undefined;
   #endpoint: string | undefined;
+  #display: string | undefined;
   #lastAcknowledgment: SupervisionAcknowledgment | undefined;
   #expectedAcknowledgment: SupervisionAcknowledgment | undefined;
   #lastChallenge = 0;
-  #livenessDeadline = performance.now() + 5000;
+  #livenessDeadline: number;
   #livenessWatch: NodeJS.Timeout | undefined;
   #barrier:
     | {
@@ -103,6 +105,10 @@ export class SupervisedBrowser {
   #state: "active" | "terminating" | "exited" | "unconfirmed" = "active";
 
   private constructor(private readonly options: SupervisedBrowserOptions) {
+    // Before the first authority exchange, the helper is bootstrapping and
+    // cannot launch a browser. Use the already-declared launch budget here;
+    // the first accepted reply switches to the strict active heartbeat.
+    this.#livenessDeadline = performance.now() + (options.launchTimeoutMs ?? 15000) + 3000;
     // Explicit allowlist: never inherit DATABASE_URL, protection keys, NODE_OPTIONS,
     // inspector flags, shell credentials or arbitrary application environment.
     const env: NodeJS.ProcessEnv = {};
@@ -153,12 +159,12 @@ export class SupervisedBrowser {
     try {
       const address = await owned.#ready.promise;
       owned.#endpoint = address;
-      const connected =
-        options.runtime === "playwright_mcp"
-          ? await (
-              await import("playwright-mcp-runtime")
-            ).chromium.connect(address, { timeout: options.connectTimeoutMs ?? 5000 })
-          : await chromium.connect(address, { timeout: options.connectTimeoutMs ?? 5000 });
+      // Drivers initialize during process bootstrap, before any live custodian.
+      // Cold module compilation/GC must not consume its control heartbeat.
+      const driver = options.runtime === "playwright_mcp" ? mcpChromium : chromium;
+      const connected = await driver.connect(address, {
+        timeout: options.connectTimeoutMs ?? 5000,
+      });
       owned.#browser = connected;
       if (!options.runtime) owned.#legacyBrowser = connected as Browser;
       if (!connected.isConnected() || owned.#state !== "active") throw failure();
@@ -184,6 +190,10 @@ export class SupervisedBrowser {
   endpoint(): string {
     if (!this.#endpoint) throw failure();
     return this.#endpoint;
+  }
+  /** Private capability for this exact incarnation's clipboard. Never published. */
+  privateDisplay(): string | undefined {
+    return this.#display;
   }
   get exitConfirmed(): boolean {
     return this.#proofReceived;
@@ -320,6 +330,13 @@ export class SupervisedBrowser {
       this.#lastAcknowledgment
     ) {
       this.#readyReceived = true;
+      if (input.display !== undefined) {
+        if (typeof input.display !== "string" || !/^:\d+$/.test(input.display)) {
+          this.failTransport();
+          return;
+        }
+        this.#display = input.display;
+      }
       this.#ready.resolve(input.endpoint);
     } else if (
       input.kind === "stopped" &&

@@ -1,4 +1,5 @@
 import { chromium, type Browser, type BrowserServer } from "playwright";
+import { chromium as mcpChromium } from "playwright-mcp-runtime";
 
 export interface OwnedBrowserOptions {
   headless?: boolean;
@@ -94,10 +95,8 @@ export class BrowserProcessCustody {
     const killTimeout = budget(options.killTimeoutMs, 5000, 30000);
     let server: BrowserServer;
     try {
-      const driver =
-        options.runtime === "playwright_mcp"
-          ? (await import("playwright-mcp-runtime")).chromium
-          : chromium;
+      // The custodian loads both pinned drivers before accepting authority.
+      const driver = options.runtime === "playwright_mcp" ? mcpChromium : chromium;
       server = await driver.launchServer({
         host: "127.0.0.1",
         port: 0,

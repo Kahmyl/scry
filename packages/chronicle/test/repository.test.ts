@@ -28,11 +28,24 @@ describe("accepted evidence SQL boundary", () => {
     );
   });
 
-  it("refuses a report digest without complete evidence heads", async () => {
+  it("anchors a failure report to sealed admitted partial evidence without claiming completeness", async () => {
+    const rows = [
+      { state: "incomplete", chain_head: "partial", sealed_at: "sealed", custody_mode: "admitted" },
+    ];
+    const query = vi.fn().mockResolvedValue({ rows, rowCount: 1 });
+    expect(await new ChronicleRepository({ query }).missionEvidenceDigest("mission-a")).toBe(
+      createHash("sha256").update(JSON.stringify(rows)).digest("hex"),
+    );
+    expect(rows[0]?.state).toBe("incomplete");
+  });
+  it("refuses a report digest without complete or sealed admitted partial evidence heads", async () => {
     for (const rows of [
       [],
       [{ state: "complete", chain_head: "" }],
       [{ state: "incomplete", chain_head: "partial" }],
+      [{ state: "incomplete", chain_head: "partial", sealed_at: "sealed", custody_mode: "legacy" }],
+      [{ state: "incomplete", chain_head: "", sealed_at: "sealed", custody_mode: "admitted" }],
+      [{ state: "corrupt", chain_head: "partial", sealed_at: "sealed", custody_mode: "admitted" }],
     ]) {
       const query = vi.fn().mockResolvedValue({ rows, rowCount: rows.length });
       await expect(

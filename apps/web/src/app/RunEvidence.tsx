@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, apiBlob } from "../infrastructure/api/client.js";
 
 type Media = {
@@ -8,17 +8,32 @@ type Media = {
   label: string;
   durationMs?: number;
   coverage?: "complete" | "partial";
+  title?: string;
+  description?: string;
+  artifactId?: string;
+  interruptionReason?: string;
 };
 type Publication = { warning: string; playbackRate: 1; items: Media[] };
 
 /** Media is fetched with the same bearer/workspace authorization as the Run.
  * Blob URLs are local to this view and revoked on selection change/unmount. */
-export function RunEvidence({ runId }: { runId: string }) {
+export function RunEvidence({
+  runId,
+  initialArtifactId,
+}: {
+  runId: string;
+  initialArtifactId?: string;
+}) {
   const [publication, setPublication] = useState<Publication>();
   const [selected, setSelected] = useState<Media>();
   const [source, setSource] = useState("");
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
+  const [speed, setSpeed] = useState(1);
+  const video = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (video.current) video.current.playbackRate = speed;
+  }, [source, speed]);
   useEffect(() => {
     let cancelled = false;
     setPublication(undefined);
@@ -29,7 +44,14 @@ export function RunEvidence({ runId }: { runId: string }) {
       .then((data) => {
         if (!cancelled) {
           setPublication(data);
-          setSelected(data.items.find((item) => item.kind === "video") ?? data.items[0]);
+          const choice = initialArtifactId
+            ? data.items.find((item) => item.artifactId === initialArtifactId)
+            : (data.items.find((item) => item.kind === "video") ?? data.items[0]);
+          setSelected(choice);
+          if (initialArtifactId && !choice)
+            setError(
+              "The report’s evidence reference is not available in this attempt. Choose another item to review; it is not a substitute for the missing reference.",
+            );
         }
       })
       .catch(() => {
@@ -38,7 +60,7 @@ export function RunEvidence({ runId }: { runId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [runId, refresh]);
+  }, [runId, refresh, initialArtifactId]);
   useEffect(() => {
     setSource("");
     if (!selected) return;
@@ -53,7 +75,7 @@ export function RunEvidence({ runId }: { runId: string }) {
       })
       .catch(() => {
         if (!controller.signal.aborted)
-          setError("This recording could not be loaded. Select it again to retry.");
+          setError("This evidence item could not be loaded. Select it again to retry.");
       });
     return () => {
       controller.abort();
@@ -62,7 +84,7 @@ export function RunEvidence({ runId }: { runId: string }) {
   }, [runId, selected]);
   return (
     <section className="panel native-evidence" aria-label="Run recordings and screenshots">
-      <h3>Recordings & screenshots</h3>
+      <h3>Recordings and screenshots</h3>
       <button onClick={() => setRefresh((value) => value + 1)}>Refresh evidence</button>
       <p className="native-evidence-warning">
         {publication?.warning ??
@@ -78,51 +100,125 @@ export function RunEvidence({ runId }: { runId: string }) {
         </p>
       ) : (
         <>
-          <div className="native-evidence-selector" role="group" aria-label="Select evidence">
-            {publication.items.map((item) => (
-              <button
-                key={item.index}
-                aria-pressed={selected?.index === item.index}
-                onClick={() => setSelected({ ...item })}
-              >
-                {item.kind === "video" ? "Recording" : "Screenshot"} · {item.label} ·{" "}
-                {new Date(item.timestamp).toLocaleTimeString()}
-                {item.coverage === "partial" ? " · Partial recording" : ""}
-              </button>
-            ))}
+          <label className="native-evidence-mobile">
+            Choose evidence
+            <select
+              aria-label="Choose evidence"
+              value={selected?.index ?? ""}
+              onChange={(e) => {
+                const item = publication.items.find(
+                  (item) => item.index === Number(e.target.value),
+                );
+                setSelected(item ? { ...item } : undefined);
+              }}
+            >
+              {!selected && <option value="">Choose an available item</option>}
+              {publication.items.map((item) => (
+                <option key={item.index} value={item.index}>
+                  {title(item)} · {item.kind === "video" ? "Recording" : "Screenshot"}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="native-evidence-layout">
+            <div className="native-evidence-selector" role="group" aria-label="Select evidence">
+              {publication.items.map((item) => (
+                <button
+                  key={item.index}
+                  aria-pressed={selected?.index === item.index}
+                  onClick={() => setSelected({ ...item })}
+                >
+                  {title(item)}
+                  <small>
+                    {item.kind === "video" ? "Recording" : "Screenshot"} ·{" "}
+                    {new Date(item.timestamp).toLocaleTimeString()}
+                  </small>
+                  {item.coverage === "partial" ? " · Partial recording" : ""}
+                </button>
+              ))}
+            </div>
+            <div className="native-evidence-viewer" aria-live="polite">
+              {selected && (
+                <>
+                  <h4>{title(selected)}</h4>
+                  {selected.description && <p>{selected.description}</p>}
+                </>
+              )}
+              {source && selected ? (
+                selected.kind === "video" ? (
+                  <>
+                    <video
+                      ref={video}
+                      key={source}
+                      src={source}
+                      controls
+                      preload="metadata"
+                      playsInline
+                      aria-label="Native browser recording"
+                      onError={() =>
+                        setError(
+                          "This recording cannot be played. Choose another item or refresh the evidence list.",
+                        )
+                      }
+                    />
+                    <label>
+                      Playback speed{" "}
+                      <select
+                        aria-label="Playback speed"
+                        value={speed}
+                        onChange={(e) => setSpeed(Number(e.target.value))}
+                      >
+                        <option value={0.25}>0.25×</option>
+                        <option value={0.5}>0.5×</option>
+                        <option value={1}>1× · normal</option>
+                        <option value={1.5}>1.5×</option>
+                        <option value={2}>2×</option>
+                      </select>
+                    </label>
+                    <p>
+                      Original capture timing. Pause, seek or slow playback to inspect each state.
+                      Separate recordings represent separate attempts or capture interruptions—not
+                      reconstructed continuity.
+                    </p>
+                    {selected.coverage === "partial" && (
+                      <p role="status">
+                        This recording covers only part of the Run. Missing footage is an evidence
+                        gap, not a defect in the tested app.
+                        {selected.interruptionReason === "recording_capacity" &&
+                          " The recording reached its storage allowance."}
+                        {selected.interruptionReason === "browser_interrupted" &&
+                          " Browser execution was interrupted."}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <figure>
+                    <img
+                      src={source}
+                      alt={title(selected)}
+                      onError={() =>
+                        setError(
+                          "This screenshot cannot be displayed. Select it again or refresh the evidence list.",
+                        )
+                      }
+                    />
+                  </figure>
+                )
+              ) : !error ? (
+                <p role="status">Loading selected evidence…</p>
+              ) : null}
+            </div>
           </div>
-          {source && selected ? (
-            selected.kind === "video" ? (
-              <>
-                <video
-                  key={source}
-                  src={source}
-                  controls
-                  preload="metadata"
-                  playsInline
-                  aria-label="Native browser recording"
-                />
-                <p>
-                  Original capture timing · 1× playback. Use the player controls to pause or seek.
-                </p>
-                {selected.coverage === "partial" && (
-                  <p role="status">
-                    This recording covers only part of the Run. Missing footage is an evidence gap,
-                    not a defect in the tested app.
-                  </p>
-                )}
-              </>
-            ) : (
-              <figure>
-                <img src={source} alt={`Browser after ${selected.label}`} />
-                <figcaption>Native screenshot · {selected.label}</figcaption>
-              </figure>
-            )
-          ) : !error ? (
-            <p role="status">Loading selected evidence…</p>
-          ) : null}
         </>
       )}
     </section>
+  );
+}
+function title(item: Media): string {
+  return (
+    item.title ??
+    (item.kind === "video"
+      ? "Browser recording"
+      : `Screenshot at ${new Date(item.timestamp).toLocaleTimeString()}`)
   );
 }

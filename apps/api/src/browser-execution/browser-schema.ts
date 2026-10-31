@@ -77,6 +77,11 @@ export async function assertBrowserSchema(database: Queryable): Promise<void> {
     "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='browser_execution_sessions' AND column_name='runtime_adapter'",
   );
   if (adapter.rowCount !== 1) throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:adapter_selection");
+  const attempts = await database.query(
+    "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='runs' AND column_name='conclusion'",
+  );
+  if (attempts.rowCount !== 1)
+    throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:attempt_conclusions");
 }
 
 /** Frozen retained-baseline requirements for transactional adoption. New runtime

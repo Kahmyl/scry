@@ -340,6 +340,8 @@ describe("qualification outcomes", () => {
       ]),
     );
     expect(database.tests).toEqual({ minimumPassed: 86, allowSkipped: false });
+    expect(database.command).toContain("test/browser-session-capacity.integration.test.ts");
+    expect(database.environment?.SCRY_BROWSER_MAX_LIVE_SESSIONS).toBe("1000");
     expect(profiles.owner).toContain("evidence-closure");
     expect(profiles.owner).toContain("evidence-availability");
     expect(checks.find((entry) => entry.id === "evidence-availability")?.tests).toEqual({

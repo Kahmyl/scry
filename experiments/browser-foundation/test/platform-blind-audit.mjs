@@ -28,16 +28,22 @@ for (const app of apps) {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  const runs = rows
-    .filter((row) => row.name === "start_run")
-    .map((row) => row.result.structuredContent)
-    .filter((row) => row?.runId);
+  const runs = [
+    ...new Map(
+      rows
+        .filter((row) => row.name === "start_run")
+        .map((row) => row.result.structuredContent)
+        .filter((row) => row?.runId)
+        .map((row) => [row.runId, row]),
+    ).values(),
+  ];
   const record = {
     app,
     startedRuns: runs.length,
     knownSecretInText: privateInputs ? text.includes(privateInputs[app].password) : null,
     runs: [],
     reports: [],
+    evidenceGaps: [],
     errors: [],
   };
   await mkdir(directory + "/audited", { recursive: true });
@@ -83,6 +89,20 @@ for (const app of apps) {
           ...(probe ? { probe, fullVideoDecoded: true } : {}),
         });
       }
+      const mediaContentVerified = media.every(
+        (m) =>
+          m.digestMatches &&
+          (m.kind === "video"
+            ? m.mime?.startsWith("video/mp4")
+            : m.mime?.startsWith("image/png")) &&
+          (m.kind !== "video" ||
+            (m.fullVideoDecoded &&
+              m.probe?.streams?.[0]?.codec_name === "h264" &&
+              m.probe.streams[0].width === 1280 &&
+              m.probe.streams[0].height === 720 &&
+              m.probe.streams[0].r_frame_rate === "20/1" &&
+              Number(m.probe.format.duration) > 0)),
+      );
       record.runs.push({
         runId: started.runId,
         missionId: run.missionId,
@@ -92,21 +112,8 @@ for (const app of apps) {
         activity: run.activity,
         evidence: run.evidence,
         media,
-        mediaVerified:
-          media.some((m) => m.kind === "video") &&
-          media.every(
-            (m) =>
-              m.digestMatches &&
-              (m.kind === "video"
-                ? m.mime?.startsWith("video/mp4")
-                : m.mime?.startsWith("image/png")) &&
-              (m.kind !== "video" ||
-                (m.probe?.streams?.[0]?.codec_name === "h264" &&
-                  m.probe.streams[0].width === 1280 &&
-                  m.probe.streams[0].height === 720 &&
-                  m.probe.streams[0].r_frame_rate === "20/1" &&
-                  Number(m.probe.format.duration) > 0)),
-          ),
+        mediaContentVerified,
+        mediaVerified: media.some((m) => m.kind === "video") && mediaContentVerified,
         duplicateScreenshots:
           new Set(media.filter((m) => m.kind === "screenshot").map((m) => m.artifactId)).size !==
           media.filter((m) => m.kind === "screenshot").length,
@@ -128,8 +135,8 @@ for (const app of apps) {
       record.errors.push({ reportId: id, message: String(error.message) });
     }
   }
-  if (record.startedRuns !== 1 || record.runs.length !== 1)
-    record.errors.push({ message: "Expected exactly one independently started and audited Run" });
+  if (!record.startedRuns || record.runs.length !== record.startedRuns)
+    record.errors.push({ message: "Every independently started attempt must be audited" });
   if (record.reports.length !== 1)
     record.errors.push({ message: "Expected one published customer report" });
   if (record.reports.some((report) => report.state !== "final"))
@@ -137,9 +144,16 @@ for (const app of apps) {
   if (record.knownSecretInText !== false)
     record.errors.push({ message: "Known-secret text check failed or was not configured" });
   for (const run of record.runs) {
-    if (run.runtimeAdapter !== "playwright_mcp" || run.state !== "passed")
+    if (
+      run.runtimeAdapter !== "playwright_mcp" ||
+      !["passed", "failed", "cancelled", "infrastructure_error"].includes(run.state)
+    )
       record.errors.push({ runId: run.runId, message: "Unexpected adapter or terminal Run state" });
-    if (!run.mediaVerified || run.duplicateScreenshots)
+    if (
+      !run.mediaContentVerified ||
+      run.duplicateScreenshots ||
+      (run.state === "passed" && !run.mediaVerified)
+    )
       record.errors.push({
         runId: run.runId,
         message: "Media verification or deduplication failed",
@@ -150,13 +164,25 @@ for (const app of apps) {
         (stream) => stream.state !== "complete" || stream.custodyMode !== "admitted",
       )
     )
-      record.errors.push({
+      (run.state === "passed" ? record.errors : record.evidenceGaps).push({
         runId: run.runId,
         message: "Evidence stream is not complete and admitted",
       });
     if (run.media.some((item) => item.kind === "video" && item.coverage !== "complete"))
-      record.errors.push({ runId: run.runId, message: "Incomplete recording coverage" });
+      (run.state === "passed" ? record.errors : record.evidenceGaps).push({
+        runId: run.runId,
+        message: "Incomplete recording coverage",
+      });
   }
+  if (!record.runs.some((run) => run.state === "passed"))
+    record.errors.push({
+      message: "No successful customer attempt; failure evidence is not acceptance",
+    });
+  record.classification = record.errors.length
+    ? "blocked"
+    : record.runs.some((run) => run.state !== "passed")
+      ? "recovered_attempts_require_business_review"
+      : "clean_attempts_require_business_review";
   // A passing mechanical audit is not a clean business-compatibility verdict.
   // Agents' report findings and UI readbacks must still be reviewed separately.
   if (record.errors.length) process.exitCode = 1;
@@ -165,6 +191,8 @@ for (const app of apps) {
   console.log(
     JSON.stringify({
       app,
+      classification: record.classification,
+      evidenceGaps: record.evidenceGaps,
       runs: record.runs.map((r) => ({
         runId: r.runId,
         state: r.state,

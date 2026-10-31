@@ -5,6 +5,7 @@ import { storedBrowserFailureCode } from "@scry/veil";
 import { RedisConnection } from "../infrastructure/redis.js";
 import { BrowserExecutionRepository } from "./repositories/browser-execution.repository.js";
 import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
+import { browserSessionLimit } from "./repositories/browser-session-capacity.js";
 
 const queueNamespace = process.env.SCRY_BROWSER_QUEUE_NAMESPACE?.trim();
 if (queueNamespace && !/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(queueNamespace))
@@ -46,6 +47,7 @@ export class BrowserExecutionQueueService implements OnModuleInit, OnModuleDestr
 
   async onModuleInit(): Promise<void> {
     if (process.env.SCRY_BROWSER_ENABLED !== "true") return;
+    browserSessionLimit();
     await this.dispatchPending();
     await this.dispatchPendingCommands();
     this.#dispatcher = setInterval(

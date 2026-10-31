@@ -1,0 +1,119 @@
+name: scry-journey-integration
+x-runtime: &runtime
+  image: scry-journey-integration:local
+  working_dir: /workspace
+  init: true
+  environment: &environment
+    DATABASE_URL: postgres://scry:isolated-only@postgres:5432/scry_journey
+    REDIS_URL: redis://redis:6379
+    SCRY_SERVICE_TOKEN: isolated-journey-service-only
+    SCRY_BROWSER_ENABLED: "true"
+    SCRY_BROWSER_RENDER_VIDEO: "true"
+    SCRY_BROWSER_MAX_LIVE_SESSIONS: "1"
+    SCRY_BROWSER_ADAPTER: playwright_mcp
+    SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED: "true"
+    SCRY_BROWSER_ARTIFACT_ROOT: /journey-evidence
+    SCRY_BROWSER_PROTECTED_KEY_ID: journey
+    SCRY_BROWSER_PROTECTED_KEYS_JSON: '{"journey":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}'
+    SUPABASE_URL: http://fixture:8080
+  networks: [integration]
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      { POSTGRES_USER: scry, POSTGRES_PASSWORD: isolated-only, POSTGRES_DB: scry_journey }
+    healthcheck:
+      {
+        test: [CMD-SHELL, "pg_isready -U scry -d scry_journey"],
+        interval: 2s,
+        timeout: 3s,
+        retries: 30,
+      }
+    volumes: [database:/var/lib/postgresql/data]
+    networks: [integration]
+  redis:
+    image: redis:7-alpine
+    networks: [integration]
+  migrate:
+    <<: *runtime
+    environment:
+      <<: *environment
+      SCRY_BROWSER_DATABASE_URL: postgres://scry:isolated-only@postgres:5432/scry_journey
+      SCRY_BROWSER_EXPECTED_DATABASE: scry_journey
+      SCRY_BROWSER_SCHEMA_CONFIRM: CREATE_EMPTY_BASELINE
+    command:
+      [
+        apps/api/node_modules/.bin/tsx,
+        --tsconfig,
+        apps/api/tsconfig.json,
+        apps/api/scripts/migrate.ts,
+      ]
+    depends_on: { postgres: { condition: service_healthy } }
+  api:
+    <<: *runtime
+    environment: { <<: *environment, API_HOST: 0.0.0.0, API_PORT: "4000" }
+    volumes: [evidence:/journey-evidence]
+    ports: ["127.0.0.1:45800:4000"]
+    depends_on:
+      {
+        migrate: { condition: service_completed_successfully },
+        redis: { condition: service_started },
+      }
+  worker:
+    <<: *runtime
+    command:
+      [apps/api/node_modules/.bin/tsx, --tsconfig, apps/api/tsconfig.json, apps/api/src/worker.ts]
+    shm_size: 256mb
+    mem_limit: 3g
+    volumes: [evidence:/journey-evidence]
+    networks: [integration, targets]
+    depends_on:
+      {
+        migrate: { condition: service_completed_successfully },
+        redis: { condition: service_started },
+      }
+  mcp:
+    <<: *runtime
+    environment:
+      {
+        <<: *environment,
+        SCRY_API_BASE_URL: "http://api:4000/api",
+        MCP_HOST: 0.0.0.0,
+        MCP_PORT: "4100",
+      }
+    command: [apps/mcp/node_modules/.bin/tsx, apps/mcp/src/http.ts]
+    ports: ["127.0.0.1:45810:4100"]
+    depends_on: [api]
+  web:
+    <<: *runtime
+    environment:
+      <<: *environment
+      SCRY_PUBLIC_API_BASE_URL: http://127.0.0.1:45800/api
+      SCRY_PUBLIC_MCP_SERVER_URL: http://127.0.0.1:45810/mcp
+      SUPABASE_URL: http://127.0.0.1:45891
+      SUPABASE_PUBLISHABLE_KEY: isolated-fixture-only
+    command: [node, apps/web/scripts/serve-dist.mjs]
+    ports: ["127.0.0.1:45892:3000"]
+  fixture:
+    <<: *runtime
+    environment: { <<: *environment, SCRY_FIXTURE_REVIEW: "true" }
+    command: [node, apps/api/test/deployed-browser-fixture.mjs, serve]
+    ports: ["127.0.0.1:45891:8080"]
+  target:
+    <<: *runtime
+    command: [node, experiments/browser-foundation/test/platform-integration.mjs, serve-app]
+  qualify:
+    <<: *runtime
+    command: [node, experiments/browser-foundation/test/platform-integration.mjs]
+    profiles: [qualification]
+    volumes: [evidence:/integration-evidence, evidence:/journey-evidence]
+volumes:
+  database:
+  evidence:
+networks:
+  integration:
+    ipam:
+      config: [{ subnet: 10.253.231.0/24 }]
+  targets:
+    external: true
+    name: scry-ten-app-architecture

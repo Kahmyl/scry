@@ -7,8 +7,11 @@ import path from "node:path";
 import Ajv from "ajv/dist/2020.js";
 import { BestEffortTasks } from "./best-effort-tasks.mjs";
 import { displayLayout } from "./display-layout.mjs";
+import { NativeInteractions, privateClipboard } from "./native-interactions.mjs";
+import { editBrowserTextSchema, screenshotPresentationSchema } from "@scry/contracts";
 export function startBrowserAdapter(makeProtector) {
-  let browser, context, client, upstream, protection, output, closing, validators;
+  let browser, context, client, upstream, protection, output, closing, validators, interactions;
+  let handling = false;
   const sessions = new Map();
   const dialogs = new Set();
   const maskingWarning = () => process.send?.({ type: "masking", state: "best_effort_partial" });
@@ -134,6 +137,11 @@ export function startBrowserAdapter(makeProtector) {
   process.on("disconnect", terminate);
   process.on("SIGTERM", terminate);
   process.on("message", async (message) => {
+    if (handling) {
+      process.send?.({ id: message.id, ok: false, code: "ADAPTER_COMMAND_CONCURRENT" });
+      return;
+    }
+    handling = true;
     try {
       if (message.type === "init") {
         protection = makeProtector(message.secrets);
@@ -178,6 +186,12 @@ export function startBrowserAdapter(makeProtector) {
         await upstream.connect(b);
         client = new Client({ name: "scry-private-browser-adapter", version: "baseline" });
         await client.connect(a);
+        const call = async (name, args) => {
+          const result = await client.callTool({ name, arguments: args });
+          if (result.isError) throw Error("NATIVE_INPUT_FAILED");
+          return result;
+        };
+        interactions = new NativeInteractions(context, call, privateClipboard(message.display));
         const definitions = (await client.listTools()).tools;
         const ajv = new Ajv({ strict: false, useDefaults: true });
         validators = new Map(definitions.map((t) => [t.name, ajv.compile(t.inputSchema)]));
@@ -200,17 +214,45 @@ export function startBrowserAdapter(makeProtector) {
         process.send({ id: message.id, ok: true });
       } else if (message.type === "call") {
         const args = { ...message.args };
+        if (message.tool === "browser_edit_text") editBrowserTextSchema.parse(args);
+        const evidence = {};
+        if (message.tool === "browser_take_screenshot") {
+          screenshotPresentationSchema.parse(args);
+          for (const key of ["evidenceTitle", "evidenceDescription"]) {
+            if (args[key] !== undefined)
+              evidence[key === "evidenceTitle" ? "title" : "description"] = protection.clean(
+                args[key],
+              );
+            delete args[key];
+          }
+        }
         if (message.secret) {
           args.text = message.secret;
         }
-        if (!validators.get(message.tool)?.(args)) throw new Error("INVALID_TOOL_ARGUMENTS");
+        if (message.tool !== "browser_edit_text" && !validators.get(message.tool)?.(args))
+          throw new Error("INVALID_TOOL_ARGUMENTS");
         await maskReady();
         process.send?.({ type: "phase", phase: "upstream:" + message.tool });
-        const result = await client.callTool({ name: message.tool, arguments: args });
+        if (message.tool === "browser_drag" && /^(f\d+)?e\d+$/.test(args.startTarget)) {
+          const page = await interactions.activePage(),
+            binding = await interactions.bind(page, args.startTarget);
+          try {
+            if (!(await interactions.preparePointer(binding.locator)) || !(await binding.valid()))
+              throw Error("TARGET_NOT_READY");
+          } finally {
+            await binding.handle.dispose();
+          }
+        }
+        const result =
+          message.tool === "browser_edit_text"
+            ? await interactions.edit(args)
+            : await client.callTool({ name: message.tool, arguments: args });
         if (message.tool === "browser_handle_dialog") dialogs.clear();
         await maskReady();
         process.send?.({ type: "phase", phase: "normalize:" + message.tool });
         const normalized = await normalize(result);
+        if (result.interaction) normalized.interaction = result.interaction;
+        if (Object.keys(evidence).length) normalized.evidence = evidence;
         if (Buffer.byteLength(JSON.stringify(normalized)) > 24 * 1024 * 1024)
           throw new Error("TOOL_OUTPUT_CAPACITY");
         process.send({ id: message.id, ok: true, data: normalized });
@@ -223,8 +265,18 @@ export function startBrowserAdapter(makeProtector) {
       process.send?.({
         id: message.id,
         ok: false,
-        error: protection?.clean(String(error?.message ?? error)) ?? "BROWSER_SETUP_FAILED",
+        code:
+          {
+            INVALID_TOOL_ARGUMENTS: "ADAPTER_INVALID_TOOL_ARGUMENTS",
+            SNAPSHOT_CAPACITY: "ADAPTER_SNAPSHOT_CAPACITY",
+            TOOL_OUTPUT_CAPACITY: "ADAPTER_OUTPUT_CAPACITY",
+            TARGET_NOT_READY: "ADAPTER_TARGET_NOT_READY",
+            REFERENCE_UNAVAILABLE: "ADAPTER_REFERENCE_UNAVAILABLE",
+            CLIPBOARD_UNAVAILABLE: "ADAPTER_CLIPBOARD_UNAVAILABLE",
+          }[error?.message] ?? "ADAPTER_CALL_FAILED",
       });
+    } finally {
+      handling = false;
     }
   });
 }
