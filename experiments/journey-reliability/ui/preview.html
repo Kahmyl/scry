@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Scry · Mission report preview</title>
+  <style>
+    :root {
+      font:
+        16px/1.6 system-ui,
+        sans-serif;
+      color: #172b35;
+      background: #f4f7f7;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+    }
+    header {
+      background: #122c33;
+      color: white;
+      padding: 18px max(24px, calc((100vw - 1180px) / 2));
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    header strong {
+      font-size: 22px;
+    }
+    header span {
+      color: #c6d7d9;
+      font-size: 14px;
+    }
+    main {
+      max-width: 1180px;
+      margin: auto;
+      padding: 28px 24px;
+    }
+    a {
+      color: #145f69;
+      text-underline-offset: 4px;
+    }
+    a:focus-visible,
+    button:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid #96721b;
+      outline-offset: 3px;
+    }
+    .notice {
+      background: #fff4d8;
+      padding: 12px 18px;
+      border-left: 4px solid #96721b;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+    h1 {
+      font-size: 32px;
+      line-height: 1.25;
+      margin: 8px 0 16px;
+      letter-spacing: -0.6px;
+    }
+    h2 {
+      font-size: 21px;
+      margin: 0 0 12px;
+    }
+    h3 {
+      font-size: 17px;
+      margin: 6px 0 10px;
+    }
+    p {
+      margin: 0 0 16px;
+    }
+    .eyebrow {
+      color: #526970;
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .lead {
+      max-width: 850px;
+      color: #435d66;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      margin: 20px 0 28px;
+      flex-wrap: wrap;
+    }
+    .primary {
+      background: #145f69;
+      color: white;
+      padding: 10px 18px;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .badge {
+      display: inline-block;
+      color: #195940;
+      background: #e1f1e8;
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 24px;
+    }
+    .card {
+      border: 1px solid #d5e0e1;
+      border-radius: 9px;
+      background: white;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    ol,
+    ul {
+      padding-left: 24px;
+    }
+    li {
+      margin: 10px 0;
+    }
+    .muted {
+      color: #586e76;
+      font-size: 14px;
+    }
+    .attempt {
+      border-top: 1px solid #e1e7e8;
+      padding-top: 18px;
+      margin-top: 20px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      padding: 8px 0;
+    }
+    .evidence-layout {
+      display: grid;
+      grid-template-columns: 250px minmax(0, 1fr);
+      gap: 22px;
+    }
+    .evidence-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .evidence-nav button {
+      font: inherit;
+      text-align: left;
+      background: #f5f8f8;
+      border: 1px solid #dce5e5;
+      border-radius: 5px;
+      padding: 10px 12px;
+      cursor: pointer;
+      color: inherit;
+    }
+    .evidence-nav button[aria-current="true"] {
+      border-color: #145f69;
+      background: #e7f3f3;
+    }
+    .evidence-nav small {
+      display: block;
+      color: #586e76;
+      font-size: 12px;
+    }
+    .mobile-evidence {
+      display: none;
+    }
+    video,
+    img {
+      display: block;
+      width: 100%;
+      max-height: 560px;
+      object-fit: contain;
+      background: #111;
+      border-radius: 6px;
+    }
+    video {
+      aspect-ratio: 16/9;
+    }
+    .evidence-caption {
+      margin-top: 12px;
+      font-size: 14px;
+      color: #526970;
+    }
+    .findings article {
+      padding: 16px 0;
+      border-bottom: 1px solid #e4eaea;
+    }
+    .findings article:last-child {
+      border: 0;
+    }
+    .findings p {
+      margin: 6px 0 0;
+    }
+    code {
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+    footer {
+      font-size: 13px;
+      color: #586e76;
+      padding: 10px 0 30px;
+    }
+    [hidden] {
+      display: none !important;
+    }
+    @media (max-width: 800px) {
+      .grid,
+      .evidence-layout {
+        grid-template-columns: 1fr;
+      }
+      .evidence-nav {
+        display: none;
+      }
+      .mobile-evidence {
+        display: block;
+        margin-bottom: 18px;
+      }
+      .mobile-evidence select {
+        width: 100%;
+        font: inherit;
+        padding: 10px;
+        border: 1px solid #9db5b9;
+        border-radius: 5px;
+        background: white;
+        color: inherit;
+      }
+      h1 {
+        font-size: 27px;
+      }
+      main {
+        padding: 20px 16px;
+      }
+      .card {
+        padding: 18px;
+      }
+      header {
+        padding: 16px;
+      }
+      header span {
+        max-width: 230px;
+        text-align: right;
+      }
+    }
+  </style>
+  <header><strong>Scry</strong><span>Mission workspace · isolated UX preview</span></header>
+  <main>
+    <div class="notice">
+      Read-only layout experiment using an earlier fictional GitLab trial. This is not a new test
+      result or an activated dashboard change.
+    </div>
+    <section id="mission">
+      <div class="eyebrow">Mission</div>
+      <h1 id="missionTitle"></h1>
+      <p class="lead">
+        Create and review a fictional issue, confirm saved changes, exercise cancellation, and sign
+        out. Preserve existing project content and settings.
+      </p>
+      <div class="actions">
+        <span class="badge">Completed</span><a class="primary" href="#report">View test report</a
+        ><a href="#evidence">Review evidence</a>
+      </div>
+      <div class="grid">
+        <section class="card">
+          <h2>Test journeys</h2>
+          <p class="muted">
+            Each flow is a direction within this mission. Runs are its individual attempts.
+          </p>
+          <h3 id="flowTitle"></h3>
+          <p>
+            Create the issue and label, add a comment, check persistence, and discard an unsaved
+            edit.
+          </p>
+          <div class="attempt">
+            <span class="badge">Completed</span>
+            <h3 id="runTitle"></h3>
+            <p class="muted">
+              One recorded attempt. Navigation timeouts were checked before continuing; the actions
+              were not blindly repeated.
+            </p>
+            <a href="#evidence">Open this attempt’s recording and screenshots</a>
+          </div>
+        </section>
+        <aside class="card">
+          <h2>At a glance</h2>
+          <p>1 test journey<br />1 attempt<br />1 recording · 7 screenshots</p>
+          <p class="muted">
+            The report includes observations and limitations, not just a pass label.
+          </p>
+        </aside>
+      </div>
+    </section>
+    <section id="report" hidden>
+      <a href="#mission">← Back to mission</a>
+      <div class="eyebrow" style="margin-top: 20px">Test report</div>
+      <h1 id="reportTitle"></h1>
+      <div class="actions">
+        <span class="badge">Requested journey completed</span
+        ><a href="#report-evidence">Review supporting evidence</a>
+      </div>
+      <p id="summary" class="lead"></p>
+      <section class="card">
+        <h2>What was verified</h2>
+        <ol id="checks"></ol>
+      </section>
+      <section class="card findings">
+        <h2>Observations to review</h2>
+        <p class="muted">
+          These observations are not automatically a judgment that the application is defective.
+          Recovered interaction problems remain visible.
+        </p>
+        <div id="findings"></div>
+      </section>
+      <section class="card">
+        <h2>What was not verified</h2>
+        <p id="limitations"></p>
+      </section>
+    </section>
+    <section class="card" id="evidence">
+      <h2>Recordings and screenshots</h2>
+      <p class="muted">
+        Automatic redaction is best effort. Sensitive information may remain. Review evidence before
+        sharing.
+      </p>
+      <div class="mobile-evidence">
+        <label for="evidenceSelect">Choose evidence</label
+        ><select id="evidenceSelect"></select>
+      </div>
+      <div class="evidence-layout">
+        <nav class="evidence-nav" aria-label="Choose supporting evidence" id="evidenceList"></nav>
+        <section aria-live="polite">
+          <h3 id="evidenceTitle"></h3>
+          <div id="media"></div>
+          <p id="caption" class="evidence-caption"></p>
+        </section>
+      </div>
+    </section>
+    <details class="card">
+      <summary>Technical details</summary>
+      <p class="muted">
+        Identifiers are available for support without cluttering the testing narrative.
+      </p>
+      <div id="diagnostics"></div>
+    </details>
+    <footer>
+      The report and mission refer to the same evidence. No reconstructed interface, copied media,
+      or invented continuity.
+    </footer>
+  </main>
+  <script type="module">
+    const d = await (await fetch("/data")).json(),
+      q = (id) => document.getElementById(id),
+      put = (id, text) => (q(id).textContent = text);
+    put("missionTitle", d.title);
+    put("reportTitle", d.title);
+    put("flowTitle", d.flowName);
+    put("runTitle", d.runName);
+    put("summary", d.summary);
+    put("limitations", d.limitations);
+    for (const text of d.verification) {
+      const li = document.createElement("li");
+      li.textContent = text;
+      q("checks").append(li);
+    }
+    for (const f of d.findings) {
+      const a = document.createElement("article"),
+        h = document.createElement("h3"),
+        p = document.createElement("p");
+      h.textContent = f.title;
+      p.textContent = f.observation;
+      a.append(h, p);
+      q("findings").append(a);
+    }
+    for (const [label, value] of [
+      ["Mission reference", d.missionId],
+      ["Attempt reference", d.runId],
+    ]) {
+      const p = document.createElement("p"),
+        c = document.createElement("code");
+      p.textContent = label + ": ";
+      c.textContent = value;
+      p.append(c);
+      q("diagnostics").append(p);
+    }
+    function choose(index) {
+      const item = d.evidence[index];
+      put("evidenceTitle", item.title);
+      const el = document.createElement(item.kind === "video" ? "video" : "img");
+      el.src = item.url;
+      if (item.kind === "video") {
+        el.controls = true;
+        el.preload = "metadata";
+        el.setAttribute("aria-label", item.title);
+      } else {
+        el.alt = item.title;
+        el.loading = "lazy";
+      }
+      q("media").replaceChildren(el);
+      q("evidenceSelect").value = String(index);
+      q("caption").hidden = item.kind !== "video";
+      put(
+        "caption",
+        item.kind === "video"
+          ? "Original continuous recording · " +
+              Math.round(item.durationMs / 1000) +
+              " seconds · normal playback speed."
+          : "Screenshot: " + item.title,
+      );
+      for (const b of q("evidenceList").children)
+        b.setAttribute("aria-current", String(Number(b.dataset.index) === index));
+    }
+    for (const [i, item] of d.evidence.entries()) {
+      const b = document.createElement("button"),
+        s = document.createElement("small");
+      b.type = "button";
+      b.dataset.index = i;
+      b.textContent = item.title;
+      s.textContent = item.kind === "video" ? "Recording" : "Screenshot";
+      b.append(s);
+      b.onclick = () => choose(i);
+      q("evidenceList").append(b);
+      const option = document.createElement("option");
+      option.value = String(i);
+      option.textContent =
+        item.title + " · " + (item.kind === "video" ? "Recording" : "Screenshot");
+      q("evidenceSelect").append(option);
+    }
+    q("evidenceSelect").onchange = (e) => choose(Number(e.target.value));
+    choose(d.evidence.findIndex((x) => x.kind === "video"));
+    function route() {
+      const report = location.hash.startsWith("#report");
+      q("mission").hidden = report;
+      q("report").hidden = !report;
+      if (location.hash.endsWith("evidence")) q("evidence").scrollIntoView();
+      else window.scrollTo(0, 0);
+    }
+    window.addEventListener("hashchange", route);
+    route();
+  </script>
+</html>
