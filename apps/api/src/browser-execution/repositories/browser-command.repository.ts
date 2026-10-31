@@ -224,12 +224,24 @@ export class BrowserCommandRepository {
     input: SubmitBrowserCommandInput,
   ): Promise<{ commandId: string; replay: boolean; state: string }> {
     return this.database.transaction(async (client) => {
-      const session = await client.query<{ run_id: string; state: string }>(
-        "SELECT run_id,state FROM browser_execution_sessions WHERE id=$1 FOR UPDATE",
+      const session = await client.query<{
+        run_id: string;
+        state: string;
+        runtime_adapter: string;
+      }>(
+        "SELECT run_id,state,runtime_adapter FROM browser_execution_sessions WHERE id=$1 FOR UPDATE",
         [sessionId],
       );
       if (!session.rows[0] || !["active", "starting", "finalizing"].includes(session.rows[0].state))
         throw new Error("SCRY_BROWSER_SESSION_NOT_COMMANDABLE");
+      const native = session.rows[0].runtime_adapter === "playwright_mcp";
+      if (native) {
+        if (process.env.SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED !== "true")
+          throw new Error("SCRY_BROWSER_ADAPTER_DISABLED");
+        if (!["browser_tool", "close", "close_for_failure"].includes(input.command.kind))
+          throw new Error("SCRY_BROWSER_ADAPTER_COMMAND_MISMATCH");
+      } else if (input.command.kind === "browser_tool")
+        throw new Error("SCRY_BROWSER_ADAPTER_COMMAND_MISMATCH");
       const existing = await client.query<CommandRow>(
         "SELECT * FROM browser_commands WHERE session_id=$1 AND idempotency_key=$2 FOR UPDATE",
         [sessionId, input.idempotencyKey],
@@ -239,7 +251,9 @@ export class BrowserCommandRepository {
         const proposedDigest =
           input.command.kind === "fill" && input.command.publicValue !== undefined
             ? digestText(input.command.publicValue)
-            : null;
+            : input.command.kind === "browser_tool"
+              ? digestText(canonicalArgs(input.command.args))
+              : null;
         if (
           !isDeepStrictEqual(existing.rows[0].safe_input, proposed) ||
           existing.rows[0].protected_input_digest !== proposedDigest
@@ -252,9 +266,15 @@ export class BrowserCommandRepository {
         [sessionId],
       );
       const commandId = randomUUID();
+      const inputValue =
+        input.command.kind === "browser_tool"
+          ? canonicalArgs(input.command.args)
+          : input.command.kind === "fill"
+            ? input.command.publicValue
+            : undefined;
       const encrypted =
-        input.command.kind === "fill" && input.command.publicValue !== undefined
-          ? this.cipher.encrypt(input.command.publicValue, {
+        inputValue !== undefined
+          ? this.cipher.encrypt(inputValue, {
               sessionId,
               commandId,
               field: "publicValue",
@@ -390,7 +410,7 @@ export class BrowserCommandRepository {
         claimedRow.protected_input_authentication_tag &&
         claimedRow.protected_input_digest &&
         claimedRow.protected_input_key_id &&
-        claimedRow.safe_input.kind === "fill"
+        ["fill", "browser_tool"].includes(claimedRow.safe_input.kind)
       ) {
         const publicValue = this.cipher.decrypt(
           {
@@ -402,7 +422,13 @@ export class BrowserCommandRepository {
           },
           { sessionId: claimedRow.session_id, commandId: claimedRow.id, field: "publicValue" },
         );
-        return { ...claimedRow, safe_input: { ...claimedRow.safe_input, publicValue } };
+        return {
+          ...claimedRow,
+          safe_input:
+            claimedRow.safe_input.kind === "browser_tool"
+              ? { ...claimedRow.safe_input, args: JSON.parse(publicValue) }
+              : ({ ...claimedRow.safe_input, publicValue } as BrowserCommand),
+        };
       }
       return claimedRow;
     });
@@ -484,6 +510,20 @@ export class BrowserCommandRepository {
     });
   }
 
+  async checkpointAction(
+    commandId: string,
+    claimToken: string,
+    result: Record<string, unknown>,
+  ): Promise<void> {
+    const serialized = JSON.stringify(result);
+    await this.withLiveClaim(commandId, claimToken, "complete", async (client) => {
+      await client.query(
+        "UPDATE browser_commands SET safe_result=$2::jsonb WHERE id=$1 AND kind='browser_tool'",
+        [commandId, serialized],
+      );
+    });
+  }
+
   async fail(commandId: string, claimToken: string, error: unknown): Promise<void> {
     const code = storedBrowserFailureCode(error);
     await this.withLiveClaim(commandId, claimToken, "fail", async (client) => {
@@ -518,6 +558,8 @@ export class BrowserCommandRepository {
     ownerGeneration: number;
     disclosureMode: BrowserDisclosureMode;
     protectionKeyId: string;
+    runtimeAdapter: "legacy" | "playwright_mcp";
+    allowedOrigins: string[];
   }> {
     const result = await this.database.query<{
       sessionId: string;
@@ -528,10 +570,13 @@ export class BrowserCommandRepository {
       ownerGeneration: string;
       disclosureMode: BrowserDisclosureMode;
       protectionKeyId: string;
+      runtimeAdapter: "legacy" | "playwright_mcp";
+      allowedOrigins: string[];
     }>(
       `SELECT s.id AS "sessionId",s.run_id AS "runId",s.project_id AS "projectId",s.mission_id AS "missionId",
          e.base_origin AS "baseOrigin",s.active_owner_generation AS "ownerGeneration",
-         s.disclosure_mode AS "disclosureMode",s.protection_key_id AS "protectionKeyId"
+         s.disclosure_mode AS "disclosureMode",s.protection_key_id AS "protectionKeyId",
+         s.runtime_adapter AS "runtimeAdapter",(s.allowed_first_party_origins || s.allowed_service_origins) AS "allowedOrigins"
        FROM browser_execution_sessions s JOIN environments e ON e.id=s.environment_id
        WHERE s.id=$1`,
       [sessionId],
@@ -954,4 +999,18 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 
 function digestText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function canonicalArgs(value: Record<string, unknown>): string {
+  const ordered = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(ordered)
+      : value && typeof value === "object"
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort()
+              .map((key) => [key, ordered((value as Record<string, unknown>)[key])]),
+          )
+        : value;
+  return JSON.stringify(ordered(value));
 }

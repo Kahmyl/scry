@@ -75,6 +75,16 @@ type Run = {
 };
 
 type RunDetail = Run & {
+  runtimeAdapter?: "legacy" | "playwright_mcp";
+  activity?: Array<{
+    id: string;
+    tool: string;
+    state: string;
+    execution?: string;
+    businessOutcome?: string;
+    observation?: string;
+    errorCode?: string;
+  }>;
   flowPurpose: string;
   flowDefinition: Record<string, unknown>;
   authenticationCommitsUsed: number;
@@ -436,33 +446,58 @@ function RunDetailView({ runId, onBack }: { runId: string; onBack: () => void })
       />
       <section className="metric-grid metric-grid-compact">
         <Metric label="State" value={human(run.state)} state={run.state} />
-        <Metric
-          label="Authentication effects"
-          value={`${run.authenticationCommitsUsed}/${run.authenticationCommitLimit}`}
-        />
-        <Metric
-          label="Business effects"
-          value={`${run.businessCommitsUsed}/${run.businessCommitLimit}`}
-        />
-      </section>
-      <section className="panel">
-        <ListHeading title="Effect truth" />
-        {run.effects.map((effect) => (
-          <Fact
-            key={effect.id}
-            title={`${human(effect.effectClass)} #${effect.effectOrdinal}`}
-            detail={`dispatch ${human(effect.dispatchState)} · capture ${human(effect.captureState)} · publication ${human(effect.publicationState)}`}
-            state={effect.mutationOutcome}
-          />
-        ))}
-        {!run.effects.length && (
-          <EmptyBlock
-            icon={<ShieldCheck />}
-            title="No mutation effects"
-            copy="This Run has not admitted a browser mutation."
-          />
+        {run.runtimeAdapter === "playwright_mcp" ? (
+          <Metric label="Browser interactions" value={String(run.activity?.length ?? 0)} />
+        ) : (
+          <>
+            <Metric
+              label="Authentication effects"
+              value={`${run.authenticationCommitsUsed}/${run.authenticationCommitLimit}`}
+            />
+            <Metric
+              label="Business effects"
+              value={`${run.businessCommitsUsed}/${run.businessCommitLimit}`}
+            />
+          </>
         )}
       </section>
+      {run.runtimeAdapter === "playwright_mcp" ? (
+        <details className="panel">
+          <summary>Browser activity · {run.activity?.length ?? 0} interactions</summary>
+          <p>
+            A completed interaction means the browser tool returned. Verify application outcomes
+            using the observations and evidence; an uncertain action must not be repeated blindly.
+          </p>
+          {(run.activity ?? []).map((action) => (
+            <Fact
+              key={action.id}
+              title={human(action.tool.replace(/^browser_/u, ""))}
+              detail={`Execution ${human(action.execution ?? action.state)} · observation ${human(action.observation ?? "unavailable")}${action.errorCode ? ` · ${action.errorCode}` : ""}`}
+              state={action.state}
+            />
+          ))}
+          {!run.activity?.length && <p>No browser interactions have been recorded yet.</p>}
+        </details>
+      ) : (
+        <section className="panel">
+          <ListHeading title="Effect truth" />
+          {run.effects.map((effect) => (
+            <Fact
+              key={effect.id}
+              title={`${human(effect.effectClass)} #${effect.effectOrdinal}`}
+              detail={`dispatch ${human(effect.dispatchState)} · capture ${human(effect.captureState)} · publication ${human(effect.publicationState)}`}
+              state={effect.mutationOutcome}
+            />
+          ))}
+          {!run.effects.length && (
+            <EmptyBlock
+              icon={<ShieldCheck />}
+              title="No mutation effects"
+              copy="This Run has not admitted a browser mutation."
+            />
+          )}
+        </section>
+      )}
       <RunEvidence runId={runId} />
       <section className="panel">
         <ListHeading title="Evidence" />

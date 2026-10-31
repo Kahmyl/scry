@@ -12,3 +12,4 @@ export * from "./recording-admission.js";
 export * from "./browser-protection.js";
 export * from "./error-protection.js";
 export * from "./native-protection.js";
+export { createNativeAdapterProtector } from "./native-adapter-protection.js";

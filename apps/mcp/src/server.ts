@@ -16,6 +16,11 @@ import { z } from "zod";
 
 import { BrowserApiClient } from "./api-client.js";
 import {
+  nativeBrowserInstructions,
+  nativeCommandResult,
+  registerNativeBrowserTools,
+} from "./native-browser-tools.js";
+import {
   idempotentDurableWrite,
   localFactualRead,
   stableKey,
@@ -29,69 +34,81 @@ const INSTRUCTIONS =
   "Use one Mission for one user objective. Before starting a Mission, list the Project's Missions and resume a matching active Mission when one exists. Before starting a Run, list that Project's Environments and select the active scope whose origins match the assigned application. When no matching Environment exists, create one from the application's origins in the user's explicit Mission assignment; do not send the user away to configure routine execution scope. Do not add unrelated origins or silently move between test and live applications. Every Run receives an immutable origin and disclosure snapshot, so later Environment creation cannot broaden an active Run. You may create any number of Flows inside that Mission whenever distinct work streams, retries, resumptions, experiments, or approaches help; Flows are not restricted to alternatives and creating another Flow does not abandon the Mission. Every Run belongs to exactly one Flow revision. Observe current Mission facts before deciding what to do. The agent chooses browser actions and judges task completion. Mutation truth, owner fencing, protected values, evidence capture, and publication are mechanical invariants. UNKNOWN means a mutation may have happened: never replay it; reconcile or stop accurately. Protected references are opaque and must never be requested as plaintext. Each Run exposes the Environment's immutable disclosure mode. When authentication is required, never guess credentials and never select a saved credential merely because its name appears unique, similar, or obvious. You may list safe credential metadata to present choices, but every binding requires an explicit current-user choice. Offer the matching saved candidates, Create a new credential in Project settings, or explicitly provide a new value to this agent. Only after that choice may you bind the selected opaque references to the active Run. In confidential mode, selected outputs remain protected. In trusted_application_output mode, the single protection authority may release selected ordinary values but protected lineage and high-confidence secret findings always veto public release. After reading a durable capture's structural index, propose an output meaning and exact path. Bind user-supplied protected references to the Run with protectedInputIds, then use those IDs only in protected fills. Every navigate, observe, fill, and read-only click is already preserved by the continuous authenticated session recorder, including resulting DOM changes; do not create a protected capture merely to prove a read-only result. Every commit creates its own HTTP capture. Settle that capture before creating a later DOM capture for the same effect. For a passing Run, determine every commit's factual outcome before finalizing. For a failed, blocked, cancelled, or environment-failed Run, finalization closes the browser, proves undispatched effects not-applied, preserves any post-dispatch uncertainty as UNKNOWN, and permits an evidence-backed failure report; it never redispatches. Every durable protected capture must still be published or discarded before any finalization. capture_dom is only for an operation-owned protected result region associated with an acknowledged mutation effect. Publication retains detected or agent-selected protected values as opaque references and destroys unselected ordinary data with the raw capture. Discard performs no field interpretation and creates no handles; it destroys the encrypted capture and records only a safe tombstone. Publish a report only after every required Objective and Run is terminal with durable evidence.";
 
 export function createBrowserMcpServer(client = new BrowserApiClient()) {
+  const native =
+    process.env.SCRY_BROWSER_ADAPTER === "playwright_mcp" &&
+    process.env.SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED === "true";
   const server = new McpServer(
     { name: "scry-browser", version: "baseline" },
-    { instructions: INSTRUCTIONS },
+    { instructions: native ? nativeBrowserInstructions : INSTRUCTIONS },
   );
-  registerLifecycleTools(server, client);
-  registerBrowserCommandTools(server, client);
+  registerLifecycleTools(server, client, native);
+  registerBrowserCommandTools(server, client, native);
+  if (native) registerNativeBrowserTools(server, client, awaitCommand);
   return server;
 }
 
-function registerBrowserCommandTools(server: McpServer, client: BrowserApiClient): void {
-  server.registerTool(
-    "command",
-    {
-      title: "Issue browser command",
-      description:
-        "Queue one agent-chosen browser command for the Run's durable worker owner. Observe returns opaque current-document control and result-region references. Navigate, observe, fill, and read-only click results are continuously recorded as authenticated session evidence, so read-only verification needs no capture_dom. Navigate is origin-scoped. Public fill values are encrypted at rest; protected fills take only a scoped protectedValueId. Every successful commit creates its own HTTP capture and returns a sanitized successorObservation after the page's response handler settles; use that observation before deciding whether another effect is needed. Settle the capture before adding a DOM capture for the same effect, and determine the factual mutation outcome of every commit before a successful close. Close refuses SCRY_BROWSER_EFFECT_OUTCOME_PENDING without destroying the live context. close_for_failure is reserved for terminal failure handling: it proves undispatched work not-applied and preserves post-dispatch uncertainty as UNKNOWN without replay. Commit permits and captures exactly the first same-origin write caused by the chosen control while blocking every additional write. Capture_dom durably captures only an operation-owned protected result region associated with an acknowledged mutation effect; it is not used for read-only evidence. Every protected capture must be settled before close: publish_capture atomically publishes selected outputs and opaque protected references before destroying raw evidence; discard_capture destroys an unneeded capture without interpreting fields or creating handles. UNKNOWN prohibits replay.",
-      inputSchema: { browserSessionId: uuid, command: browserCommandSchema },
-      outputSchema: {
-        message,
-        commandId: uuid,
-        replay: z.boolean(),
-        state: z.string(),
-        command: z.record(z.string(), z.unknown()).optional(),
+function registerBrowserCommandTools(
+  server: McpServer,
+  client: BrowserApiClient,
+  native = false,
+): void {
+  if (!native)
+    server.registerTool(
+      "command",
+      {
+        title: "Issue browser command",
+        description:
+          "Queue one agent-chosen browser command for the Run's durable worker owner. Observe returns opaque current-document control and result-region references. Navigate, observe, fill, and read-only click results are continuously recorded as authenticated session evidence, so read-only verification needs no capture_dom. Navigate is origin-scoped. Public fill values are encrypted at rest; protected fills take only a scoped protectedValueId. Every successful commit creates its own HTTP capture and returns a sanitized successorObservation after the page's response handler settles; use that observation before deciding whether another effect is needed. Settle the capture before adding a DOM capture for the same effect, and determine the factual mutation outcome of every commit before a successful close. Close refuses SCRY_BROWSER_EFFECT_OUTCOME_PENDING without destroying the live context. close_for_failure is reserved for terminal failure handling: it proves undispatched work not-applied and preserves post-dispatch uncertainty as UNKNOWN without replay. Commit permits and captures exactly the first same-origin write caused by the chosen control while blocking every additional write. Capture_dom durably captures only an operation-owned protected result region associated with an acknowledged mutation effect; it is not used for read-only evidence. Every protected capture must be settled before close: publish_capture atomically publishes selected outputs and opaque protected references before destroying raw evidence; discard_capture destroys an unneeded capture without interpreting fields or creating handles. UNKNOWN prohibits replay.",
+        inputSchema: { browserSessionId: uuid, command: browserCommandSchema },
+        outputSchema: {
+          message,
+          commandId: uuid,
+          replay: z.boolean(),
+          state: z.string(),
+          command: z.record(z.string(), z.unknown()).optional(),
+        },
+        annotations: idempotentDurableWrite,
       },
-      annotations: idempotentDurableWrite,
-    },
-    async ({ browserSessionId, command }) => {
-      const submitted = await client.post<{ commandId: string; replay: boolean; state: string }>(
-        `/browser-sessions/${browserSessionId}/commands`,
-        {
-          command,
-          idempotencyKey: `mcp-browser-command-${randomUUID()}`,
-        },
-      );
-      const completed = await awaitCommand(client, submitted.commandId, 30_000);
-      return toolResult(
-        {
-          ...submitted,
-          state: completed?.state ?? submitted.state,
-          ...(completed ? { command: completed } : {}),
-        },
-        completed
-          ? "Browser command reached a durable terminal state."
-          : "Browser command remains queued or running after the bounded wait. Read its durable result with get_command.",
-      );
-    },
-  );
+      async ({ browserSessionId, command }) => {
+        const submitted = await client.post<{ commandId: string; replay: boolean; state: string }>(
+          `/browser-sessions/${browserSessionId}/commands`,
+          {
+            command,
+            idempotencyKey: `mcp-browser-command-${randomUUID()}`,
+          },
+        );
+        const completed = await awaitCommand(client, submitted.commandId, 30_000);
+        return toolResult(
+          {
+            ...submitted,
+            state: completed?.state ?? submitted.state,
+            ...(completed ? { command: completed } : {}),
+          },
+          completed
+            ? "Browser command reached a durable terminal state."
+            : "Browser command remains queued or running after the bounded wait. Read its durable result with get_command.",
+        );
+      },
+    );
 
   server.registerTool(
     "get_command",
     {
       title: "Get browser command result",
-      description:
-        "Read one durable browser command result. A completed observe or navigation returns current-document opaque control references. A failed command remains factual history; do not invent a successful action.",
+      description: native
+        ? "Read a durable command status, preserved action receipt and any authorized screenshot. Queued or running work must not be replaced by repeating the action. Errors and uncertainty remain explicit."
+        : "Read one durable browser command result. A completed observe or navigation returns current-document opaque control references. A failed command remains factual history; do not invent a successful action.",
       inputSchema: { commandId: uuid },
       outputSchema: { message, command: z.record(z.string(), z.unknown()) },
       annotations: localFactualRead,
     },
     async ({ commandId }) =>
-      toolResult(
-        { command: await client.get(`/browser-commands/${commandId}`) },
-        "Browser command facts loaded.",
-      ),
+      native
+        ? nativeCommandResult(client, await client.get(`/browser-commands/${commandId}`))
+        : toolResult(
+            { command: await client.get(`/browser-commands/${commandId}`) },
+            "Browser command facts loaded.",
+          ),
   );
 }
 
@@ -109,7 +126,7 @@ async function awaitCommand(
   return undefined;
 }
 
-function registerLifecycleTools(server: McpServer, client: BrowserApiClient): void {
+function registerLifecycleTools(server: McpServer, client: BrowserApiClient, native = false): void {
   server.registerTool(
     "list_projects",
     {
@@ -367,8 +384,9 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient): vo
     "finalize_run",
     {
       title: "Finalize browser Run",
-      description:
-        "Finalize a Run after every protected capture is settled. Passing finalization requires every commit outcome to be resolved. Non-passing finalization automatically proves pre-dispatch work not-applied, preserves post-dispatch uncertainty as UNKNOWN, closes the browser, and completes authenticated evidence so the terminal failure can be reported without redispatch.",
+      description: native
+        ? "Finish the Run after checking the actual application outcome. The API closes the browser, admits native recording evidence and finalizes its coverage. A passed Run requires complete evidence; failures retain an honest prefix. Never repeat an uncertain action to finish. If recovery advances the owner generation, refresh get_mission and use that factual current generation."
+        : "Finalize a Run after every protected capture is settled. Passing finalization requires every commit outcome to be resolved. Non-passing finalization automatically proves pre-dispatch work not-applied, preserves post-dispatch uncertainty as UNKNOWN, closes the browser, and completes authenticated evidence so the terminal failure can be reported without redispatch.",
       inputSchema: { runId: uuid, ...finalizeBrowserRunSchema.shape },
       outputSchema: { message, replay: z.boolean() },
       annotations: idempotentDurableWrite,

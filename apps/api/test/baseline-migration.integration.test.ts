@@ -141,14 +141,40 @@ live("guarded existing-baseline schema upgrades", () => {
       const database = new Database();
       const effects = new BrowserExecutionRepository(database, new BrowserProtectedValueCipher());
       try {
-        // Bootstrap fictional relational history using the unchanged session
-        // insert fields. The current readiness check correctly requires the
-        // pending admission migration and is bypassed only for this fixture.
-        const readiness = vi
-          .spyOn(effects, "assertCompatibleBaseline")
-          .mockResolvedValue(undefined);
+        // Seed the actual historical shape, not today's session creator: the
+        // adapter column did not exist before these pending migrations.
+        const historicalInsert = vi
+          .spyOn(effects, "createSession")
+          .mockImplementation(async (input) => {
+            const inserted = await database.query<
+              Awaited<ReturnType<BrowserExecutionRepository["createSession"]>>
+            >(
+              `INSERT INTO browser_execution_sessions(
+              id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
+              authentication_commit_limit,business_commit_limit,allowed_first_party_origins,
+              allowed_service_origins,runtime_capability_id,protection_key_id,
+              disclosure_mode,idempotency_key,state)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,'[]'::jsonb,
+                    'browser-execution','default','confidential',$11,'active') RETURNING *`,
+              [
+                input.id,
+                input.runId,
+                input.projectId,
+                input.missionId,
+                input.objectiveId,
+                input.environmentId,
+                input.agentSessionId,
+                input.authenticationCommitLimit,
+                input.businessCommitLimit,
+                JSON.stringify(input.allowedFirstPartyOrigins),
+                input.idempotencyKey,
+              ],
+            );
+            if (!inserted.rows[0]) throw new Error("historical_session_insert_failed");
+            return inserted.rows[0];
+          });
         const sessionId = await seedSession(database, effects, "https://upgrade.fixture.invalid");
-        readiness.mockRestore();
+        historicalInsert.mockRestore();
         const runId = (
           await database.query("SELECT run_id FROM browser_execution_sessions WHERE id=$1", [
             sessionId,

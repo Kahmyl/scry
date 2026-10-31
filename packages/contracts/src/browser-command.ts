@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { browserOutputSelectionSchema } from "./browser-execution.js";
+import { browserToolCommandSchema } from "./native-browser-command.js";
 
 const reference = z.string().uuid();
 const effectId = z.string().uuid();
 
 export const browserCommandSchema = z.discriminatedUnion("kind", [
+  browserToolCommandSchema,
   z.object({ kind: z.literal("navigate"), url: z.string().url() }),
   z.object({ kind: z.literal("observe") }),
   z

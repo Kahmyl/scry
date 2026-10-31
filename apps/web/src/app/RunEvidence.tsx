@@ -7,6 +7,7 @@ type Media = {
   timestamp: number;
   label: string;
   durationMs?: number;
+  coverage?: "complete" | "partial";
 };
 type Publication = { warning: string; playbackRate: 1; items: Media[] };
 
@@ -68,9 +69,9 @@ export function RunEvidence({ runId }: { runId: string }) {
           "Automatic redaction is best effort. Sensitive information may remain. Review before sharing."}
       </p>
       {error && <p role="alert">{error}</p>}
-      {!publication ? (
+      {!publication && !error ? (
         <p role="status">Loading evidence…</p>
-      ) : !publication.items.length ? (
+      ) : !publication ? null : !publication.items.length ? (
         <p>
           No native media is available yet. Refresh after the Run closes. Historical recordings are
           not rewritten.
@@ -86,6 +87,7 @@ export function RunEvidence({ runId }: { runId: string }) {
               >
                 {item.kind === "video" ? "Recording" : "Screenshot"} · {item.label} ·{" "}
                 {new Date(item.timestamp).toLocaleTimeString()}
+                {item.coverage === "partial" ? " · Partial recording" : ""}
               </button>
             ))}
           </div>
@@ -103,6 +105,12 @@ export function RunEvidence({ runId }: { runId: string }) {
                 <p>
                   Original capture timing · 1× playback. Use the player controls to pause or seek.
                 </p>
+                {selected.coverage === "partial" && (
+                  <p role="status">
+                    This recording covers only part of the Run. Missing footage is an evidence gap,
+                    not a defect in the tested app.
+                  </p>
+                )}
               </>
             ) : (
               <figure>
@@ -110,9 +118,9 @@ export function RunEvidence({ runId }: { runId: string }) {
                 <figcaption>Native screenshot · {selected.label}</figcaption>
               </figure>
             )
-          ) : (
+          ) : !error ? (
             <p role="status">Loading selected evidence…</p>
-          )}
+          ) : null}
         </>
       )}
     </section>

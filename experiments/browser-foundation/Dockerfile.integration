@@ -1,0 +1,18 @@
+FROM scry-browser-foundation:qualified-20261030
+WORKDIR /workspace
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/api/package.json apps/api/package.json
+COPY apps/mcp/package.json apps/mcp/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/veil/package.json packages/veil/package.json
+COPY packages/chronicle/package.json packages/chronicle/package.json
+COPY packages/praxis/package.json packages/praxis/package.json
+COPY packages/assurance/package.json packages/assurance/package.json
+RUN CI=true npx --yes pnpm@10.29.3 install --prod=false --frozen-lockfile --ignore-scripts --registry=https://registry.npmjs.org
+COPY apps apps
+COPY packages packages
+COPY scripts scripts
+COPY experiments/browser-foundation/test/platform-*.mjs experiments/browser-foundation/test/
+RUN apps/web/node_modules/.bin/vite build apps/web
+CMD ["apps/api/node_modules/.bin/tsx","--tsconfig","apps/api/tsconfig.json","apps/api/src/main.ts"]

@@ -186,17 +186,33 @@ const activationOwners = new Set([
   "apps/api/src/browser-execution/browser-execution-queue.service.ts",
   "apps/api/src/browser-execution/controllers/browser-lifecycle.controller.ts",
 ]);
+// Controlled integration is an explicit, inactive adapter selection, not a
+// second application bootstrap or permission to revive retired runtimes.
+const nativeAdapterOwners = new Set([
+  "apps/api/src/browser-execution/browser-adapter-selection.ts",
+  "apps/api/src/browser-execution/repositories/browser-command.repository.ts",
+  "apps/mcp/src/server.ts",
+  "packages/praxis/src/mcp-browser-engine.ts",
+]);
 for (const sourcePath of activeSourcePaths) {
   const enabledFlags = [...read(sourcePath).matchAll(/process\.env\.([A-Z0-9_]+_ENABLED)\b/gu)].map(
     (match) => match[1],
   );
-  if (enabledFlags.some((flag) => flag !== "SCRY_BROWSER_ENABLED")) {
+  if (
+    enabledFlags.some(
+      (flag) =>
+        flag !== "SCRY_BROWSER_ENABLED" &&
+        !(flag === "SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED" && nativeAdapterOwners.has(sourcePath)),
+    )
+  ) {
     fail(`alternate runtime feature flag remains active: ${sourcePath}`);
   }
-  if (enabledFlags.length > 0 && !activationOwners.has(sourcePath)) {
+  if (enabledFlags.includes("SCRY_BROWSER_ENABLED") && !activationOwners.has(sourcePath)) {
     fail(`browser activation is checked outside an admitted owner: ${sourcePath}`);
   }
 }
+if (/SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED\s*:\s*["']?true/u.test(deployment + development))
+  fail("controlled browser adapter is activated in a default deployment manifest");
 
 process.stdout.write(
   `${JSON.stringify({

@@ -61,7 +61,7 @@ for (const filename of files) {
   )
     fail(`non-baseline workspace remains: ${filename}`);
   if (
-    /^(?:apps\/agent-lab\/|apps\/api\/migrations\/|apps\/mcp\/scripts\/|experiments\/|packages\/(?:executor|policy|observability)\/|scripts\/fixtures\/)/u.test(
+    /^(?:apps\/agent-lab\/|apps\/api\/migrations\/|apps\/mcp\/scripts\/|experiments\/(?!browser-foundation\/)|packages\/(?:executor|policy|observability)\/|scripts\/fixtures\/)/u.test(
       filename,
     )
   )
@@ -69,10 +69,15 @@ for (const filename of files) {
 }
 
 const production = traceSourceGraph({ roots: productionRoots, files, entries, read });
-const supportRoots = [...files].filter((filename) =>
-  /(?:\.test\.[cm]?[jt]sx?$|^packages\/assurance\/gates\/verify-[^/]+\.mjs$|^scripts\/[^/]+\.mjs$)/u.test(
-    filename,
-  ),
+for (const filename of production.reachable)
+  if (filename.startsWith("experiments/"))
+    fail(`production imports isolated experiment: ${filename}`);
+const supportRoots = [...files].filter(
+  (filename) =>
+    !filename.startsWith("experiments/") &&
+    /(?:\.test\.[cm]?[jt]sx?$|^packages\/assurance\/gates\/verify-[^/]+\.mjs$|^scripts\/[^/]+\.mjs$)/u.test(
+      filename,
+    ),
 );
 const supported = traceSourceGraph({
   roots: [

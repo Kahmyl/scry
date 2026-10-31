@@ -10,6 +10,10 @@ export interface OwnedBrowserOptions {
   killTimeoutMs?: number;
   /** A private custodian installs its own shutdown handlers. */
   handleSignals?: boolean;
+  runtime?: "playwright_mcp";
+  display?: string;
+  proxyServer?: string;
+  captureDirectory?: string;
 }
 
 export interface BrowserTerminationReceipt {
@@ -28,6 +32,14 @@ export function assertBrowserProcessOptions(options: OwnedBrowserOptions): void 
   budget(options.connectTimeoutMs, 5000, 30000);
   budget(options.gracefulCloseMs, 2000, 30000, true);
   budget(options.killTimeoutMs, 5000, 30000);
+  if (
+    (options.runtime !== undefined && options.runtime !== "playwright_mcp") ||
+    (options.captureDirectory !== undefined &&
+      (!options.captureDirectory.startsWith("/") || options.captureDirectory.length > 4096)) ||
+    (options.display !== undefined && !/^:\d+$/u.test(options.display)) ||
+    (options.proxyServer !== undefined && !/^http:\/\/127\.0\.0\.1:\d+$/u.test(options.proxyServer))
+  )
+    throw new Error("SCRY_BROWSER_PROCESS_CONFIGURATION_INVALID");
   if (
     (options.headless !== undefined && typeof options.headless !== "boolean") ||
     (options.channel !== undefined &&
@@ -82,11 +94,29 @@ export class BrowserProcessCustody {
     const killTimeout = budget(options.killTimeoutMs, 5000, 30000);
     let server: BrowserServer;
     try {
-      server = await chromium.launchServer({
+      const driver =
+        options.runtime === "playwright_mcp"
+          ? (await import("playwright-mcp-runtime")).chromium
+          : chromium;
+      server = await driver.launchServer({
         host: "127.0.0.1",
         port: 0,
         timeout: launchTimeout,
         headless: options.headless ?? true,
+        ...(options.runtime === "playwright_mcp"
+          ? {
+              args: [
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--window-position=0,0",
+                "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+              ],
+              ...(options.display ? { env: { ...process.env, DISPLAY: options.display } } : {}),
+              ...(options.proxyServer
+                ? { proxy: { server: options.proxyServer, bypass: "<-loopback>" } }
+                : {}),
+            }
+          : {}),
         ...(options.handleSignals === false
           ? { handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false }
           : {}),

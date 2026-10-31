@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, symlink, unlink } from "node:fs/promises";
+import { mkdtemp, writeFile, symlink, unlink, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -47,6 +47,9 @@ describe("native media custody", () => {
     );
     await writeFile(path.join(f.native.directory, duplicate), bytes);
     await f.native.admit({ ...f.input, filename: duplicate });
+    await expect(stat(path.join(f.native.directory, duplicate))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     await writeFile(path.join(f.native.directory, `${randomUUID()}.png`), randomBytes(64)); // orphan
     await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
     const result = await f.evidence.seal({ renderVideo: true, actionLedger: async () => [] });
@@ -59,6 +62,35 @@ describe("native media custody", () => {
     const f = await fixture();
     f.revoke();
     await expect(f.native.admit(f.input)).rejects.toThrow("OWNER_FENCED");
+  });
+  it("admits a native MP4 only from a pre-capture reservation and preserves partial coverage", async () => {
+    const f = await fixture();
+    const capture = await f.native.reserveCapture!();
+    await writeFile(path.join(capture, "recording.mp4"), randomBytes(128));
+    await writeFile(
+      path.join(capture, "recording.json"),
+      JSON.stringify({ started: Date.now(), duration: "1.25", coverage: "partial" }),
+    );
+    expect(await f.evidence.recoverNativeCaptures!(f.native)).toBe(1);
+    // Repeating recovery cannot duplicate an already admitted video.
+    expect(await f.evidence.recoverNativeCaptures!(f.native)).toBe(1);
+    await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
+    const closed = await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
+    expect(closed.state).toBe("incomplete");
+    const media = await f.readMedia();
+    expect(media).toHaveLength(1);
+    expect(media[0]).toMatchObject({ kind: "video", coverage: "partial", durationMs: 1250 });
+    expect(media[0]!.objectKey).toMatch(/\.mp4$/u);
+  });
+  it("does not promote a recording from an unreserved directory", async () => {
+    const f = await fixture();
+    await writeFile(path.join(f.native.directory, "recording.mp4"), randomBytes(128));
+    await writeFile(
+      path.join(f.native.directory, "recording.json"),
+      JSON.stringify({ started: Date.now(), duration: "1", coverage: "complete" }),
+    );
+    expect(await f.evidence.recoverNativeCaptures!(f.native)).toBe(0);
+    expect(await f.readMedia()).toHaveLength(0);
   });
   it("detects changed native bytes at read time", async () => {
     const f = await fixture();

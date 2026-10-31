@@ -420,6 +420,7 @@ export class PraxisBrowserEngine {
     attempt: CommandAttempt,
     current: () => Promise<void>,
   ): Promise<Record<string, unknown>> {
+    if (command.kind === "browser_tool") throw new Error("SCRY_BROWSER_ADAPTER_COMMAND_MISMATCH");
     await current();
     switch (command.kind) {
       case "navigate": {

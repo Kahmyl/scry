@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat, open, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 import type {
   ChronicleNativeRecordingPort,
@@ -9,7 +9,7 @@ import type {
   EvidenceReadProtectionPort,
 } from "@scry/contracts";
 import type { ChronicleRecording } from "./recording.js";
-import { ensurePrivateDirectory } from "./durable-file.js";
+import { ensurePrivateDirectory, durableWrite } from "./durable-file.js";
 import { AdmittedEvidenceReader } from "./admitted-evidence-reader.js";
 import {
   EvidenceArtifactFailure,
@@ -34,6 +34,21 @@ export async function createNativeRecording(options: {
   let maskingUnavailable = false;
   return {
     directory,
+    async reserveCapture() {
+      options.assertActive();
+      const captureDirectory = path.join(directory, "capture");
+      await ensurePrivateDirectory(captureDirectory);
+      options.recording.receive(
+        JSON.stringify({
+          type: "native_capture_started",
+          timestamp: Date.now(),
+          directory: path.relative(options.root, captureDirectory),
+        }),
+      );
+      if ((await options.recording.flush()).errors.length)
+        throw new Error("native_media_admission_failed");
+      return captureDirectory;
+    },
     maskingUnavailable() {
       maskingUnavailable = true;
     },
@@ -41,14 +56,14 @@ export async function createNativeRecording(options: {
       options.assertActive();
       options.recording.assertActive();
       if (
-        !/^[a-f0-9-]{36}\.(?:webm|png)$/u.test(input.filename) ||
+        !/^[a-f0-9-]{36}\.(?:webm|mp4|png|jpeg|webp)$/u.test(input.filename) ||
         !Number.isSafeInteger(input.timestamp) ||
         !["initial", "navigate", "fill", "click", "press", "commit", "final", "page"].includes(
           input.label,
         ) ||
         (input.kind === "video"
-          ? !input.filename.endsWith(".webm")
-          : !input.filename.endsWith(".png")) ||
+          ? !/\.(webm|mp4)$/u.test(input.filename)
+          : !/\.(png|jpeg|webp)$/u.test(input.filename)) ||
         (input.durationMs !== undefined &&
           (!Number.isFinite(input.durationMs) || input.durationMs < 0))
       )
@@ -59,7 +74,12 @@ export async function createNativeRecording(options: {
       if (usedBytes + bytes.length > 256 * 1024 * 1024)
         throw new Error("native_media_capacity_exceeded");
       const digest = hash(bytes);
-      if (input.kind === "screenshot" && screenshotDigests.has(digest)) return;
+      if (input.kind === "screenshot" && screenshotDigests.has(digest)) {
+        // Only this new, unadmitted duplicate is discarded. Never remove the
+        // original admitted screenshot or keep charging storage for no change.
+        await unlink(file);
+        return;
+      }
       // Browser encoders finish before admission. Make those final bytes and
       // their directory entry durable before admitting their metadata receipt.
       for (const target of [file, directory]) {
@@ -71,7 +91,8 @@ export async function createNativeRecording(options: {
         }
       }
       const receipt: NativeMediaReceipt = {
-        masking: maskingUnavailable ? "unavailable" : "best_effort",
+        masking: maskingUnavailable ? "unavailable" : (input.masking ?? "best_effort"),
+        ...(input.coverage ? { coverage: input.coverage } : {}),
         kind: input.kind,
         objectKey: path.relative(options.root, file),
         digest,
@@ -126,9 +147,11 @@ export async function readNativeEvidence(options: {
   root: string;
   snapshot: EvidenceStreamSnapshot;
   protection: EvidenceReadProtectionPort;
+  /** Authorized application reads may inspect an immutable admitted prefix. */
+  allowOpen?: boolean;
 }): Promise<NativeMediaReceipt[]> {
   const { snapshot } = options;
-  if (!snapshot.sealedAt) throw new Error("native_media_not_sealed");
+  if (!snapshot.sealedAt && !options.allowOpen) throw new Error("native_media_not_sealed");
   if (snapshot.custodyMode !== "admitted") return [];
   // A sealed database snapshot is immutable. No live-owner lease or file-system
   // manifest can grant read authority or introduce another receipt.
@@ -149,7 +172,9 @@ export function nativeMediaReceipts(events: Array<Record<string, unknown>>): Nat
   for (const item of media) {
     if (
       !/^(?:video|screenshot)$/u.test(item.kind) ||
-      !/^native\/\d+\/[a-f0-9-]{36}\/[a-f0-9-]{36}\.(?:webm|png)$/u.test(item.objectKey) ||
+      !/^native\/\d+\/[a-f0-9-]{36}\/[a-f0-9-]{36}\.(?:webm|mp4|png|jpeg|webp)$/u.test(
+        item.objectKey,
+      ) ||
       !/^[a-f0-9]{64}$/u.test(item.digest) ||
       !Number.isSafeInteger(item.bytes) ||
       item.bytes < 1
@@ -182,4 +207,56 @@ export async function readNativeMedia(
   if (bytes.length !== receipt.bytes || hash(bytes) !== receipt.digest)
     throw new EvidenceArtifactFailure("integrity_mismatch");
   return bytes;
+}
+
+/** Recover only an authenticated, pre-capture reservation. Never scan orphan
+ * directories. Final bytes are copied and admitted under the current owner. */
+export async function recoverNativeCaptures(
+  root: string,
+  events: Record<string, unknown>[],
+  native: ChronicleNativeRecordingPort,
+): Promise<number> {
+  // A receipt admitted before a crash is already authoritative. Do not create
+  // another copy merely because its pre-capture reservation remains in history.
+  if (nativeMediaReceipts(events).some((item) => item.kind === "video")) return 1;
+  const captures = events.filter((e) => e.type === "native_capture_started");
+  let recovered = 0;
+  for (const capture of captures) {
+    const directory = capture.directory;
+    if (typeof directory !== "string" || !/^native\/\d+\/[a-f0-9-]{36}\/capture$/u.test(directory))
+      throw new Error("native_media_path_invalid");
+    let manifest: { coverage?: string; started?: number; duration?: string };
+    try {
+      manifest = JSON.parse(
+        (await privateFile(path.join(root, directory, "recording.json"), root, 8192)).toString(
+          "utf8",
+        ),
+      );
+    } catch (error) {
+      if (isArtifactFilesystemFailure(error)) continue;
+      throw error;
+    }
+    if (
+      !["complete", "partial"].includes(manifest.coverage ?? "") ||
+      !Number.isSafeInteger(manifest.started)
+    )
+      continue;
+    const bytes = await privateFile(
+      path.join(root, directory, "recording.mp4"),
+      root,
+      128 * 1024 * 1024,
+    );
+    const filename = `${randomUUID()}.mp4`;
+    await durableWrite(path.join(native.directory, filename), bytes);
+    await native.admit({
+      filename,
+      kind: "video",
+      timestamp: manifest.started!,
+      label: "final",
+      durationMs: Number(manifest.duration) * 1000,
+      coverage: manifest.coverage as "complete" | "partial",
+    });
+    recovered++;
+  }
+  return recovered;
 }

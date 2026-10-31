@@ -38,6 +38,30 @@ export class BrowserApiClient {
     return this.request(path);
   }
 
+  async getImage(path: string): Promise<{ type: "image"; data: string; mimeType: string }> {
+    // Optional image delivery must not keep a completed browser action waiting
+    // indefinitely. The same signal also bounds consumption of a stalled body.
+    const response = await this.response(path, { signal: AbortSignal.timeout(10000) });
+    const mimeType = response.headers.get("content-type")?.split(";")[0] ?? "";
+    if (!["image/png", "image/jpeg", "image/webp"].includes(mimeType) || !response.body)
+      throw new Error("SCRY_BROWSER_IMAGE_INVALID");
+    const reader = response.body.getReader(),
+      chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.length;
+        if (size > 16 * 1024 * 1024) throw new Error("SCRY_BROWSER_IMAGE_CAPACITY");
+        chunks.push(value);
+      }
+    } finally {
+      await reader.cancel();
+    }
+    return { type: "image", data: Buffer.concat(chunks).toString("base64"), mimeType };
+  }
+
   post<T>(path: string, body: unknown = {}): Promise<T> {
     return this.request(path, {
       method: "POST",
@@ -47,6 +71,12 @@ export class BrowserApiClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    return (await this.response(path, init)).json() as Promise<T>;
+  }
+
+  private async response(path: string, init?: RequestInit): Promise<Response> {
+    if (!path.startsWith("/") || path.startsWith("//"))
+      throw new Error("SCRY_BROWSER_API_PATH_INVALID");
     const headers = new Headers(init?.headers);
     if (this.token) headers.set("authorization", `Bearer ${this.token}`);
     headers.set("x-scry-agent-provider", bounded(this.identity.provider));
@@ -56,8 +86,8 @@ export class BrowserApiClient {
     if (this.identity.experimentId)
       headers.set("x-scry-experiment-id", bounded(this.identity.experimentId));
     const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
-    const body = await response.json().catch(() => undefined);
     if (!response.ok) {
+      const body = await response.json().catch(() => undefined);
       const envelope = record(body);
       const detail = record(envelope?.message) ?? envelope;
       const code =
@@ -67,7 +97,7 @@ export class BrowserApiClient {
       const safeActions = stringArrayField(detail, "safeActions") ?? [];
       throw new BrowserApiError(code, response.status, safeActions);
     }
-    return body as T;
+    return response;
   }
 }
 

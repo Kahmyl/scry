@@ -11,6 +11,11 @@ test("admits the explicit private custodian TS loader without admitting other ru
       playwright: "locked",
       rrweb: "locked",
       tsx: "locked",
+      "@playwright/mcp": "0.0.83",
+      "playwright-mcp-runtime": "npm:playwright@1.64.0-alpha-1790635538000",
+      "@modelcontextprotocol/sdk": "1.32.2",
+      "proxy-chain": "3.0.1",
+      ajv: "8.20.0",
     }),
     [],
   );
@@ -27,7 +32,7 @@ test("admits the explicit private custodian TS loader without admitting other ru
 
 test("Praxis is the only browser driver owner and consumes only boundary contracts", () => {
   const praxis = "packages/praxis/src/browser-engine.ts";
-  for (const dependency of ["playwright", "rrweb"]) {
+  for (const dependency of ["playwright", "rrweb", "@playwright/mcp", "playwright-mcp-runtime"]) {
     assert.deepEqual(
       boundaryViolations(praxis, `import { implementation } from "${dependency}";`),
       [],

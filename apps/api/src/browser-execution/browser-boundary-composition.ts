@@ -7,7 +7,7 @@ import type {
 } from "@scry/contracts";
 import { PraxisExecutionPort } from "@scry/contracts";
 import { VeilReportProtection, VeilBrowserProtection } from "@scry/veil";
-import { BrowserReplayRenderer, PraxisBrowserEngine } from "@scry/praxis";
+import { BrowserReplayRenderer, PraxisBrowserEngine, PraxisMcpBrowserEngine } from "@scry/praxis";
 import { ChronicleEvidenceService } from "@scry/chronicle";
 
 import { BrowserCommandRepository } from "./repositories/browser-command.repository.js";
@@ -15,20 +15,30 @@ import { BrowserExecutionRepository } from "./repositories/browser-execution.rep
 import { commandExecutionBudgetMs } from "./command-budget.js";
 
 class BrowserWorkerPraxisAdapter extends PraxisExecutionPort {
-  constructor(private readonly engine: PraxisBrowserEngine) {
+  constructor(
+    private readonly engine: PraxisBrowserEngine,
+    private readonly native: PraxisMcpBrowserEngine,
+    private readonly commands: BrowserCommandRepository,
+  ) {
     super();
   }
 
-  openSession(sessionId: string) {
-    return this.engine.open(sessionId);
+  private async selected(sessionId: string) {
+    return (await this.commands.sessionContext(sessionId)).runtimeAdapter === "playwright_mcp"
+      ? this.native
+      : this.engine;
   }
 
-  executeCommand(sessionId: string, command: BrowserCommand, options?: PraxisCommandOptions) {
-    return this.engine.execute(sessionId, command, options);
+  async openSession(sessionId: string) {
+    return (await this.selected(sessionId)).open(sessionId);
   }
 
-  shutdown() {
-    return this.engine.closeAll();
+  async executeCommand(sessionId: string, command: BrowserCommand, options?: PraxisCommandOptions) {
+    return (await this.selected(sessionId)).execute(sessionId, command, options);
+  }
+
+  async shutdown() {
+    await Promise.all([this.engine.closeAll(), this.native.closeAll()]);
   }
 }
 
@@ -46,6 +56,15 @@ export function composePraxisExecutionPort(
       commandExecutionBudgetMs,
       runtimeOptions,
     ),
+    new PraxisMcpBrowserEngine(
+      commands,
+      effects,
+      new ChronicleEvidenceService(new BrowserReplayRenderer()),
+      new VeilBrowserProtection(),
+      new URL("./native-browser-adapter-worker.ts", import.meta.url).href,
+      runtimeOptions,
+    ),
+    commands,
   );
 }
 

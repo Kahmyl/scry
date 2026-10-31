@@ -4,6 +4,7 @@ import {
   type CaptureEvidenceInput,
 } from "@scry/chronicle";
 import { createHash, randomUUID } from "node:crypto";
+import { selectedBrowserAdapter } from "../browser-adapter-selection.js";
 import { performance } from "node:perf_hooks";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
@@ -275,8 +276,8 @@ export class BrowserExecutionRepository {
            id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
            authentication_commit_limit,business_commit_limit,allowed_first_party_origins,
            allowed_service_origins,runtime_capability_id,protection_key_id,
-           disclosure_mode,idempotency_key,state)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,'active') RETURNING *`,
+           disclosure_mode,idempotency_key,state,runtime_adapter)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,'active',$16) RETURNING *`,
         [
           input.id,
           input.runId,
@@ -293,6 +294,7 @@ export class BrowserExecutionRepository {
           this.cipher.activeKeyId(),
           environment.rows[0].disclosure_mode,
           input.idempotencyKey,
+          selectedBrowserAdapter(),
         ],
       );
       await client.query(

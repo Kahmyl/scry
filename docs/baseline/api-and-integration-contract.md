@@ -39,12 +39,44 @@ contract.
 
 ## Native evidence reads
 
-`GET /api/runs/{runId}/media` lists safe descriptors for sealed native recordings
-and screenshots, plus the best-effort redaction warning.
-`GET /api/runs/{runId}/media/{index}` returns a verified private PNG or WebM.
+`GET /api/runs/{runId}/media` lists safe descriptors for admitted native recordings
+and screenshots, plus the best-effort redaction warning. Already admitted
+screenshots are readable during an active Run; an open stream is read from a
+short-transaction immutable metadata snapshot, not from unadmitted files.
+`GET /api/runs/{runId}/media/{index}` returns verified private image or video bytes.
+PNG, JPEG, WebP, WebM and MP4 are supported without rewriting historical media.
+Descriptors include an artifact digest and optional complete/partial recording
+coverage; no secret, browser connection endpoint or filesystem path is returned.
 Both use the existing bearer authentication and workspace-scoped Run access.
 Descriptors contain no filesystem paths. Media responses are private/no-store.
 Historical evidence is not rewritten or presented as newly captured media.
+
+## Controlled browser-adapter integration
+
+The isolated candidate adds the official browser tools alongside the existing
+Mission/Flow/Run lifecycle, not another API or ownership system. It remains
+inactive by default. A Run snapshots its adapter and cannot switch adapters
+later; commands from the other adapter are rejected without fallback.
+
+The candidate's browser tools accept the Run's `browserSessionId` and a stable
+`actionId` for one intended interaction. Ordinary arguments are encrypted in the
+existing durable command record. The worker records dispatch uncertainty before
+calling the browser and saves the returned action result before independent
+observation. An unavailable later observation does not erase that result. A
+reclaimed interaction is reconciled from its receipt or returned as unknown;
+it is never automatically redispatched.
+
+The scoped `browser_type_secret` tool types a bound opaque credential reference.
+Arbitrary evaluation, scripts, file upload, browser installation, filesystem
+paths and network/header dumps are not part of this surface. Native screenshot
+image responses are retrieved through the same authorized media API.
+
+Browser-tool completion is not proof of an applied business change. The agent
+must inspect the resulting application state. The dashboard distinguishes these
+interaction receipts from historical mutation-effect records.
+
+See the local [controlled integration record](../../experiments/browser-foundation/INTEGRATION.md)
+for the activation gate and qualification results.
 
 ## Health
 

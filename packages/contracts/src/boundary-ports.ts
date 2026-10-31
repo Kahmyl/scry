@@ -23,6 +23,8 @@ export interface PraxisCommandOptions {
   /** Synchronous mirror of already acknowledged database authority; no query or
    * token crosses the custodian boundary. A liveness ping never renews it. */
   sampleAuthority?: () => PraxisCommandAuthoritySample;
+  /** Durable dispatch/result checkpoints, admitted by the exact current claim. */
+  persistAction?: (result: Record<string, unknown>) => Promise<void>;
 }
 /** Host containment notification, including failures observed while no command
  * is active. Not a customer callback or permission to replay an effect. */

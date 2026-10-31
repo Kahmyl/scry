@@ -4,7 +4,17 @@ import ts from "typescript";
 /** Runtime tooling is explicit; adding the private TS custodian loader does not
  * permit another implementation owner or arbitrary new runtime dependencies. */
 export function unsupportedPraxisDependencies(dependencies = {}) {
-  const allowed = new Set(["@scry/contracts", "playwright", "rrweb", "tsx"]);
+  const allowed = new Set([
+    "@scry/contracts",
+    "playwright",
+    "rrweb",
+    "tsx",
+    "@playwright/mcp",
+    "@modelcontextprotocol/sdk",
+    "playwright-mcp-runtime",
+    "proxy-chain",
+    "ajv",
+  ]);
   return Object.keys(dependencies).filter((name) => !allowed.has(name));
 }
 
@@ -80,7 +90,11 @@ export function boundaryViolations(sourcePath, source) {
   for (const specifier of specifiers) {
     if (inPraxis && /^(?:@scry\/(?!contracts$)|pg$|@nestjs\/)/u.test(specifier))
       violations.push("browser mechanics depend on another boundary implementation");
-    if (!inPraxis && !assuranceFixture && /^(?:playwright|rrweb)(?:\/|$)/u.test(specifier))
+    if (
+      !inPraxis &&
+      !assuranceFixture &&
+      /^(?:playwright|playwright-mcp-runtime|@playwright\/mcp|rrweb)(?:\/|$)/u.test(specifier)
+    )
       violations.push("browser driver is imported outside Praxis");
     if (specifier.startsWith("@scry/praxis/"))
       violations.push("consumer imports a Praxis internal module");

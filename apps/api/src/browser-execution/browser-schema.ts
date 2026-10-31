@@ -73,6 +73,10 @@ export async function assertBrowserSchema(database: Queryable): Promise<void> {
   );
   if (availability.rowCount !== 1)
     throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:evidence_availability");
+  const adapter = await database.query(
+    "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='browser_execution_sessions' AND column_name='runtime_adapter'",
+  );
+  if (adapter.rowCount !== 1) throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:adapter_selection");
 }
 
 /** Frozen retained-baseline requirements for transactional adoption. New runtime

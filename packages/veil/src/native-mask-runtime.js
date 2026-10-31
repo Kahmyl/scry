@@ -1,5 +1,9 @@
 function installNativeMasks(initial) {
   const host = globalThis;
+  if (host.__scryNativeRefresh) {
+    for (const secret of initial) host.__scryNativeRefresh(secret);
+    return;
+  }
   const secrets = new Set(initial);
   let overlay;
   let scheduled = false;

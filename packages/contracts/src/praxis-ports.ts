@@ -21,6 +21,8 @@ export interface PraxisSessionScope {
   ownerGeneration: number;
   disclosureMode: BrowserDisclosureMode;
   protectionKeyId: string;
+  runtimeAdapter?: "legacy" | "playwright_mcp";
+  allowedOrigins?: string[];
 }
 
 export interface PraxisOwnerIdentity {
@@ -244,6 +246,7 @@ export interface VeilBrowserSessionPort {
   restoreCaptures(captures: DurableCaptureEnvelope[]): Promise<void>;
 }
 export interface VeilBrowserProtectionPort {
+  nativeEvidence?(scope: PraxisSessionScope): EvidenceProtectionPort;
   readEvidence(
     scope: Pick<PraxisSessionScope, "runId" | "sessionId" | "protectionKeyId">,
   ): Pick<EvidenceProtectionPort, "decryptCompressed">;

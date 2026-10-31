@@ -22,8 +22,8 @@ export class BrowserDashboardRepository {
        FROM browser_evidence_streams es JOIN runs r ON r.id=es.run_id
        JOIN browser_execution_sessions s ON s.id=es.session_id
        JOIN projects p ON p.id=r.project_id WHERE r.id=$1
-       AND ($2::uuid IS NULL OR p.workspace_id=$2) AND es.sealed_at IS NOT NULL
-       AND es.state IN ('complete','incomplete') AND es.retention_expires_at>now()
+       AND ($2::uuid IS NULL OR p.workspace_id=$2)
+       AND es.state IN ('open','complete','incomplete') AND es.retention_expires_at>now()
        ORDER BY es.created_at DESC LIMIT 1`,
       [runId, workspaceId ?? null],
     );
@@ -31,13 +31,15 @@ export class BrowserDashboardRepository {
     if (!publication) return undefined;
     const root = path.resolve(process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser");
     const sessionRoot = path.join(root, publication.sessionId);
-    const snapshot = await new AdmittedEvidenceRepository(this.database).snapshot(
-      publication.sessionId,
-      false,
+    // Freeze exact admitted metadata under the stream lock, then release all
+    // coordination locks BEFORE authenticated file reads or decryption.
+    const snapshot = await this.database.transaction((client) =>
+      new AdmittedEvidenceRepository(client).snapshot(publication.sessionId, true),
     );
     const media = await readNativeEvidence({
       root: sessionRoot,
       snapshot,
+      allowOpen: true,
       protection: readBrowserEvidenceProtection({
         runId,
         sessionId: publication.sessionId,
@@ -54,17 +56,23 @@ export class BrowserDashboardRepository {
     return {
       warning:
         nativeEvidenceWarning +
-        (publication?.media.some((item) => item.masking === "unavailable")
+        (publication?.media.some(
+          (item) => item.masking === "unavailable" || item.masking === "best_effort_partial",
+        )
           ? " Automatic masking was unavailable for part of this recording."
           : ""),
       playbackRate: 1,
-      items: (publication?.media ?? []).map(({ kind, timestamp, label, durationMs }, index) => ({
-        index,
-        kind,
-        timestamp,
-        label,
-        ...(durationMs === undefined ? {} : { durationMs }),
-      })),
+      items: (publication?.media ?? []).map(
+        ({ kind, timestamp, label, durationMs, coverage, digest }, index) => ({
+          index,
+          artifactId: digest,
+          kind,
+          timestamp,
+          label,
+          ...(coverage ? { coverage } : {}),
+          ...(durationMs === undefined ? {} : { durationMs }),
+        }),
+      ),
     };
   }
 
@@ -74,7 +82,16 @@ export class BrowserDashboardRepository {
     if (!publication || !receipt) throw new NotFoundException("Recording not found");
     return {
       bytes: await readNativeMedia(publication.sessionRoot, receipt),
-      type: receipt.kind === "video" ? "video/webm" : "image/png",
+      type:
+        receipt.kind === "video"
+          ? receipt.objectKey.endsWith(".mp4")
+            ? "video/mp4"
+            : "video/webm"
+          : receipt.objectKey.endsWith(".jpeg")
+            ? "image/jpeg"
+            : receipt.objectKey.endsWith(".webp")
+              ? "image/webp"
+              : "image/png",
     };
   }
 
@@ -91,6 +108,7 @@ export class BrowserDashboardRepository {
               r.created_at AS "createdAt",r.updated_at AS "updatedAt",r.started_at AS "startedAt",
               r.completed_at AS "completedAt",e.name AS "environmentName",e.base_origin AS "baseOrigin",
               s.id AS "browserSessionId",s.state AS "browserSessionState",
+              s.runtime_adapter AS "runtimeAdapter",
               s.active_owner_generation AS "ownerGeneration",
               s.authentication_commits_used AS "authenticationCommitsUsed",
               s.authentication_commit_limit AS "authenticationCommitLimit",
@@ -103,7 +121,22 @@ export class BrowserDashboardRepository {
       [runId, workspaceId ?? null],
     );
     if (!run.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
-    return { ...run.rows[0], ...(await new ChronicleRepository(this.database).runEvidence(runId)) };
+    const native = run.rows[0].runtimeAdapter === "playwright_mcp";
+    const activity = native
+      ? (
+          await this.database.query(
+            `SELECT id,safe_input->>'tool' AS tool,state,safe_result->>'execution' AS execution,
+              safe_result->>'businessOutcome' AS "businessOutcome",safe_result->>'observation' AS observation,
+              error_code AS "errorCode" FROM browser_commands WHERE run_id=$1 AND kind='browser_tool' ORDER BY command_ordinal`,
+            [runId],
+          )
+        ).rows
+      : undefined;
+    return {
+      ...run.rows[0],
+      ...(activity ? { activity } : {}),
+      ...(await new ChronicleRepository(this.database).runEvidence(runId)),
+    };
   }
 
   async listReports(workspaceId: string | undefined, projectId: string) {

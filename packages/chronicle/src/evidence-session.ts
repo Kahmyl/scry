@@ -21,6 +21,7 @@ import {
   nativeEvidenceWarning,
   readNativeMedia,
   nativeMediaReceipts,
+  recoverNativeCaptures,
 } from "./native-media.js";
 import {
   EvidenceArtifactFailure,
@@ -63,14 +64,27 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
       return Promise.reject(new Error("SCRY_BROWSER_EVIDENCE_CAPTURE_CLOSED"));
     return this.scope.admission.startCapture();
   }
-  async stopCapture(receipt: { browserStopped: true; recordingDrained: true }): Promise<void> {
+  async stopCapture(receipt: {
+    browserStopped: true;
+    recordingDrained: true;
+    recordingComplete?: boolean;
+  }): Promise<void> {
     const diagnostics = await this.requiredRecording().flush();
     const snapshot = await this.scope.admission.readStream();
+    const media = nativeMediaReceipts((await this.store.verify()).events);
     const recordingComplete =
+      receipt.recordingComplete !== false &&
+      !media.some((item) => item.coverage === "partial") &&
       diagnostics.errors.length === 0 &&
       diagnostics.diagnostics.length === 0 &&
       diagnostics.receivedEvents === (snapshot.chunks.at(-1)?.lastSequence ?? -1) + 1;
     await this.scope.admission.stopCapture({ ...receipt, recordingComplete });
+  }
+  async recoverNativeCaptures(
+    native: import("@scry/contracts").ChronicleNativeRecordingPort,
+  ): Promise<number> {
+    const verified = await this.store.verify();
+    return recoverNativeCaptures(this.scope.root, verified.events, native);
   }
 
   async prepareClosure(): Promise<void> {

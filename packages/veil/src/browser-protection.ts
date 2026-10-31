@@ -9,6 +9,13 @@ import { nativeProtectionScript } from "./native-protection.js";
 
 /** Supplies policy capabilities without exposing key material to browser execution. */
 export class VeilBrowserProtection implements VeilBrowserProtectionPort {
+  nativeEvidence(scope: Parameters<NonNullable<VeilBrowserProtectionPort["nativeEvidence"]>>[0]) {
+    const keys = BrowserProtectedKeyring.fromEnvironment();
+    const context = `${scope.runId}:${scope.sessionId}`;
+    return new EvidenceCipher(keys.derive(scope.protectionKeyId, "evidence", context), [
+      keys.deriveLegacy(scope.protectionKeyId, "evidence", context),
+    ]);
+  }
   readEvidence(scope: Parameters<VeilBrowserProtectionPort["readEvidence"]>[0]) {
     const context = `${scope.runId}:${scope.sessionId}`,
       keyId = scope.protectionKeyId;

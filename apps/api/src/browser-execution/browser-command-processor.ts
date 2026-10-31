@@ -38,11 +38,24 @@ export async function processBrowserCommand(
   try {
     lease.assertActive();
     await lease.checkpoint();
+    if (command.kind === "browser_tool" && command.attempt_count > 1) {
+      // A prior claim may have reached the application. Reconcile receipts only;
+      // never restore a browser and redispatch a reclaimed interaction.
+      const result = command.safe_result ?? {
+        execution: "unknown",
+        businessOutcome: "unknown",
+        observation: "unavailable",
+        reason: "worker_interrupted_before_receipt",
+      };
+      await commands.complete(command.id, claimToken, { ...result, recovered: true });
+      return { ...result, recovered: true };
+    }
     const result = await praxis.executeCommand(command.session_id, command.safe_input, {
       remainingMs: lease.remainingMs(),
       signal: lease.signal,
       assertCurrent: () => lease.checkpoint(),
       sampleAuthority: () => lease.authoritySample(),
+      persistAction: (result) => commands.checkpointAction(command.id, claimToken, result),
     });
     lease.assertActive();
     await commands.complete(command.id, claimToken, result);

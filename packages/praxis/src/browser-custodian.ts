@@ -1,5 +1,9 @@
 import { performance } from "node:perf_hooks";
-import { BrowserProcessCustody, type OwnedBrowserOptions } from "./owned-browser.js";
+import {
+  BrowserProcessCustody,
+  assertBrowserProcessOptions,
+  type OwnedBrowserOptions,
+} from "./owned-browser.js";
 import { SupervisionAuthority, type SupervisionStopReason } from "./supervision-authority.js";
 
 // Private fork entry point. No database, Veil, Chronicle or customer tool API.
@@ -14,6 +18,7 @@ let refresh = false;
 let setupDeadline: number | undefined;
 let setupCompleted = false;
 let receiptSent = false;
+let capture: { display: string; close(reason?: string): Promise<unknown> } | undefined;
 const startup = setTimeout(() => {
   void stop("controller_unavailable", true);
 }, 2000);
@@ -46,6 +51,7 @@ function stop(reason: SupervisionStopReason, force: boolean): Promise<void> {
       const receipt = acquired
         ? await (forceRequested ? acquired.terminate() : acquired.close())
         : { forced: false, exitConfirmed: true as const };
+      await capture?.close(forceRequested ? "browser_interrupted" : "complete");
       receiptSent = true;
       if (!send({ kind: "stopped", ...receipt })) process.exit(1);
       // Parent acknowledges the receipt before normal helper exit. Unexpected
@@ -89,6 +95,11 @@ function tick(): void {
 }
 function configuration(value: unknown): value is OwnedBrowserOptions {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  try {
+    assertBrowserProcessOptions(value as OwnedBrowserOptions);
+  } catch {
+    return false;
+  }
   const input = value as Record<string, unknown>;
   return (
     Object.keys(input).every((key) =>
@@ -100,6 +111,10 @@ function configuration(value: unknown): value is OwnedBrowserOptions {
         "connectTimeoutMs",
         "gracefulCloseMs",
         "killTimeoutMs",
+        "runtime",
+        "display",
+        "proxyServer",
+        "captureDirectory",
       ].includes(key),
     ) &&
     (input.headless === undefined || typeof input.headless === "boolean") &&
@@ -143,7 +158,18 @@ process.on("message", (value) => {
       )
         return;
       process.off("message", startAfterAuthority);
-      launch = BrowserProcessCustody.launch({ ...options, handleSignals: false });
+      launch = (async () => {
+        if (options.runtime === "playwright_mcp" && options.captureDirectory) {
+          // @ts-expect-error Private JavaScript recorder, characterized by native capture qualification.
+          const { recording } = await import("./mcp-native/recording.mjs");
+          capture = await recording(options.captureDirectory, { maxBytes: 120 * 1024 * 1024 });
+        }
+        return BrowserProcessCustody.launch({
+          ...options,
+          ...(capture ? { display: capture.display } : {}),
+          handleSignals: false,
+        });
+      })();
       void launch
         .then((value) => {
           custody = value;

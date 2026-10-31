@@ -1,6 +1,6 @@
 # Scry native evidence baseline
 
-Status: implemented in the local candidate; qualification and staging review required before release.
+Status: the controlled official-adapter integration passed its local complete-path qualification. Customer activation, staging merge and deployment have not occurred. See the [integration record](../../experiments/browser-foundation/INTEGRATION.md) for proof and limits.
 
 ## Product priority
 
@@ -16,6 +16,19 @@ New recordings capture the live browser's native pixels using
 They preserve capture timing and pauses at normal playback speed. Screenshots
 are native action checkpoints, not frames assembled to manufacture a video.
 Exact duplicate screenshots are excluded from the gallery.
+
+The controlled official-adapter candidate uses native X11 capture and ffmpeg
+to record a continuous real-time MP4 at the fixed browser viewport. The existing
+independent Praxis custodian owns both browser and encoder lifetime. This is not
+DOM reconstruction or a sequence of screenshots. The candidate remains inactive
+outside the dedicated integration stack; the existing reader and producer remain
+compatible with historical WebM evidence.
+
+Chronicle records a private capture reservation before the encoder starts. Only
+a finalized recording from that admitted reservation may be recovered after
+interruption, copied into immutable media and admitted under the current owner.
+Recovery does not reopen the app or repeat an uncertain action. Partial footage
+is labeled as an evidence gap, not a defect in the tested application.
 
 Do not reconstruct HTML, CSS, images or application layout for new evidence.
 Ordinary text, images, icons and business content remain visible. A mask is a
@@ -80,6 +93,10 @@ are final-asset admission limits, not a claim of continuous disk-quota enforceme
 while the browser encoder is running. Missing or unreadable captured media is an
 evidence failure, distinct from an unmasked region or an application defect.
 
+The controlled official-adapter recorder additionally bounds each capture to
+120 MiB or 15 minutes. Reaching either limit produces partial footage, not a
+claim of complete recording. Its fixed viewport is 1280 × 720 at 20 frames/second.
+
 ## Dashboard and API
 
 Mission pages expose each Run's recordings and screenshots. Run pages include
@@ -87,8 +104,11 @@ a native evidence viewer with explicit selection, native video controls,
 normal-speed playback, loading/error states and the best-effort warning.
 Collapsed Mission sections do not fetch recordings until opened.
 
-`GET /api/runs/{runId}/media` lists safe descriptors for sealed native evidence.
-`GET /api/runs/{runId}/media/{index}` delivers the selected verified PNG or WebM.
+`GET /api/runs/{runId}/media` lists admitted native evidence, including screenshots
+already admitted while a Run is open. A video appears after encoder finalization
+and receipt admission, not as a live stream.
+`GET /api/runs/{runId}/media/{index}` delivers verified PNG, JPEG, WebP, MP4 or
+historical WebM bytes.
 Both require existing authentication and Run/workspace authorization. No local
 filesystem paths or bearer tokens are put in public media URLs. Browser-local
 blob URLs are revoked when selection changes or the viewer unmounts.

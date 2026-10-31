@@ -80,7 +80,9 @@ export class SupervisedBrowser {
   readonly #receipt = deferred<BrowserTerminationReceipt>();
   readonly #exit = deferred<void>();
   readonly #setup = deferred<void>();
-  #browser: Browser | undefined;
+  #browser: Pick<Browser, "isConnected" | "close"> | undefined;
+  #legacyBrowser: Browser | undefined;
+  #endpoint: string | undefined;
   #lastAcknowledgment: SupervisionAcknowledgment | undefined;
   #expectedAcknowledgment: SupervisionAcknowledgment | undefined;
   #lastChallenge = 0;
@@ -150,13 +152,22 @@ export class SupervisedBrowser {
     );
     try {
       const address = await owned.#ready.promise;
-      owned.#browser = await chromium.connect(address, {
-        timeout: options.connectTimeoutMs ?? 5000,
-      });
-      if (!owned.#browser.isConnected() || owned.#state !== "active") throw failure();
-      owned.#browser.once("disconnected", () => {
-        if (owned.#state === "active") void owned.terminate().catch(() => undefined);
-      });
+      owned.#endpoint = address;
+      const connected =
+        options.runtime === "playwright_mcp"
+          ? await (
+              await import("playwright-mcp-runtime")
+            ).chromium.connect(address, { timeout: options.connectTimeoutMs ?? 5000 })
+          : await chromium.connect(address, { timeout: options.connectTimeoutMs ?? 5000 });
+      owned.#browser = connected;
+      if (!options.runtime) owned.#legacyBrowser = connected as Browser;
+      if (!connected.isConnected() || owned.#state !== "active") throw failure();
+      (connected as { once(event: "disconnected", listener: () => void): unknown }).once(
+        "disconnected",
+        () => {
+          if (owned.#state === "active") void owned.terminate().catch(() => undefined);
+        },
+      );
       return owned;
     } catch {
       await owned.terminate();
@@ -166,8 +177,13 @@ export class SupervisedBrowser {
     }
   }
   get browser(): Browser {
-    if (!this.#browser) throw new Error("SCRY_BROWSER_PROCESS_CONNECT_FAILED");
-    return this.#browser;
+    if (!this.#legacyBrowser) throw new Error("SCRY_BROWSER_PROCESS_CONNECT_FAILED");
+    return this.#legacyBrowser;
+  }
+  /** Private connection capability for the official adapter worker. */
+  endpoint(): string {
+    if (!this.#endpoint) throw failure();
+    return this.#endpoint;
   }
   get exitConfirmed(): boolean {
     return this.#proofReceived;

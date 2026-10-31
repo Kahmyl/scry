@@ -6,6 +6,8 @@ import type { BrowserCommand } from "@scry/contracts";
  */
 export function commandExecutionBudgetMs(kind: BrowserCommand["kind"]): number {
   switch (kind) {
+    case "browser_tool":
+      return 60_000;
     case "close":
     case "close_for_failure":
       return 900_000;

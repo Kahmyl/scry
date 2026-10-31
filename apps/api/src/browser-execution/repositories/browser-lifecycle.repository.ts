@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { selectedBrowserAdapter } from "../browser-adapter-selection.js";
 import { ChronicleRepository } from "@scry/chronicle";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
@@ -285,8 +286,8 @@ export class BrowserLifecycleRepository {
       await client.query(
         `INSERT INTO browser_execution_sessions(id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
            state,authentication_commit_limit,business_commit_limit,allowed_first_party_origins,allowed_service_origins,
-           runtime_capability_id,protection_key_id,disclosure_mode,idempotency_key)
-         VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15)`,
+           runtime_capability_id,protection_key_id,disclosure_mode,idempotency_key,runtime_adapter)
+         VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16)`,
         [
           browserSessionId,
           runId,
@@ -303,6 +304,7 @@ export class BrowserLifecycleRepository {
           this.cipher.activeKeyId(),
           environment.rows[0].disclosure_mode,
           `browser:${input.idempotencyKey}`,
+          selectedBrowserAdapter(),
         ],
       );
       await client.query(

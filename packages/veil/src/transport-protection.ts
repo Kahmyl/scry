@@ -2,6 +2,8 @@ import type { BrowserCommand } from "@scry/contracts";
 import type { ProtectionAuthority } from "./protection-authority.js";
 
 export function protectCommandInput(command: BrowserCommand): BrowserCommand {
+  if (command.kind === "browser_tool")
+    return { ...command, args: { "[PROTECTED:COMMAND_INPUT]": true } };
   return command.kind === "fill" && command.publicValue !== undefined
     ? { ...command, publicValue: "[PROTECTED:COMMAND_INPUT]" }
     : command;
