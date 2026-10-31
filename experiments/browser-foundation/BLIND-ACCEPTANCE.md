@@ -1,5 +1,9 @@
 # Fresh blind customer acceptance — 31 October 2026
 
+The subsequent [causal investigation and isolated comparisons](./CAUSE-INVESTIGATION.md)
+diagnose these findings and recommend a bounded repair. They do not alter the
+blind receipts below or lift the activation hold.
+
 ## Decision
 
 All ten independent customer journeys finished, signed out and published final
