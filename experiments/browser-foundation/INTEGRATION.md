@@ -1,5 +1,10 @@
 # Controlled platform integration
 
+Subsequent [fresh blind customer acceptance](./BLIND-ACCEPTANCE.md) completed all
+ten business journeys with complete audited evidence, but exposed a recovered
+Nextcloud rich-editor replacement failure. Customer activation remains on hold;
+the controlled-path passes below do not override that later compatibility finding.
+
 The candidate is integrated on a local branch only. Existing sessions retain their adapter; new sessions default to the legacy runtime. Both `SCRY_BROWSER_ADAPTER=playwright_mcp` and `SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED=true` are required to select the candidate. This is not customer activation.
 
 The API remains authoritative for authentication, workspace scope, immutable Run origins, ordered encrypted commands, ownership and finalization. Praxis uses the pinned official browser adapter in a private child, with an independent browser/recorder custodian. Chronicle admits exact native screenshot and video receipts. The dashboard reads only authorized admitted bytes. No production package imports this experiment directory.
