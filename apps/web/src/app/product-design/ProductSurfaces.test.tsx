@@ -32,6 +32,48 @@ const run = {
   flowPurpose: "Confirm persistence",
 };
 describe("Product surfaces with real view models", () => {
+  it("offers one Ended filter covering current and historical ended states", () => {
+    render(
+      <MissionCollectionSurface
+        missions={[
+          { ...mission, id: "ended", title: "Ended journey", state: "ended" },
+          { ...mission, id: "historical", title: "Historical journey", state: "failed" },
+          { ...mission, id: "running", title: "Active journey", state: "running" },
+          { ...mission, id: "unknown", title: "Unknown journey", state: "unrecognized" },
+        ]}
+        state="ready"
+        onOpen={() => {}}
+        onRetry={() => {}}
+        onIntegrations={() => {}}
+        StatusSelect={({ value, onChange, options, label }) => (
+          <select
+            aria-label={label}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+          >
+            {options.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        )}
+      />,
+    );
+    expect(screen.getAllByRole("option", { name: "Ended" })).toHaveLength(1);
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), {
+      target: { value: "ended" },
+    });
+    expect(screen.getByRole("button", { name: "Open mission: Ended journey" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open mission: Historical journey" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open mission: Active journey" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open mission: Unknown journey" })).toBeNull();
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), {
+      target: { value: "unknown" },
+    });
+    expect(screen.getByRole("button", { name: "Open mission: Unknown journey" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open mission: Historical journey" })).toBeNull();
+  });
   it.each([
     ["completed", "Completed", "complete"],
     ["running", "In progress", "active"],
