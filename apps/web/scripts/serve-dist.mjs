@@ -16,6 +16,7 @@ const contentTypes = new Map([
   [".png", "image/png"],
   [".svg", "image/svg+xml"],
   [".webp", "image/webp"],
+  [".webmanifest", "application/manifest+json"],
 ]);
 
 async function sendFile(filePath, response, cacheControl = "no-cache") {
@@ -63,7 +64,13 @@ createServer(async (request, response) => {
     const candidate = path.resolve(root, relative);
     if (
       candidate.startsWith(`${root}${path.sep}`) &&
-      (await sendFile(candidate, response, "public, max-age=31536000, immutable"))
+      (await sendFile(
+        candidate,
+        response,
+        /^\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$/i.test(url.pathname)
+          ? "public, max-age=31536000, immutable"
+          : "no-cache",
+      ))
     )
       return;
     await sendFile(path.join(root, "index.html"), response);

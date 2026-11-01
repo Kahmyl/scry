@@ -1,6 +1,5 @@
 {
   "name": "@scry/web",
-  "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-select": "2.4.1",
     "@supabase/supabase-js": "^2.111.0",
     "@vitejs/plugin-react": "^5.0.0",
     "lucide-react": "^0.468.0",

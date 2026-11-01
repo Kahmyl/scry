@@ -1,16 +1,18 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { selectedBrowserAdapter } from "../browser-adapter-selection.js";
+import { ChronicleRepository } from "@scry/chronicle";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
   BrowserProtectionSink,
-  CreateBrowserEnvironmentV2Input,
-  CreateBrowserFlowV2Input,
-  CreateBrowserObjectiveV2Input,
-  PublishBrowserMissionReportV2Input,
-  StartBrowserMissionV2Input,
-  StartBrowserRunV2Input,
+  CreateBrowserEnvironmentInput,
+  CreateBrowserFlowInput,
+  CreateBrowserObjectiveInput,
+  PublishBrowserMissionReportInput,
+  StartBrowserMissionInput,
+  StartBrowserRunInput,
+  VeilReportSanitizer,
 } from "@scry/contracts";
-import { browserProtectionSinkSchema } from "@scry/contracts";
-import { ProtectionAuthority } from "@scry/browser-runtime";
+import { browserProtectionSinkSchema, VeilReportProtectionPort } from "@scry/contracts";
 import type { PoolClient, QueryResultRow } from "pg";
 
 import { Database } from "../../infrastructure/database.js";
@@ -18,7 +20,8 @@ import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
 } from "../protected-value-cipher.js";
-import { BROWSER_RUNTIME_CAPABILITY_VERSION } from "../browser-runtime-capability.js";
+import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
+import { admitBrowserSession } from "./browser-session-capacity.js";
 
 interface IdRow extends QueryResultRow {
   id: string;
@@ -28,6 +31,8 @@ interface IdRow extends QueryResultRow {
 export class BrowserLifecycleRepository {
   constructor(
     @Inject(Database) private readonly database: Database,
+    @Inject(VeilReportProtectionPort)
+    private readonly reportProtection: VeilReportProtectionPort,
     @Inject(BrowserProtectedValueCipher)
     private readonly cipher: BrowserProtectedValueCipher = new BrowserProtectedValueCipher(),
   ) {}
@@ -49,7 +54,7 @@ export class BrowserLifecycleRepository {
     });
   }
 
-  async createEnvironment(workspaceId: string | undefined, input: CreateBrowserEnvironmentV2Input) {
+  async createEnvironment(workspaceId: string | undefined, input: CreateBrowserEnvironmentInput) {
     return this.database.transaction(async (client) => {
       await this.requireProject(client, workspaceId, input.projectId);
       const existing = await client.query<{
@@ -72,7 +77,7 @@ export class BrowserLifecycleRepository {
             JSON.stringify(input.allowedServiceOrigins) ||
           row.disclosure_mode !== input.disclosureMode
         )
-          throw new Error("BROWSER_V2_ENVIRONMENT_IDEMPOTENCY_CONFLICT");
+          throw new Error("SCRY_BROWSER_ENVIRONMENT_IDEMPOTENCY_CONFLICT");
         return { environmentId: row.id, replay: true };
       }
       const environmentId = randomUUID();
@@ -94,7 +99,7 @@ export class BrowserLifecycleRepository {
     });
   }
 
-  async startMission(workspaceId: string | undefined, input: StartBrowserMissionV2Input) {
+  async startMission(workspaceId: string | undefined, input: StartBrowserMissionInput) {
     return this.database.transaction(async (client) => {
       await this.requireProject(client, workspaceId, input.projectId);
       const existing = await client.query<{
@@ -141,7 +146,7 @@ export class BrowserLifecycleRepository {
   async createObjective(
     workspaceId: string | undefined,
     missionId: string,
-    input: CreateBrowserObjectiveV2Input,
+    input: CreateBrowserObjectiveInput,
   ) {
     return this.database.transaction(async (client) => {
       const mission = await this.requireMissionAgent(
@@ -177,7 +182,7 @@ export class BrowserLifecycleRepository {
   async createFlow(
     workspaceId: string | undefined,
     missionId: string,
-    input: CreateBrowserFlowV2Input,
+    input: CreateBrowserFlowInput,
   ) {
     return this.database.transaction(async (client) => {
       const mission = await this.requireMissionAgent(
@@ -224,7 +229,7 @@ export class BrowserLifecycleRepository {
     });
   }
 
-  async startRun(workspaceId: string | undefined, input: StartBrowserRunV2Input) {
+  async startRun(workspaceId: string | undefined, input: StartBrowserRunInput) {
     return this.database.transaction(async (client) => {
       await this.requireMissionAgent(
         client,
@@ -233,94 +238,108 @@ export class BrowserLifecycleRepository {
         input.agentSessionId,
         input.projectId,
       );
-      const existing = await client.query<{ runId: string; browserSessionId: string }>(
-        `SELECT r.id AS "runId",s.id AS "browserSessionId" FROM runs r
+      return admitBrowserSession(
+        client,
+        async () => {
+          const existing = await client.query<{ runId: string; browserSessionId: string }>(
+            `SELECT r.id AS "runId",s.id AS "browserSessionId" FROM runs r
          JOIN browser_execution_sessions s ON s.run_id=r.id
          WHERE r.mission_id=$1 AND r.idempotency_key=$2 FOR UPDATE`,
-        [input.missionId, input.idempotencyKey],
-      );
-      if (existing.rows[0]) return { ...existing.rows[0], replay: true };
-      const environment = await client.query<{
-        base_origin: string;
-        allowed_service_origins: unknown;
-        disclosure_mode: "confidential" | "trusted_application_output";
-      }>(
-        "SELECT base_origin,allowed_service_origins,disclosure_mode FROM environments WHERE id=$1 AND project_id=$2 AND state='active'",
-        [input.environmentId, input.projectId],
-      );
-      if (!environment.rows[0]) throw new Error("BROWSER_V2_ENVIRONMENT_NOT_FOUND");
-      const protectedInputIds = [...new Set(input.protectedInputIds)];
-      if (protectedInputIds.length !== input.protectedInputIds.length)
-        throw new Error("BROWSER_V2_PROTECTED_INPUT_DUPLICATE");
-      if (protectedInputIds.length > 0) {
-        const available = await client.query<{ id: string }>(
-          `SELECT id FROM protected_values
+            [input.missionId, input.idempotencyKey],
+          );
+          return existing.rows[0] ? { ...existing.rows[0], replay: true } : undefined;
+        },
+        async () => {
+          const environment = await client.query<{
+            base_origin: string;
+            allowed_service_origins: unknown;
+            disclosure_mode: "confidential" | "trusted_application_output";
+          }>(
+            "SELECT base_origin,allowed_service_origins,disclosure_mode FROM environments WHERE id=$1 AND project_id=$2 AND state='active'",
+            [input.environmentId, input.projectId],
+          );
+          if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
+          const protectedInputIds = [...new Set(input.protectedInputIds)];
+          if (protectedInputIds.length !== input.protectedInputIds.length)
+            throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
+          if (protectedInputIds.length > 0) {
+            const available = await client.query<{ id: string }>(
+              `SELECT id FROM protected_values
            WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
              AND (expires_at IS NULL OR expires_at>now()) FOR UPDATE`,
-          [protectedInputIds, input.projectId],
-        );
-        if (available.rowCount !== protectedInputIds.length)
-          throw new Error("BROWSER_V2_PROTECTED_INPUT_UNAVAILABLE");
-      }
-      const runId = randomUUID();
-      const browserSessionId = randomUUID();
-      await client.query(
-        `INSERT INTO runs(id,project_id,mission_id,objective_id,agent_session_id,flow_id,flow_revision_id,environment_id,idempotency_key,state,started_at)
+              [protectedInputIds, input.projectId],
+            );
+            if (available.rowCount !== protectedInputIds.length)
+              throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
+          }
+          const runId = randomUUID();
+          const browserSessionId = randomUUID();
+          await client.query(
+            `INSERT INTO runs(id,project_id,mission_id,objective_id,agent_session_id,flow_id,flow_revision_id,environment_id,idempotency_key,state,started_at)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'running',now())`,
-        [
-          runId,
-          input.projectId,
-          input.missionId,
-          input.objectiveId,
-          input.agentSessionId,
-          input.flowId,
-          input.flowRevisionId,
-          input.environmentId,
-          input.idempotencyKey,
-        ],
-      );
-      await client.query(
-        `INSERT INTO browser_execution_sessions(id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
+            [
+              runId,
+              input.projectId,
+              input.missionId,
+              input.objectiveId,
+              input.agentSessionId,
+              input.flowId,
+              input.flowRevisionId,
+              input.environmentId,
+              input.idempotencyKey,
+            ],
+          );
+          // The Objective is the current assessment, not the last failed attempt.
+          // Individual conclusions remain immutable on their respective Runs.
+          await client.query(
+            "UPDATE mission_objectives SET state='running',conclusion=NULL,updated_at=now() WHERE id=$1",
+            [input.objectiveId],
+          );
+          await client.query(
+            `INSERT INTO browser_execution_sessions(id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
            state,authentication_commit_limit,business_commit_limit,allowed_first_party_origins,allowed_service_origins,
-           runtime_capability_version,protection_key_version,disclosure_mode,idempotency_key)
-         VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15)`,
-        [
-          browserSessionId,
-          runId,
-          input.projectId,
-          input.missionId,
-          input.objectiveId,
-          input.environmentId,
-          input.agentSessionId,
-          input.authenticationCommitLimit,
-          input.businessCommitLimit,
-          JSON.stringify([environment.rows[0].base_origin]),
-          JSON.stringify(environment.rows[0].allowed_service_origins),
-          BROWSER_RUNTIME_CAPABILITY_VERSION,
-          this.cipher.activeKeyVersion(),
-          environment.rows[0].disclosure_mode,
-          `browser:${input.idempotencyKey}`,
-        ],
+           runtime_capability_id,protection_key_id,disclosure_mode,idempotency_key,runtime_adapter)
+         VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16)`,
+            [
+              browserSessionId,
+              runId,
+              input.projectId,
+              input.missionId,
+              input.objectiveId,
+              input.environmentId,
+              input.agentSessionId,
+              input.authenticationCommitLimit,
+              input.businessCommitLimit,
+              JSON.stringify([environment.rows[0].base_origin]),
+              JSON.stringify(environment.rows[0].allowed_service_origins),
+              BROWSER_RUNTIME_CAPABILITY_ID,
+              this.cipher.activeKeyId(),
+              environment.rows[0].disclosure_mode,
+              `browser:${input.idempotencyKey}`,
+              selectedBrowserAdapter(),
+            ],
+          );
+          await client.query(
+            "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
+            [browserSessionId, BROWSER_RUNTIME_CAPABILITY_ID],
+          );
+          for (const protectedValueId of protectedInputIds) {
+            await client.query(
+              "INSERT INTO browser_session_protected_inputs(session_id,protected_value_id,project_id) VALUES($1,$2,$3)",
+              [browserSessionId, protectedValueId, input.projectId],
+            );
+          }
+          await client.query(
+            "UPDATE missions SET state='running',updated_at=now(),revision=revision+1,current_objective_id=$2 WHERE id=$1",
+            [input.missionId, input.objectiveId],
+          );
+          await client.query(
+            "UPDATE mission_objectives SET state='running',updated_at=now() WHERE id=$1 AND state='pending'",
+            [input.objectiveId],
+          );
+          return { runId, browserSessionId, replay: false };
+        },
       );
-      await client.query(
-        "INSERT INTO browser_execution_outbox(session_id,runtime_capability_version) VALUES($1,$2)",
-        [browserSessionId, BROWSER_RUNTIME_CAPABILITY_VERSION],
-      );
-      for (const protectedValueId of protectedInputIds) {
-        await client.query(
-          "INSERT INTO browser_session_protected_inputs(session_id,protected_value_id,project_id) VALUES($1,$2,$3)",
-          [browserSessionId, protectedValueId, input.projectId],
-        );
-      }
-      await client.query(
-        "UPDATE missions SET state='running',updated_at=now(),revision=revision+1,current_objective_id=$2 WHERE id=$1",
-        [input.missionId, input.objectiveId],
-      );
-      await client.query(
-        "UPDATE mission_objectives SET state='running',updated_at=now() WHERE id=$1 AND state='pending'",
-        [input.objectiveId],
-      );
-      return { runId, browserSessionId, replay: false };
     });
   }
 
@@ -333,7 +352,7 @@ export class BrowserLifecycleRepository {
        WHERE m.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [missionId, workspaceId ?? null],
     );
-    if (!mission.rows[0]) throw new Error("BROWSER_V2_MISSION_NOT_FOUND");
+    if (!mission.rows[0]) throw new Error("SCRY_BROWSER_MISSION_NOT_FOUND");
     const [objectives, flows, runs] = await Promise.all([
       this.database.query(
         'SELECT id,title,description,state,completion_criteria AS "completionCriteria",objective_order AS "objectiveOrder",conclusion FROM mission_objectives WHERE mission_id=$1 ORDER BY objective_order',
@@ -344,7 +363,7 @@ export class BrowserLifecycleRepository {
         [missionId],
       ),
       this.database.query(
-        `SELECT r.id,r.flow_id AS "flowId",r.flow_revision_id AS "flowRevisionId",r.objective_id AS "objectiveId",r.state,r.outcome_classification AS "outcomeClassification",s.id AS "browserSessionId",s.active_owner_generation AS "activeOwnerGeneration",s.disclosure_mode AS "disclosureMode" FROM runs r LEFT JOIN browser_execution_sessions s ON s.run_id=r.id WHERE r.mission_id=$1 ORDER BY r.created_at`,
+        `SELECT r.id,r.flow_id AS "flowId",r.flow_revision_id AS "flowRevisionId",r.objective_id AS "objectiveId",r.state,r.conclusion,r.created_at AS "createdAt",r.outcome_classification AS "outcomeClassification",s.id AS "browserSessionId",s.active_owner_generation AS "activeOwnerGeneration",s.disclosure_mode AS "disclosureMode" FROM runs r LEFT JOIN browser_execution_sessions s ON s.run_id=r.id WHERE r.mission_id=$1 ORDER BY r.created_at,r.id`,
         [missionId],
       ),
     ]);
@@ -387,18 +406,30 @@ export class BrowserLifecycleRepository {
         [runId, workspaceId ?? null],
       );
       const row = run.rows[0];
-      if (!row) throw new Error("BROWSER_V2_RUN_NOT_FOUND");
+      if (!row) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
       if (["passed", "failed", "cancelled", "infrastructure_error"].includes(row.state))
         return { replay: true };
+      // Serialize sibling finalizations before sampling their active states.
+      // This separate post-lock statement gets a fresh READ COMMITTED snapshot.
+      await client.query("SELECT id FROM mission_objectives WHERE id=$1 FOR UPDATE", [
+        row.objective_id,
+      ]);
       const state =
         outcome === "passed" ? "passed" : outcome === "cancelled" ? "cancelled" : "failed";
-      await client.query(
-        "UPDATE runs SET state=$2,outcome_classification=$3,completed_at=now(),updated_at=now() WHERE id=$1",
-        [runId, state, outcome],
+      const safeConclusion = (await this.reportSanitizer(client, row.mission_id)).sanitizeText(
+        conclusion,
+        "report",
       );
       await client.query(
-        "UPDATE mission_objectives SET state=$2,conclusion=$3,updated_at=now() WHERE id=$1",
-        [row.objective_id, outcome === "passed" ? "passed" : "failed", conclusion],
+        "UPDATE runs SET state=$2,outcome_classification=$3,conclusion=$4,completed_at=now(),updated_at=now() WHERE id=$1",
+        [runId, state, outcome, safeConclusion],
+      );
+      await client.query(
+        `UPDATE mission_objectives SET
+          state=CASE WHEN EXISTS(SELECT 1 FROM runs WHERE objective_id=$1 AND state NOT IN ('passed','failed','cancelled','infrastructure_error')) THEN 'running' ELSE $2 END,
+          conclusion=CASE WHEN EXISTS(SELECT 1 FROM runs WHERE objective_id=$1 AND state NOT IN ('passed','failed','cancelled','infrastructure_error')) THEN NULL ELSE $3 END,
+          updated_at=now() WHERE id=$1`,
+        [row.objective_id, outcome === "passed" ? "passed" : "failed", safeConclusion],
       );
       return { replay: false };
     });
@@ -413,14 +444,14 @@ export class BrowserLifecycleRepository {
        JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [runId, workspaceId ?? null],
     );
-    if (!result.rows[0]) throw new Error("BROWSER_V2_RUN_NOT_FOUND");
+    if (!result.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
     return result.rows[0];
   }
 
   async publishReport(
     workspaceId: string | undefined,
     missionId: string,
-    input: PublishBrowserMissionReportV2Input,
+    input: PublishBrowserMissionReportInput,
   ) {
     return this.database.transaction(async (client) => {
       await this.requireMissionAgent(client, workspaceId, missionId, input.agentSessionId);
@@ -435,25 +466,27 @@ export class BrowserLifecycleRepository {
          UNION ALL SELECT 1 FROM browser_effects WHERE mission_id=$1 AND mutation_outcome='pending' LIMIT 1`,
         [missionId],
       );
-      if (incomplete.rowCount) throw new Error("BROWSER_V2_MISSION_NOT_REPORTABLE");
-      const evidence = await client.query<{ chain_head: string }>(
-        `SELECT e.chain_head FROM browser_evidence_streams e JOIN runs r ON r.id=e.run_id
-         WHERE r.mission_id=$1 AND e.state='complete' ORDER BY r.created_at,e.id`,
-        [missionId],
+      if (incomplete.rowCount) throw new Error("SCRY_BROWSER_MISSION_NOT_REPORTABLE");
+      const evidenceDigest = await new ChronicleRepository(client).missionEvidenceDigest(missionId);
+      const protection = await this.reportSanitizer(client, missionId);
+      const summary = protection.sanitizeText(input.summary, "report");
+      const sanitizedReport = protection.sanitizeValue(input.safeReport, "report");
+      const evidenceCoverage = await new ChronicleRepository(client).missionEvidenceCoverage(
+        missionId,
       );
-      if (evidence.rows.length === 0 || evidence.rows.some((row) => !row.chain_head))
-        throw new Error("BROWSER_V2_MISSION_EVIDENCE_INCOMPLETE");
-      const evidenceDigest = createHash("sha256")
-        .update(JSON.stringify(evidence.rows.map((row) => row.chain_head)))
-        .digest("hex");
-      const protection = await this.reportProtectionAuthority(client, missionId);
-      const summary = protection.sanitize(input.summary, "report");
-      const safeReport = protection.sanitizeValue(input.safeReport, "", "report");
+      const safeReport = { ...(sanitizedReport as Record<string, unknown>), evidenceCoverage };
       const reportId = randomUUID();
       await client.query(
-        `INSERT INTO mission_reports(id,mission_id,state,summary,safe_report,evidence_digest,finalized_at)
-         VALUES($1,$2,'final',$3,$4::jsonb,$5,now())`,
-        [reportId, missionId, summary, JSON.stringify(safeReport), evidenceDigest],
+        `INSERT INTO mission_reports(id,mission_id,state,summary,safe_report,evidence_digest,evidence_coverage,finalized_at)
+         VALUES($1,$2,'final',$3,$4::jsonb,$5,$6::jsonb,now())`,
+        [
+          reportId,
+          missionId,
+          summary,
+          JSON.stringify(safeReport),
+          evidenceDigest,
+          JSON.stringify(evidenceCoverage),
+        ],
       );
       await client.query(
         "UPDATE missions SET state='completed',final_report_id=$2,completed_at=now(),updated_at=now(),revision=revision+1 WHERE id=$1",
@@ -467,16 +500,16 @@ export class BrowserLifecycleRepository {
     });
   }
 
-  private async reportProtectionAuthority(
+  private async reportSanitizer(
     client: PoolClient,
     missionId: string,
-  ): Promise<ProtectionAuthority> {
+  ): Promise<VeilReportSanitizer> {
     const mission = await client.query<{ project_id: string }>(
       "SELECT project_id FROM missions WHERE id=$1",
       [missionId],
     );
     const projectId = mission.rows[0]?.project_id;
-    if (!projectId) throw new Error("BROWSER_V2_MISSION_NOT_FOUND");
+    if (!projectId) throw new Error("SCRY_BROWSER_MISSION_NOT_FOUND");
     const generated = await client.query<{
       id: string;
       display_name: string;
@@ -484,11 +517,11 @@ export class BrowserLifecycleRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       run_id: string;
       source_effect_id: string;
     }>(
-      `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_version,
+      `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_id,
               v.run_id,v.source_effect_id
        FROM protected_values v
        JOIN browser_outputs o ON o.protected_value_id=v.id
@@ -502,10 +535,10 @@ export class BrowserLifecycleRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
     }>(
       `SELECT DISTINCT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,
-              v.value_digest,v.key_version
+              v.value_digest,v.key_id
        FROM protected_values v
        JOIN browser_session_protected_inputs i ON i.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=i.session_id
@@ -520,7 +553,7 @@ export class BrowserLifecycleRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId,
@@ -538,7 +571,7 @@ export class BrowserLifecycleRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId,
@@ -568,7 +601,7 @@ export class BrowserLifecycleRepository {
           browserProtectionSinkSchema.parse(sink),
         ) as BrowserProtectionSink[],
       }));
-    return new ProtectionAuthority({
+    return this.reportProtection.createReportSanitizer({
       scope: {
         projectId,
         missionId,
@@ -590,7 +623,7 @@ export class BrowserLifecycleRepository {
       "SELECT 1 FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2)",
       [projectId, workspaceId ?? null],
     );
-    if (!result.rowCount) throw new Error("BROWSER_V2_PROJECT_NOT_FOUND");
+    if (!result.rowCount) throw new Error("SCRY_BROWSER_PROJECT_NOT_FOUND");
   }
 
   private async requireMissionAgent(
@@ -607,7 +640,7 @@ export class BrowserLifecycleRepository {
          AND ($4::uuid IS NULL OR m.project_id=$4)`,
       [missionId, agentSessionId, workspaceId ?? null, projectId ?? null],
     );
-    if (!result.rows[0]) throw new Error("BROWSER_V2_MISSION_AGENT_CONTEXT_INVALID");
+    if (!result.rows[0]) throw new Error("SCRY_BROWSER_MISSION_AGENT_CONTEXT_INVALID");
     return result.rows[0];
   }
 }

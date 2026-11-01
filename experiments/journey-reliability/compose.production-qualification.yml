@@ -1,0 +1,35 @@
+# Apply to compose.integration.yml with -p scry-journey-production-qualification.
+# No host ports, no shared database/evidence volume, no active baseline service.
+services:
+  migrate:
+    image: scry-journey-production:qualification
+  api:
+    image: scry-journey-production:qualification
+    ports: !reset []
+  worker:
+    image: scry-journey-production:qualification
+    networks: !override [integration]
+  mcp:
+    image: scry-journey-production:qualification
+    ports: !reset []
+  web:
+    image: scry-journey-production:qualification
+    ports: !reset []
+  fixture:
+    image: scry-journey-production:qualification
+    ports: !reset []
+    volumes:
+      - ../../apps/api/test/deployed-browser-fixture.mjs:/workspace/apps/api/test/deployed-browser-fixture.mjs:ro
+  target:
+    image: scry-journey-production:qualification
+    volumes:
+      - ../browser-foundation/test/platform-integration.mjs:/workspace/experiments/browser-foundation/test/platform-integration.mjs:ro
+  qualify:
+    image: scry-journey-production:qualification
+    volumes:
+      - ../browser-foundation/test/platform-integration.mjs:/workspace/experiments/browser-foundation/test/platform-integration.mjs:ro
+      - ./test:/workspace/experiments/journey-reliability/test:ro
+networks:
+  integration:
+    ipam:
+      config: !override [{ subnet: 10.253.232.0/24 }]

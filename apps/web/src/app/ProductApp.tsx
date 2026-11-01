@@ -4,21 +4,35 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import { Landing } from "../features/landing/index.js";
 import { isSupabaseConfigured, supabase } from "../infrastructure/auth/index.js";
-import { BrowserV2Dashboard as Dashboard } from "./BrowserV2Dashboard.js";
+import { Dashboard } from "./Dashboard.js";
 
 export function ProductApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [checkingSession, setCheckingSession] = useState(isSupabaseConfigured);
+  const [authError, setAuthError] = useState("");
 
   useEffect(() => {
     if (!supabase) return;
+    const auth = supabase.auth;
 
-    void supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setCheckingSession(false);
-    });
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    void auth
+      .initialize()
+      .then(async ({ error: initializationError }) => {
+        const result = await auth.getSession();
+        return { ...result, error: initializationError ?? result.error };
+      })
+      .then(({ data, error }) => {
+        setSession(data.session);
+        if (error) setAuthError("Sign-in could not be completed. Please try again.");
+        setCheckingSession(false);
+      })
+      .catch(() => {
+        setAuthError("We couldn’t connect to sign-in. Please try again.");
+        setCheckingSession(false);
+      });
+    const { data } = auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
+      if (nextSession) setAuthError("");
       setCheckingSession(false);
     });
 
@@ -56,7 +70,7 @@ export function ProductApp() {
 
   return (
     <Routes>
-      <Route path="/" element={<Landing />} />
+      <Route path="/" element={<Landing authError={authError} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

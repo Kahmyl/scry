@@ -1,39 +1,55 @@
 name: scry
 
 x-app-environment: &app-environment
-  DATABASE_URL: "${DATABASE_URL:-postgres://scry:scry-local@postgres:5432/scry_browser_v2}"
+  DATABASE_URL: "${DATABASE_URL:-postgres://scry:scry-local@postgres:5432/scry_browser}"
   REDIS_URL: redis://redis:6379
   # Local-development service identity shared by API, worker, MCP, and campaigns.
   SCRY_SERVICE_TOKEN: "${SCRY_SERVICE_TOKEN:-local-only-scry-service-token-change-me}"
-  BROWSER_V2_ARTIFACT_ROOT: /workspace/apps/api/artifacts/browser-v2
-  BROWSER_V2_ENABLED: "true"
-  BROWSER_V2_RENDER_VIDEO: "true"
-  BROWSER_V2_PROTECTED_KEYS_JSON: '${BROWSER_V2_PROTECTED_KEYS_JSON:-{"local-v1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}}'
-  BROWSER_V2_PROTECTED_KEY_VERSION: "${BROWSER_V2_PROTECTED_KEY_VERSION:-local-v1}"
+  SCRY_BROWSER_ARTIFACT_ROOT: /workspace/apps/api/artifacts/browser
+  SCRY_BROWSER_ENABLED: "true"
+  SCRY_BROWSER_RENDER_VIDEO: "true"
+  SCRY_BROWSER_MAX_LIVE_SESSIONS: "${SCRY_BROWSER_MAX_LIVE_SESSIONS:-1}"
+  SCRY_BROWSER_PROTECTED_KEYS_JSON: '${SCRY_BROWSER_PROTECTED_KEYS_JSON:-{"local-v1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}}'
+  SCRY_BROWSER_PROTECTED_KEY_ID: "${SCRY_BROWSER_PROTECTED_KEY_ID:-local-v1}"
 
 x-release-environment: &release-environment
-  SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-20260806-compiled-plan}"
-  SCRY_SCHEMA_FINGERPRINT: "${SCRY_SCHEMA_FINGERPRINT:-daa811d7119f9bdf1d64cca1ea72a0ca8ce4f3fac4c80c277043d1b3afb21e5b}"
-  SCRY_GIT_COMMIT: "${SCRY_GIT_COMMIT:-development}"
-  SCRY_RUNTIME_VERSION: "${SCRY_RUNTIME_VERSION:-development}"
-  SCRY_SOURCE_DIRTY: "${SCRY_SOURCE_DIRTY:-unknown}"
-  SCRY_SOURCE_MANIFEST_SHA256: "${SCRY_SOURCE_MANIFEST_SHA256:-unknown}"
+  SCRY_RELEASE_ID: "${SCRY_RELEASE_ID:-local-baseline}"
 
 x-node-build: &node-build
   context: .
   dockerfile: docker/Dockerfile.dev
 
 services:
+  supabase-activity:
+    profiles: [auth-activity]
+    build: *node-build
+    command: ["node", "scripts/operations/supabase-activity.mjs", "--watch"]
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "node", "scripts/operations/supabase-activity.mjs", "--health"]
+      interval: 1m
+      timeout: 5s
+      retries: 1
+      start_period: 20s
+
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: scry_browser_v2
+      POSTGRES_DB: scry_browser
       POSTGRES_USER: scry
       POSTGRES_PASSWORD: scry-local
     ports:
       - "${SCRY_POSTGRES_PORT:-54329}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U scry -d scry_browser_v2"]
+      test: ["CMD-SHELL", "pg_isready -U scry -d scry_browser"]
       interval: 2s
       timeout: 3s
       retries: 20
@@ -66,9 +82,9 @@ services:
         required: false
     environment:
       <<: [*app-environment, *release-environment]
-      BROWSER_V2_DATABASE_URL: "${DATABASE_URL:-postgres://scry:scry-local@postgres:5432/scry_browser_v2}"
-      BROWSER_V2_EXPECTED_DATABASE: scry_browser_v2
-      BROWSER_V2_SCHEMA_CONFIRM: CREATE_EMPTY_V2
+      SCRY_BROWSER_DATABASE_URL: "${DATABASE_URL:-postgres://scry:scry-local@postgres:5432/scry_browser}"
+      SCRY_BROWSER_EXPECTED_DATABASE: scry_browser
+      SCRY_BROWSER_SCHEMA_CONFIRM: CREATE_EMPTY_BASELINE
     command: ["pnpm", "--filter", "@scry/api", "db:migrate"]
     depends_on:
       postgres:
@@ -97,13 +113,13 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/v2/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/health"]
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 10s
     volumes:
-      - scry-artifacts:/workspace/apps/api/artifacts/browser-v2
+      - scry-artifacts:/workspace/apps/api/artifacts/browser
     restart: unless-stopped
     stop_grace_period: 10s
     init: true
@@ -119,10 +135,18 @@ services:
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: sync
-          path: packages/browser-runtime/src
-          target: /workspace/packages/browser-runtime/src
+          path: packages/praxis/src
+          target: /workspace/packages/praxis/src
+        - action: sync
+          path: packages/veil/src
+          target: /workspace/packages/veil/src
+        - action: sync
+          path: packages/chronicle/src
+          target: /workspace/packages/chronicle/src
         - action: rebuild
           path: apps/api/package.json
+        - action: rebuild
+          path: packages/chronicle/package.json
         - action: rebuild
           path: pnpm-lock.yaml
 
@@ -136,17 +160,17 @@ services:
     environment:
       <<: [*app-environment, *release-environment]
       SCRY_BROWSER_CHANNEL: chromium
-      BROWSER_V2_SESSION_CONCURRENCY: "${SCRY_WORKER_CONCURRENCY:-4}"
-      BROWSER_V2_COMMAND_CONCURRENCY: "${SCRY_COMMAND_CONCURRENCY:-8}"
+      SCRY_BROWSER_SESSION_CONCURRENCY: "${SCRY_WORKER_CONCURRENCY:-4}"
+      SCRY_BROWSER_COMMAND_CONCURRENCY: "${SCRY_COMMAND_CONCURRENCY:-8}"
     depends_on:
       migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
     volumes:
-      - scry-artifacts:/workspace/apps/api/artifacts/browser-v2
+      - scry-artifacts:/workspace/apps/api/artifacts/browser
     restart: unless-stopped
-    stop_grace_period: 30s
+    stop_grace_period: 60s
     init: true
     shm_size: 1gb
     develop:
@@ -155,15 +179,25 @@ services:
           path: apps/api/src
           target: /workspace/apps/api/src
         - action: sync+restart
-          path: packages/browser-runtime/src
-          target: /workspace/packages/browser-runtime/src
+          path: packages/praxis/src
+          target: /workspace/packages/praxis/src
+        - action: sync+restart
+          path: packages/veil/src
+          target: /workspace/packages/veil/src
+        - action: sync+restart
+          path: packages/chronicle/src
+          target: /workspace/packages/chronicle/src
         - action: sync+restart
           path: packages/contracts/src
           target: /workspace/packages/contracts/src
         - action: rebuild
           path: apps/api/package.json
         - action: rebuild
-          path: packages/browser-runtime/package.json
+          path: packages/praxis/package.json
+        - action: rebuild
+          path: packages/veil/package.json
+        - action: rebuild
+          path: packages/chronicle/package.json
         - action: rebuild
           path: pnpm-lock.yaml
 

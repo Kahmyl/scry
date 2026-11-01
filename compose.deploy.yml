@@ -2,16 +2,17 @@ name: scry
 
 x-api-environment: &api-environment
   NODE_ENV: production
-  DATABASE_URL: postgres://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${SCRY_DATABASE_NAME:-scry_browser_v2}
+  DATABASE_URL: postgres://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${SCRY_DATABASE_NAME:?Set SCRY_DATABASE_NAME to the existing database}
   REDIS_URL: redis://redis:6379
-  BROWSER_V2_ARTIFACT_ROOT: /workspace/apps/api/artifacts/browser-v2
+  SCRY_BROWSER_ARTIFACT_ROOT: /workspace/apps/api/artifacts/browser
   SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
   SCRY_SERVICE_TOKEN: ${SCRY_SERVICE_TOKEN:?Set SCRY_SERVICE_TOKEN}
-  BROWSER_V2_ENABLED: "true"
-  BROWSER_V2_RENDER_VIDEO: "true"
-  BROWSER_V2_REQUIRE_ACTIVATED_CUTOVER: ${BROWSER_V2_REQUIRE_ACTIVATED_CUTOVER:-true}
-  BROWSER_V2_PROTECTED_KEYS_JSON: ${BROWSER_V2_PROTECTED_KEYS_JSON:?Load the versioned browser keyring from the production secret manager}
-  BROWSER_V2_PROTECTED_KEY_VERSION: ${BROWSER_V2_PROTECTED_KEY_VERSION:?Set the active browser key version}
+  SCRY_BROWSER_ENABLED: "true"
+  SCRY_BROWSER_RENDER_VIDEO: "true"
+  SCRY_BROWSER_MAX_LIVE_SESSIONS: ${SCRY_BROWSER_MAX_LIVE_SESSIONS:-1}
+  SCRY_BROWSER_REQUIRE_ACTIVATED_CUTOVER: ${SCRY_BROWSER_REQUIRE_ACTIVATED_CUTOVER:-true}
+  SCRY_BROWSER_PROTECTED_KEYS_JSON: ${SCRY_BROWSER_PROTECTED_KEYS_JSON:?Load the browser keyring from the production secret manager}
+  SCRY_BROWSER_PROTECTED_KEY_ID: ${SCRY_BROWSER_PROTECTED_KEY_ID:?Set the active browser key ID}
 
 x-backup-environment: &backup-environment
   RESTIC_REPOSITORY: ${RESTIC_REPOSITORY:-}
@@ -30,6 +31,26 @@ x-backup-environment: &backup-environment
   RESTORE_DRILL_RTO_SECONDS: ${RESTORE_DRILL_RTO_SECONDS:-3600}
 
 services:
+  supabase-activity:
+    profiles: [auth-activity]
+    image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
+    command: ["node", "scripts/operations/supabase-activity.mjs", "--watch"]
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Set SUPABASE_PUBLISHABLE_KEY}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "node", "scripts/operations/supabase-activity.mjs", "--health"]
+      interval: 1m
+      timeout: 5s
+      retries: 1
+      start_period: 20s
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -71,7 +92,6 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:?Set SUPABASE_PUBLISHABLE_KEY}
       SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
-      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     depends_on:
       api:
         condition: service_started
@@ -94,13 +114,12 @@ services:
       API_PORT: "4000"
       API_CORS_ORIGINS: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}
       SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
-      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     command:
       [
         "apps/api/node_modules/.bin/tsx",
         "--tsconfig",
         "apps/api/tsconfig.json",
-        "apps/api/src/browser-v2-main.ts",
+        "apps/api/src/main.ts",
       ]
     depends_on:
       migrate:
@@ -108,9 +127,9 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - artifacts:/workspace/apps/api/artifacts/browser-v2
+      - artifacts:/workspace/apps/api/artifacts/browser
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/v2/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/health"]
       start_period: 20s
       start_interval: 1s
       interval: 5s
@@ -125,24 +144,23 @@ services:
         "apps/api/node_modules/.bin/tsx",
         "--tsconfig",
         "apps/api/tsconfig.json",
-        "apps/api/src/browser-v2-worker.ts",
+        "apps/api/src/worker.ts",
       ]
     environment:
       <<: *api-environment
       SCRY_BROWSER_CHANNEL: chromium
-      BROWSER_V2_SESSION_CONCURRENCY: ${SCRY_WORKER_CONCURRENCY:-4}
-      BROWSER_V2_COMMAND_CONCURRENCY: ${SCRY_COMMAND_CONCURRENCY:-8}
+      SCRY_BROWSER_SESSION_CONCURRENCY: ${SCRY_WORKER_CONCURRENCY:-4}
+      SCRY_BROWSER_COMMAND_CONCURRENCY: ${SCRY_COMMAND_CONCURRENCY:-8}
       SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
-      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     depends_on:
       migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
     volumes:
-      - artifacts:/workspace/apps/api/artifacts/browser-v2
+      - artifacts:/workspace/apps/api/artifacts/browser
     shm_size: 1gb
-    stop_grace_period: 30s
+    stop_grace_period: 60s
 
   migrate:
     image: ${SCRY_IMAGE_REF:?Set SCRY_IMAGE_REF to an immutable image digest}
@@ -152,12 +170,12 @@ services:
         "apps/api/node_modules/.bin/tsx",
         "--tsconfig",
         "apps/api/tsconfig.json",
-        "apps/api/scripts/migrate-browser-v2.ts",
+        "apps/api/scripts/migrate.ts",
       ]
     environment:
-      BROWSER_V2_DATABASE_URL: postgres://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${SCRY_DATABASE_NAME:-scry_browser_v2}
-      BROWSER_V2_EXPECTED_DATABASE: ${SCRY_DATABASE_NAME:-scry_browser_v2}
-      BROWSER_V2_SCHEMA_CONFIRM: CREATE_EMPTY_V2
+      SCRY_BROWSER_DATABASE_URL: postgres://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${SCRY_DATABASE_NAME:?Set SCRY_DATABASE_NAME to the existing database}
+      SCRY_BROWSER_EXPECTED_DATABASE: ${SCRY_DATABASE_NAME:?Set SCRY_DATABASE_NAME to the existing database}
+      SCRY_BROWSER_SCHEMA_CONFIRM: CREATE_EMPTY_BASELINE
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,7 +188,7 @@ services:
         "apps/mcp/node_modules/.bin/tsx",
         "--tsconfig",
         "apps/mcp/tsconfig.json",
-        "apps/mcp/src/browser-v2-http.ts",
+        "apps/mcp/src/http.ts",
       ]
     environment:
       MCP_HOST: 0.0.0.0
@@ -180,7 +198,6 @@ services:
       SCRY_PUBLIC_API_BASE_URL: https://${SCRY_DOMAIN:?Set SCRY_DOMAIN}/api
       SCRY_SERVICE_TOKEN: ${SCRY_SERVICE_TOKEN:?Set SCRY_SERVICE_TOKEN}
       SCRY_RELEASE_ID: ${SCRY_RELEASE_ID:?Set SCRY_RELEASE_ID}
-      SCRY_SCHEMA_FINGERPRINT: ${SCRY_SCHEMA_FINGERPRINT:?Set SCRY_SCHEMA_FINGERPRINT}
     depends_on:
       api:
         condition: service_healthy
@@ -196,7 +213,7 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${SCRY_DATABASE_NAME:-scry_browser_v2}
+      POSTGRES_DB: ${SCRY_DATABASE_NAME:?Set SCRY_DATABASE_NAME to the existing database}
       POSTGRES_USER: scry
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
@@ -218,7 +235,11 @@ services:
       - source: postgres_hba
         target: /etc/postgresql/pg_hba.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U scry -d ${SCRY_DATABASE_NAME:-scry_browser_v2}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U scry -d ${SCRY_DATABASE_NAME:?Set SCRY_DATABASE_NAME to the existing database}",
+        ]
       start_period: 10s
       start_interval: 1s
       interval: 5s
@@ -342,7 +363,7 @@ services:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
     restart: unless-stopped
     environment:
-      DATA_SOURCE_NAME: postgresql://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${SCRY_DATABASE_NAME:-scry_browser_v2}?sslmode=disable
+      DATA_SOURCE_NAME: postgresql://scry:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/${SCRY_DATABASE_NAME:?Set SCRY_DATABASE_NAME to the existing database}?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy

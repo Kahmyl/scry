@@ -1,0 +1,10 @@
+FROM scry-browser-integration:local
+WORKDIR /workspace
+RUN apt-get update && apt-get install -y --no-install-recommends xclip && rm -rf /var/lib/apt/lists/*
+COPY apps apps
+COPY packages packages
+COPY scripts scripts
+COPY experiments/browser-foundation/test/platform-*.mjs experiments/browser-foundation/test/
+COPY experiments/journey-reliability/test experiments/journey-reliability/test
+RUN apps/web/node_modules/.bin/vite build apps/web
+CMD ["apps/api/node_modules/.bin/tsx","--tsconfig","apps/api/tsconfig.json","apps/api/src/main.ts"]

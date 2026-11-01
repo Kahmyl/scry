@@ -1,34 +1,15 @@
 import {
   AlertTriangle,
-  Box,
-  Check,
   CheckCircle2,
   Copy,
-  Gauge,
   KeyRound,
   PlugZap,
-  Plus,
-  Settings2,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
 
-import {
-  api,
-  patch,
-  post,
-  remove,
-  type Calibration,
-  type Credential,
-  type CredentialIncident,
-  type Environment,
-  type McpAccessToken,
-  type Project,
-  type VeilPreferenceRecord,
-} from "../../infrastructure/api/client.js";
-import { Modal } from "../../shared/components/dashboard-controls.js";
+import { api, post, remove, type McpAccessToken } from "../../infrastructure/api/client.js";
 import { EmptyBlock, PageTitle } from "../../shared/components/dashboard-primitives.js";
 import { publicConfig } from "../../infrastructure/config/runtime-config.js";
 
@@ -110,7 +91,7 @@ export function Integrations() {
           </p>
         </div>
         <span className="integration-ready">
-          <i /> Remote endpoint ready
+          <i /> Streamable HTTP
         </span>
       </section>
 
@@ -181,8 +162,8 @@ export function Integrations() {
                 <>
                   <CheckCircle2 size={15} />
                   <span>
-                    <strong>Ready for this setup</strong>This client can connect to the local
-                    Streamable HTTP endpoint.
+                    <strong>Supported connection method</strong>Use these details to configure your
+                    client. This page has not verified its connection.
                   </span>
                 </>
               )}

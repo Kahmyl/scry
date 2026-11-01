@@ -1,6 +1,5 @@
 {
   "name": "@scry/praxis",
-  "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -11,12 +10,15 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@playwright/mcp": "0.0.83",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "ajv": "8.20.0",
+    "playwright-mcp-runtime": "npm:playwright@1.64.0-alpha-1790635538000",
+    "proxy-chain": "3.0.1",
     "@scry/contracts": "workspace:*",
-    "@scry/veil": "workspace:*",
-    "@tesseract.js-data/eng": "^1.0.0",
     "playwright": "1.62.0",
-    "tesseract.js": "^6.0.1",
-    "@scry/policy": "workspace:*"
+    "rrweb": "2.1.1",
+    "tsx": "^4.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

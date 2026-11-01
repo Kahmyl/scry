@@ -1,19 +1,13 @@
 {
   "name": "@scry/api",
-  "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/browser-v2-main.ts",
-    "worker": "tsx src/browser-v2-worker.ts",
-    "start": "tsx src/browser-v2-main.ts",
-    "db:migrate": "tsx scripts/migrate-browser-v2.ts",
-    "db:cutover:v2": "tsx scripts/cutover-browser-v2.ts",
-    "db:activate:v2": "tsx scripts/activate-browser-v2-cutover.ts",
-    "qualify:live": "tsx scripts/live/qualify-live.ts",
-    "benchmark:post-beta": "tsx scripts/post-beta-performance-benchmark.ts",
-    "benchmark:post-beta:agent": "tsx scripts/post-beta-agent-performance.ts",
-    "campaign:veil:worker-crash": "tsx scripts/veil-worker-crash-recovery-campaign.ts",
+    "dev": "tsx watch src/main.ts",
+    "worker": "tsx src/worker.ts",
+    "start": "tsx src/main.ts",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:activate": "tsx scripts/activate-schema.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -21,31 +15,25 @@
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-fastify": "^11.0.0",
-    "@scry/browser-runtime": "workspace:*",
+    "@scry/chronicle": "workspace:*",
     "@scry/contracts": "workspace:*",
-    "@scry/executor": "workspace:*",
-    "@scry/observability": "workspace:*",
-    "@scry/policy": "workspace:*",
     "@scry/praxis": "workspace:*",
     "@scry/veil": "workspace:*",
     "bullmq": "^5.58.0",
-    "fflate": "^0.8.3",
     "ioredis": "^5.7.0",
     "jose": "^6.2.5",
-    "parse5": "^7.3.0",
+    "node-pg-migrate": "9.0.0",
     "pg": "^8.13.0",
-    "playwright": "1.62.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.0",
-    "zod": "^4.0.0",
-    "@scry/chronicle": "workspace:*",
-    "tsx": "^4.20.0"
+    "tsx": "^4.20.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.0",
+    "playwright": "1.62.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.0.15",
-    "@scry/assurance": "workspace:*"
+    "vitest": "^4.0.15"
   }
 }

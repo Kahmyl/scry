@@ -1,18 +1,24 @@
+import { ChronicleRepository } from "@scry/chronicle";
 import { createHash, randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { isDeepStrictEqual } from "node:util";
 import { Inject, Injectable } from "@nestjs/common";
 import type {
-  BrowserCommandV2,
+  BrowserCommand,
   BrowserDisclosureMode,
   BrowserProtectionSink,
-  CreateBrowserProtectedInputV2Input,
-  SubmitBrowserCommandV2Input,
+  CreateBrowserProtectedInputInput,
+  SubmitBrowserCommandInput,
 } from "@scry/contracts";
 import { browserProtectionSinkSchema } from "@scry/contracts";
-import type { QueryResultRow } from "pg";
-import type { BrowserContextOptions } from "playwright";
+import { protectCommandInput, storedBrowserFailureCode } from "@scry/veil";
+import type { PoolClient, QueryResultRow } from "pg";
+import type { PraxisStorageState } from "@scry/contracts";
 
 import { Database } from "../../infrastructure/database.js";
+import { commandExecutionBudgetMs } from "../command-budget.js";
+import { runtimeRecoveryCode, type RuntimeRecoveryCode } from "../command-recovery.js";
+import { lockLiveBrowserOwner } from "./browser-owner-admission.js";
 import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
@@ -22,8 +28,8 @@ interface CommandRow extends QueryResultRow {
   id: string;
   session_id: string;
   run_id: string;
-  kind: BrowserCommandV2["kind"];
-  safe_input: BrowserCommandV2;
+  kind: BrowserCommand["kind"];
+  safe_input: BrowserCommand;
   state: "queued" | "running" | "completed" | "failed";
   safe_result: Record<string, unknown> | null;
   error_code: string | null;
@@ -31,13 +37,55 @@ interface CommandRow extends QueryResultRow {
   protected_input_nonce: Buffer | null;
   protected_input_authentication_tag: Buffer | null;
   protected_input_digest: string | null;
-  protected_input_key_version: string | null;
+  protected_input_key_id: string | null;
   claim_token: string | null;
   claim_lease_expires_at: Date | null;
   attempt_count: number;
+  command_ordinal: string;
+  execution_deadline_at: Date | null;
+  execution_budget_ms: number | null;
 }
 
-type InlineStorageState = Exclude<BrowserContextOptions["storageState"], string | undefined>;
+interface CommandClaimDurations extends QueryResultRow {
+  executionRemainingMs: number;
+  claimRemainingMs: number;
+}
+export interface CommandClaimSample extends CommandClaimDurations {
+  /** Private process-local monotonic query anchor; never a persisted clock. */
+  sampleStartedAt: number;
+}
+interface ClaimedDatabaseRow extends CommandRow, CommandClaimDurations {
+  execution_deadline_at: Date;
+  execution_budget_ms: number;
+}
+interface ClaimedCommandRow extends ClaimedDatabaseRow {
+  sampleStartedAt: number;
+}
+
+// Evaluate only after acquiring the command row lock. PostgreSQL may evaluate
+// projected/WHERE clock expressions before a LockRows or UPDATE lock wait.
+const claimClockProjection = `
+  GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(execution_deadline_at-clock_timestamp()))*1000))::int AS "executionRemainingMs",
+  GREATEST(0,FLOOR(EXTRACT(EPOCH FROM(claim_lease_expires_at-clock_timestamp()))*1000))::int AS "claimRemainingMs"`;
+function validateCommandLease(leaseMs: number): void {
+  if (!Number.isSafeInteger(leaseMs) || leaseMs < 30000 || leaseMs > 300000)
+    throw new Error("SCRY_BROWSER_COMMAND_LEASE_INVALID");
+}
+
+type InlineStorageState = PraxisStorageState;
+
+interface ObservedCommandRow extends QueryResultRow {
+  id: string;
+  sessionId: string;
+  runId: string;
+  kind: BrowserCommand["kind"];
+  state: CommandRow["state"];
+  result: Record<string, unknown> | null;
+  errorCode: string | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+}
 
 @Injectable()
 export class BrowserCommandRepository {
@@ -52,7 +100,7 @@ export class BrowserCommandRepository {
         "SELECT 1 FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2)",
         [projectId, workspaceId ?? null],
       );
-      if (!project.rowCount) throw new Error("BROWSER_V2_PROJECT_NOT_FOUND");
+      if (!project.rowCount) throw new Error("SCRY_BROWSER_PROJECT_NOT_FOUND");
       const result = await client.query(
         `SELECT id,id AS "referenceId",project_id AS "projectId",display_name AS "displayName",
                 CASE WHEN state='active' AND expires_at IS NOT NULL AND expires_at<=now()
@@ -69,14 +117,14 @@ export class BrowserCommandRepository {
 
   async createProtectedInput(
     workspaceId: string | undefined,
-    input: CreateBrowserProtectedInputV2Input,
+    input: CreateBrowserProtectedInputInput,
   ): Promise<{ protectedValueId: string; replay: boolean }> {
     return this.database.transaction(async (client) => {
       const project = await client.query(
         "SELECT 1 FROM projects WHERE id=$1 AND ($2::uuid IS NULL OR workspace_id=$2)",
         [input.projectId, workspaceId ?? null],
       );
-      if (!project.rowCount) throw new Error("BROWSER_V2_PROJECT_NOT_FOUND");
+      if (!project.rowCount) throw new Error("SCRY_BROWSER_PROJECT_NOT_FOUND");
       const existing = await client.query<{
         id: string;
         display_name: string;
@@ -90,7 +138,7 @@ export class BrowserCommandRepository {
           existing.rows[0].display_name !== input.displayName ||
           existing.rows[0].value_digest !== digestText(input.value)
         ) {
-          throw new Error("BROWSER_V2_PROTECTED_INPUT_IDEMPOTENCY_CONFLICT");
+          throw new Error("SCRY_BROWSER_PROTECTED_INPUT_IDEMPOTENCY_CONFLICT");
         }
         return { protectedValueId: existing.rows[0].id, replay: true };
       }
@@ -103,19 +151,19 @@ export class BrowserCommandRepository {
       });
       await client.query(
         `INSERT INTO protected_values(id,project_id,source_kind,display_name,external_reference,ciphertext,nonce,
-           authentication_tag,value_digest,key_version,state,expires_at,idempotency_key)
+           authentication_tag,value_digest,key_id,state,expires_at,idempotency_key)
          VALUES($1,$2,'user_input',$3,$4,$5,$6,$7,$8,$9,'active',
                 CASE WHEN $10::int IS NULL THEN NULL ELSE now()+($10::int * interval '1 second') END,$11)`,
         [
           protectedValueId,
           input.projectId,
           input.displayName,
-          `protected://browser-v2/${protectedValueId}`,
+          `protected://browser/${protectedValueId}`,
           encrypted.ciphertext,
           encrypted.nonce,
           encrypted.authenticationTag,
           encrypted.valueDigest,
-          encrypted.keyVersion,
+          encrypted.keyId,
           input.expiresInSeconds,
           input.idempotencyKey,
         ],
@@ -132,7 +180,7 @@ export class BrowserCommandRepository {
     return this.database.transaction(async (client) => {
       const uniqueIds = [...new Set(protectedInputIds)];
       if (uniqueIds.length !== protectedInputIds.length)
-        throw new Error("BROWSER_V2_PROTECTED_INPUT_DUPLICATE");
+        throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
       const session = await client.query<{ sessionId: string; projectId: string }>(
         `SELECT s.id AS "sessionId",s.project_id AS "projectId"
          FROM runs r
@@ -143,7 +191,7 @@ export class BrowserCommandRepository {
          FOR UPDATE OF s`,
         [runId, workspaceId ?? null],
       );
-      if (!session.rows[0]) throw new Error("BROWSER_V2_RUN_NOT_ACTIVE");
+      if (!session.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_ACTIVE");
       const available = await client.query<{ id: string }>(
         `SELECT id FROM protected_values
          WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
@@ -152,7 +200,7 @@ export class BrowserCommandRepository {
         [uniqueIds, session.rows[0].projectId],
       );
       if (available.rowCount !== uniqueIds.length)
-        throw new Error("BROWSER_V2_PROTECTED_INPUT_UNAVAILABLE");
+        throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
       let added = 0;
       for (const protectedValueId of uniqueIds) {
         const inserted = await client.query(
@@ -173,30 +221,44 @@ export class BrowserCommandRepository {
 
   async submit(
     sessionId: string,
-    input: SubmitBrowserCommandV2Input,
+    input: SubmitBrowserCommandInput,
   ): Promise<{ commandId: string; replay: boolean; state: string }> {
     return this.database.transaction(async (client) => {
-      const session = await client.query<{ run_id: string; state: string }>(
-        "SELECT run_id,state FROM browser_execution_sessions WHERE id=$1 FOR UPDATE",
+      const session = await client.query<{
+        run_id: string;
+        state: string;
+        runtime_adapter: string;
+      }>(
+        "SELECT run_id,state,runtime_adapter FROM browser_execution_sessions WHERE id=$1 FOR UPDATE",
         [sessionId],
       );
       if (!session.rows[0] || !["active", "starting", "finalizing"].includes(session.rows[0].state))
-        throw new Error("BROWSER_V2_SESSION_NOT_COMMANDABLE");
+        throw new Error("SCRY_BROWSER_SESSION_NOT_COMMANDABLE");
+      const native = session.rows[0].runtime_adapter === "playwright_mcp";
+      if (native) {
+        if (process.env.SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED !== "true")
+          throw new Error("SCRY_BROWSER_ADAPTER_DISABLED");
+        if (!["browser_tool", "close", "close_for_failure"].includes(input.command.kind))
+          throw new Error("SCRY_BROWSER_ADAPTER_COMMAND_MISMATCH");
+      } else if (input.command.kind === "browser_tool")
+        throw new Error("SCRY_BROWSER_ADAPTER_COMMAND_MISMATCH");
       const existing = await client.query<CommandRow>(
         "SELECT * FROM browser_commands WHERE session_id=$1 AND idempotency_key=$2 FOR UPDATE",
         [sessionId, input.idempotencyKey],
       );
       if (existing.rows[0]) {
-        const proposed = safeCommand(input.command);
+        const proposed = protectCommandInput(input.command);
         const proposedDigest =
           input.command.kind === "fill" && input.command.publicValue !== undefined
             ? digestText(input.command.publicValue)
-            : null;
+            : input.command.kind === "browser_tool"
+              ? digestText(canonicalArgs(input.command.args))
+              : null;
         if (
           !isDeepStrictEqual(existing.rows[0].safe_input, proposed) ||
           existing.rows[0].protected_input_digest !== proposedDigest
         )
-          throw new Error("BROWSER_V2_COMMAND_IDEMPOTENCY_CONFLICT");
+          throw new Error("SCRY_BROWSER_COMMAND_IDEMPOTENCY_CONFLICT");
         return { commandId: existing.rows[0].id, replay: true, state: existing.rows[0].state };
       }
       const ordinal = await client.query<{ next: string }>(
@@ -204,9 +266,15 @@ export class BrowserCommandRepository {
         [sessionId],
       );
       const commandId = randomUUID();
+      const inputValue =
+        input.command.kind === "browser_tool"
+          ? canonicalArgs(input.command.args)
+          : input.command.kind === "fill"
+            ? input.command.publicValue
+            : undefined;
       const encrypted =
-        input.command.kind === "fill" && input.command.publicValue !== undefined
-          ? this.cipher.encrypt(input.command.publicValue, {
+        inputValue !== undefined
+          ? this.cipher.encrypt(inputValue, {
               sessionId,
               commandId,
               field: "publicValue",
@@ -214,7 +282,7 @@ export class BrowserCommandRepository {
           : null;
       await client.query(
         `INSERT INTO browser_commands(id,session_id,run_id,command_ordinal,idempotency_key,kind,safe_input,
-           protected_input_ciphertext,protected_input_nonce,protected_input_authentication_tag,protected_input_digest,protected_input_key_version)
+           protected_input_ciphertext,protected_input_nonce,protected_input_authentication_tag,protected_input_digest,protected_input_key_id)
          VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12)`,
         [
           commandId,
@@ -223,12 +291,12 @@ export class BrowserCommandRepository {
           ordinal.rows[0]!.next,
           input.idempotencyKey,
           input.command.kind,
-          JSON.stringify(safeCommand(input.command)),
+          JSON.stringify(protectCommandInput(input.command)),
           encrypted?.ciphertext ?? null,
           encrypted?.nonce ?? null,
           encrypted?.authenticationTag ?? null,
           encrypted?.valueDigest ?? null,
-          encrypted?.keyVersion ?? null,
+          encrypted?.keyId ?? null,
         ],
       );
       await client.query("INSERT INTO browser_command_outbox(command_id) VALUES($1)", [commandId]);
@@ -242,51 +310,37 @@ export class BrowserCommandRepository {
        WHERE s.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [sessionId, workspaceId ?? null],
     );
-    if (!result.rowCount) throw new Error("BROWSER_V2_SESSION_NOT_FOUND");
+    if (!result.rowCount) throw new Error("SCRY_BROWSER_SESSION_NOT_FOUND");
   }
 
   async observe(commandId: string) {
-    const result = await this.database.query<CommandRow>(
+    const result = await this.database.query<ObservedCommandRow>(
       `SELECT id,session_id AS "sessionId",run_id AS "runId",kind,state,safe_result AS result,error_code AS "errorCode",
          created_at AS "createdAt",started_at AS "startedAt",completed_at AS "completedAt" FROM browser_commands WHERE id=$1`,
       [commandId],
     );
-    if (!result.rows[0]) throw new Error("BROWSER_V2_COMMAND_NOT_FOUND");
-    return result.rows[0];
+    if (!result.rows[0]) throw new Error("SCRY_BROWSER_COMMAND_NOT_FOUND");
+    const row = result.rows[0];
+    // Historical diagnostics are immutable, not automatically safe to disclose.
+    const errorCode = row.errorCode == null ? null : storedBrowserFailureCode(row.errorCode);
+    if (row.state === "failed")
+      return {
+        ...row,
+        state: "failed" as const,
+        errorCode: errorCode ?? "SCRY_BROWSER_COMMAND_FAILED",
+      };
+    return { ...row, state: row.state, errorCode };
   }
 
   async evidenceComplete(sessionId: string): Promise<boolean> {
-    const result = await this.database.query<{ state: string }>(
-      "SELECT state FROM browser_evidence_streams WHERE session_id=$1",
-      [sessionId],
-    );
-    return result.rows[0]?.state === "complete";
+    return new ChronicleRepository(this.database).evidenceComplete(sessionId);
+  }
+  async evidenceStatus(sessionId: string) {
+    return new ChronicleRepository(this.database).evidenceStatus(sessionId);
   }
 
-  async safeActionLedger(
-    sessionId: string,
-  ): Promise<Array<{ at: string; tool: string; outcome: string; durationMs: number }>> {
-    const result = await this.database.query<{
-      kind: string;
-      state: string;
-      created_at: Date;
-      started_at: Date | null;
-      completed_at: Date | null;
-    }>(
-      `SELECT kind,state,created_at,started_at,completed_at
-       FROM browser_commands WHERE session_id=$1 ORDER BY command_ordinal`,
-      [sessionId],
-    );
-    return result.rows.map((row) => {
-      const started = row.started_at ?? row.created_at;
-      const completed = row.completed_at ?? started;
-      return {
-        at: started.toISOString(),
-        tool: row.kind,
-        outcome: row.state,
-        durationMs: Math.max(0, completed.getTime() - started.getTime()),
-      };
-    });
+  async safeActionLedger(sessionId: string) {
+    return new ChronicleRepository(this.database).safeActionLedger(sessionId);
   }
 
   async pending(limit = 100): Promise<Array<{ commandId: string }>> {
@@ -306,38 +360,57 @@ export class BrowserCommandRepository {
     );
   }
 
-  async claim(commandId: string, leaseMs = 60_000): Promise<CommandRow | null> {
-    if (!Number.isSafeInteger(leaseMs) || leaseMs < 30_000)
-      throw new Error("BROWSER_V2_COMMAND_LEASE_INVALID");
+  async claim(commandId: string, leaseMs = 60_000): Promise<ClaimedCommandRow | null> {
+    validateCommandLease(leaseMs);
     return this.database.transaction(async (client) => {
+      // Match submit's session-first lock order. The lock covers only the claim
+      // transaction, never browser execution, network waits or evidence file I/O.
+      const scope = await client.query<{ session_id: string }>(
+        "SELECT session_id FROM browser_commands WHERE id=$1",
+        [commandId],
+      );
+      if (!scope.rows[0]) return null;
+      await client.query("SELECT id FROM browser_execution_sessions WHERE id=$1 FOR UPDATE", [
+        scope.rows[0].session_id,
+      ]);
       const result = await client.query<CommandRow>(
         "SELECT * FROM browser_commands WHERE id=$1 FOR UPDATE",
         [commandId],
       );
       const row = result.rows[0];
       if (!row || row.state === "completed" || row.state === "failed") return null;
-      if (
-        row.state === "running" &&
-        row.claim_lease_expires_at &&
-        new Date(row.claim_lease_expires_at).getTime() > Date.now()
-      ) {
-        throw new Error("BROWSER_V2_COMMAND_ALREADY_RUNNING");
+      const predecessor = await client.query(
+        `SELECT 1 FROM browser_commands WHERE session_id=$1 AND command_ordinal<$2
+         AND state IN ('queued','running') LIMIT 1`,
+        [row.session_id, row.command_ordinal],
+      );
+      if (predecessor.rowCount) throw new Error("SCRY_BROWSER_COMMAND_PREDECESSOR_PENDING");
+      const live = await client.query<{ live: boolean }>(
+        "SELECT claim_lease_expires_at>clock_timestamp() AS live FROM browser_commands WHERE id=$1",
+        [commandId],
+      );
+      if (row.state === "running" && live.rows[0]?.live) {
+        throw new Error("SCRY_BROWSER_COMMAND_ALREADY_RUNNING");
       }
       const claimToken = randomUUID();
-      const claimed = await client.query<CommandRow>(
-        `UPDATE browser_commands SET state='running',started_at=COALESCE(started_at,now()),completed_at=NULL,
-           error_code=NULL,claim_token=$2,claim_lease_expires_at=now()+($3::int * interval '1 millisecond'),
-           attempt_count=attempt_count+1 WHERE id=$1 RETURNING *`,
-        [commandId, claimToken, leaseMs],
+      const sampleStartedAt = performance.now();
+      const claimed = await client.query<ClaimedDatabaseRow>(
+        `WITH claim_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
+         UPDATE browser_commands SET state='running',started_at=COALESCE(started_at,claim_clock.at),completed_at=NULL,
+           error_code=NULL,claim_token=$2,claim_lease_expires_at=claim_clock.at+($3::int * interval '1 millisecond'),
+           execution_deadline_at=COALESCE(execution_deadline_at,claim_clock.at+($4::int * interval '1 millisecond')),
+           execution_budget_ms=COALESCE(execution_budget_ms,$4),attempt_count=attempt_count+1
+         FROM claim_clock WHERE id=$1 RETURNING browser_commands.*,${claimClockProjection}`,
+        [commandId, claimToken, leaseMs, commandExecutionBudgetMs(row.kind)],
       );
-      const claimedRow = claimed.rows[0]!;
+      const claimedRow = { ...claimed.rows[0]!, sampleStartedAt };
       if (
         claimedRow.protected_input_ciphertext &&
         claimedRow.protected_input_nonce &&
         claimedRow.protected_input_authentication_tag &&
         claimedRow.protected_input_digest &&
-        claimedRow.protected_input_key_version &&
-        claimedRow.safe_input.kind === "fill"
+        claimedRow.protected_input_key_id &&
+        ["fill", "browser_tool"].includes(claimedRow.safe_input.kind)
       ) {
         const publicValue = this.cipher.decrypt(
           {
@@ -345,23 +418,79 @@ export class BrowserCommandRepository {
             nonce: claimedRow.protected_input_nonce,
             authenticationTag: claimedRow.protected_input_authentication_tag,
             valueDigest: claimedRow.protected_input_digest,
-            keyVersion: claimedRow.protected_input_key_version,
+            keyId: claimedRow.protected_input_key_id,
           },
           { sessionId: claimedRow.session_id, commandId: claimedRow.id, field: "publicValue" },
         );
-        return { ...claimedRow, safe_input: { ...claimedRow.safe_input, publicValue } };
+        return {
+          ...claimedRow,
+          safe_input:
+            claimedRow.safe_input.kind === "browser_tool"
+              ? { ...claimedRow.safe_input, args: JSON.parse(publicValue) }
+              : ({ ...claimedRow.safe_input, publicValue } as BrowserCommand),
+        };
       }
       return claimedRow;
     });
   }
 
-  async heartbeatClaim(commandId: string, claimToken: string, leaseMs = 60_000): Promise<void> {
-    const result = await this.database.query(
-      `UPDATE browser_commands SET claim_lease_expires_at=now()+($3::int * interval '1 millisecond')
-       WHERE id=$1 AND state='running' AND claim_token=$2 AND claim_lease_expires_at>now()`,
-      [commandId, claimToken, leaseMs],
-    );
-    if (result.rowCount !== 1) throw new Error("BROWSER_V2_COMMAND_CLAIM_FENCED");
+  /** No browser/file work is accepted here. The lock, current clock check and
+   * exact claim's SQL admission form one short transaction. */
+  private async withLiveClaim<T>(
+    commandId: string,
+    claimToken: string,
+    mode: "heartbeat" | "dispatch" | "complete" | "fail",
+    work: (client: PoolClient, sample: CommandClaimSample) => Promise<T>,
+  ): Promise<T> {
+    return this.database.transaction(async (client) => {
+      await client.query("SELECT id FROM browser_commands WHERE id=$1 FOR UPDATE", [commandId]);
+      const sampleStartedAt = performance.now();
+      const result = await client.query<
+        CommandClaimDurations & { state: string; claim_token: string | null }
+      >(`SELECT state,claim_token,${claimClockProjection} FROM browser_commands WHERE id=$1`, [
+        commandId,
+      ]);
+      const row = result.rows[0];
+      const fenced =
+        mode === "complete"
+          ? "SCRY_BROWSER_COMMAND_COMPLETION_CONFLICT"
+          : "SCRY_BROWSER_COMMAND_CLAIM_FENCED";
+      if (
+        !row ||
+        row.state !== "running" ||
+        row.claim_token !== claimToken ||
+        row.claimRemainingMs <= 0
+      )
+        throw new Error(fenced);
+      if ((mode === "dispatch" || mode === "complete") && row.executionRemainingMs <= 0)
+        throw new Error(mode === "dispatch" ? "SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED" : fenced);
+      return work(client, {
+        executionRemainingMs: row.executionRemainingMs,
+        claimRemainingMs: row.claimRemainingMs,
+        sampleStartedAt,
+      });
+    });
+  }
+
+  assertClaim(commandId: string, claimToken: string): Promise<CommandClaimSample> {
+    return this.withLiveClaim(commandId, claimToken, "dispatch", async (_client, sample) => sample);
+  }
+
+  async heartbeatClaim(
+    commandId: string,
+    claimToken: string,
+    leaseMs = 60_000,
+  ): Promise<CommandClaimSample> {
+    validateCommandLease(leaseMs);
+    return this.withLiveClaim(commandId, claimToken, "heartbeat", async (client) => {
+      const sampleStartedAt = performance.now();
+      const result = await client.query<CommandClaimDurations>(
+        `UPDATE browser_commands SET claim_lease_expires_at=clock_timestamp()+($2::int * interval '1 millisecond')
+         WHERE id=$1 RETURNING ${claimClockProjection}`,
+        [commandId, leaseMs],
+      );
+      return { ...result.rows[0]!, sampleStartedAt };
+    });
   }
 
   async complete(
@@ -369,23 +498,55 @@ export class BrowserCommandRepository {
     claimToken: string,
     safeResult: Record<string, unknown>,
   ): Promise<void> {
-    const result = await this.database.query(
-      `UPDATE browser_commands SET state='completed',safe_result=$3::jsonb,completed_at=now(),
-         claim_token=NULL,claim_lease_expires_at=NULL WHERE id=$1 AND state='running' AND claim_token=$2`,
-      [commandId, claimToken, JSON.stringify(safeResult)],
-    );
-    if (result.rowCount !== 1) throw new Error("BROWSER_V2_COMMAND_COMPLETION_CONFLICT");
+    // Serialization is not coordination work; revalidate the claim only after
+    // it finishes, without holding its database lock during local CPU work.
+    const serialized = JSON.stringify(safeResult);
+    await this.withLiveClaim(commandId, claimToken, "complete", async (client) => {
+      await client.query(
+        `UPDATE browser_commands SET state='completed',safe_result=$2::jsonb,completed_at=clock_timestamp(),
+           claim_token=NULL,claim_lease_expires_at=NULL WHERE id=$1`,
+        [commandId, serialized],
+      );
+    });
+  }
+
+  async checkpointAction(
+    commandId: string,
+    claimToken: string,
+    result: Record<string, unknown>,
+  ): Promise<void> {
+    const serialized = JSON.stringify(result);
+    await this.withLiveClaim(commandId, claimToken, "complete", async (client) => {
+      await client.query(
+        "UPDATE browser_commands SET safe_result=$2::jsonb WHERE id=$1 AND kind='browser_tool'",
+        [commandId, serialized],
+      );
+    });
   }
 
   async fail(commandId: string, claimToken: string, error: unknown): Promise<void> {
-    const code = (error instanceof Error ? error.message : String(error))
-      .replace(/[^A-Za-z0-9:_-]/gu, "_")
-      .slice(0, 500);
-    await this.database.query(
-      `UPDATE browser_commands SET state='failed',error_code=$3,completed_at=now(),claim_token=NULL,
-         claim_lease_expires_at=NULL WHERE id=$1 AND state='running' AND claim_token=$2`,
-      [commandId, claimToken, code || "BROWSER_V2_COMMAND_FAILED"],
-    );
+    const code = storedBrowserFailureCode(error);
+    await this.withLiveClaim(commandId, claimToken, "fail", async (client) => {
+      await client.query(
+        `UPDATE browser_commands SET state='failed',error_code=$2,completed_at=clock_timestamp(),claim_token=NULL,
+           claim_lease_expires_at=NULL WHERE id=$1`,
+        [commandId, code || "SCRY_BROWSER_COMMAND_FAILED"],
+      );
+    });
+  }
+
+  async noteRecoveryRequired(
+    commandId: string,
+    claimToken: string,
+    cause: RuntimeRecoveryCode = "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED",
+  ): Promise<void> {
+    const code = runtimeRecoveryCode(cause) ?? "SCRY_BROWSER_COMMAND_DRAIN_UNCONFIRMED";
+    await this.withLiveClaim(commandId, claimToken, "fail", async (client) => {
+      await client.query("UPDATE browser_commands SET error_code=$2 WHERE id=$1", [
+        commandId,
+        code,
+      ]);
+    });
   }
 
   async sessionContext(sessionId: string): Promise<{
@@ -396,7 +557,9 @@ export class BrowserCommandRepository {
     baseOrigin: string;
     ownerGeneration: number;
     disclosureMode: BrowserDisclosureMode;
-    protectionKeyVersion: string;
+    protectionKeyId: string;
+    runtimeAdapter: "legacy" | "playwright_mcp";
+    allowedOrigins: string[];
   }> {
     const result = await this.database.query<{
       sessionId: string;
@@ -406,17 +569,20 @@ export class BrowserCommandRepository {
       baseOrigin: string;
       ownerGeneration: string;
       disclosureMode: BrowserDisclosureMode;
-      protectionKeyVersion: string;
+      protectionKeyId: string;
+      runtimeAdapter: "legacy" | "playwright_mcp";
+      allowedOrigins: string[];
     }>(
       `SELECT s.id AS "sessionId",s.run_id AS "runId",s.project_id AS "projectId",s.mission_id AS "missionId",
          e.base_origin AS "baseOrigin",s.active_owner_generation AS "ownerGeneration",
-         s.disclosure_mode AS "disclosureMode",s.protection_key_version AS "protectionKeyVersion"
+         s.disclosure_mode AS "disclosureMode",s.protection_key_id AS "protectionKeyId",
+         s.runtime_adapter AS "runtimeAdapter",(s.allowed_first_party_origins || s.allowed_service_origins) AS "allowedOrigins"
        FROM browser_execution_sessions s JOIN environments e ON e.id=s.environment_id
        WHERE s.id=$1`,
       [sessionId],
     );
     const row = result.rows[0];
-    if (!row) throw new Error("BROWSER_V2_SESSION_NOT_FOUND");
+    if (!row) throw new Error("SCRY_BROWSER_SESSION_NOT_FOUND");
     return {
       ...row,
       ownerGeneration: Number(row.ownerGeneration),
@@ -431,7 +597,7 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       project_id: string;
       mission_id: string;
       run_id: string;
@@ -439,7 +605,7 @@ export class BrowserCommandRepository {
       field_path: Array<string | number>;
     }>(
       `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,
-              v.key_version,v.project_id,v.mission_id,v.run_id,v.source_effect_id,
+              v.key_id,v.project_id,v.mission_id,v.run_id,v.source_effect_id,
               lineage.field_path
        FROM protected_values v
        JOIN browser_execution_sessions s
@@ -462,11 +628,11 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       project_id: string;
     }>(
       `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,
-              v.key_version,v.project_id
+              v.key_id,v.project_id
        FROM protected_values v
        JOIN browser_session_protected_inputs i ON i.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=i.session_id AND s.project_id=v.project_id
@@ -485,7 +651,7 @@ export class BrowserCommandRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId: row.project_id,
@@ -506,7 +672,7 @@ export class BrowserCommandRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId: row.project_id,
@@ -558,7 +724,7 @@ export class BrowserCommandRepository {
     const plaintext = JSON.stringify({ version: 1, ...value });
     const byteSize = Buffer.byteLength(plaintext, "utf8");
     if (byteSize < 2 || byteSize > 2 * 1024 * 1024)
-      throw new Error("BROWSER_V2_CHECKPOINT_SIZE_INVALID");
+      throw new Error("SCRY_BROWSER_CHECKPOINT_SIZE_INVALID");
     return this.database.transaction(async (client) => {
       const scope = await client.query<{
         run_id: string;
@@ -574,18 +740,13 @@ export class BrowserCommandRepository {
         [sessionId],
       );
       const row = scope.rows[0];
-      if (!row || row.state !== "active") throw new Error("BROWSER_V2_SESSION_NOT_ACTIVE");
+      if (!row || row.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
       const resume = new URL(value.resumeUrl);
       if (resume.origin !== new URL(row.base_origin).origin)
-        throw new Error("BROWSER_V2_CHECKPOINT_ORIGIN_INVALID");
+        throw new Error("SCRY_BROWSER_CHECKPOINT_ORIGIN_INVALID");
       if (Number(row.active_owner_generation) !== ownerGeneration)
-        throw new Error("BROWSER_V2_OWNER_FENCED");
-      const owner = await client.query(
-        `SELECT 1 FROM browser_owner_generations
-         WHERE session_id=$1 AND generation=$2 AND state='active' AND lease_expires_at>now()`,
-        [sessionId, ownerGeneration],
-      );
-      if (!owner.rowCount) throw new Error("BROWSER_V2_OWNER_FENCED");
+        throw new Error("SCRY_BROWSER_OWNER_FENCED");
+      await lockLiveBrowserOwner(client, sessionId, ownerGeneration);
       const current = await client.query<{ checkpoint_revision: string }>(
         "SELECT checkpoint_revision FROM browser_session_checkpoints WHERE session_id=$1 FOR UPDATE",
         [sessionId],
@@ -603,7 +764,7 @@ export class BrowserCommandRepository {
       await client.query(
         `INSERT INTO browser_session_checkpoints(
            session_id,run_id,project_id,mission_id,checkpoint_revision,owner_generation,resume_origin,
-           resume_url_digest,ciphertext,nonce,authentication_tag,plaintext_digest,key_version,byte_size)
+           resume_url_digest,ciphertext,nonce,authentication_tag,plaintext_digest,key_id,byte_size)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT(session_id) DO UPDATE SET
            checkpoint_revision=excluded.checkpoint_revision,
@@ -614,7 +775,7 @@ export class BrowserCommandRepository {
            nonce=excluded.nonce,
            authentication_tag=excluded.authentication_tag,
            plaintext_digest=excluded.plaintext_digest,
-           key_version=excluded.key_version,
+           key_id=excluded.key_id,
            byte_size=excluded.byte_size,
            updated_at=now()`,
         [
@@ -630,7 +791,7 @@ export class BrowserCommandRepository {
           encrypted.nonce,
           encrypted.authenticationTag,
           encrypted.valueDigest,
-          encrypted.keyVersion,
+          encrypted.keyId,
           byteSize,
         ],
       );
@@ -660,12 +821,12 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       plaintext_digest: string;
-      key_version: string;
+      key_id: string;
       byte_size: number;
     }>(
       `SELECT s.run_id,s.project_id,s.mission_id,s.state,s.active_owner_generation,e.base_origin,
               c.checkpoint_revision,c.owner_generation,c.ciphertext,c.nonce,c.authentication_tag,
-              c.plaintext_digest,c.key_version,c.byte_size
+              c.plaintext_digest,c.key_id,c.byte_size
        FROM browser_execution_sessions s
        JOIN environments e ON e.id=s.environment_id
        LEFT JOIN browser_session_checkpoints c ON c.session_id=s.id
@@ -673,9 +834,9 @@ export class BrowserCommandRepository {
       [sessionId],
     );
     const row = result.rows[0];
-    if (!row || row.state !== "active") throw new Error("BROWSER_V2_SESSION_NOT_ACTIVE");
+    if (!row || row.state !== "active") throw new Error("SCRY_BROWSER_SESSION_NOT_ACTIVE");
     if (Number(row.active_owner_generation) !== ownerGeneration)
-      throw new Error("BROWSER_V2_OWNER_FENCED");
+      throw new Error("SCRY_BROWSER_OWNER_FENCED");
     if (row.checkpoint_revision === null || row.checkpoint_revision === undefined) return null;
     try {
       const revision = Number(row.checkpoint_revision);
@@ -686,7 +847,7 @@ export class BrowserCommandRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.plaintext_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         },
         checkpointContext({
           sessionId,
@@ -718,7 +879,7 @@ export class BrowserCommandRepository {
         sessionStorage: parsed.sessionStorage,
       };
     } catch {
-      throw new Error("BROWSER_V2_CHECKPOINT_CORRUPT");
+      throw new Error("SCRY_BROWSER_CHECKPOINT_CORRUPT");
     }
   }
 
@@ -728,7 +889,7 @@ export class BrowserCommandRepository {
        WHERE c.session_id=$1 AND c.session_id=s.id AND s.active_owner_generation=$2`,
       [sessionId, ownerGeneration],
     );
-    if ((result.rowCount ?? 0) > 1) throw new Error("BROWSER_V2_CHECKPOINT_DELETE_INVALID");
+    if ((result.rowCount ?? 0) > 1) throw new Error("SCRY_BROWSER_CHECKPOINT_DELETE_INVALID");
   }
 
   async protectedValueForBrowser(sessionId: string, protectedValueId: string): Promise<string> {
@@ -737,14 +898,14 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       project_id: string;
       mission_id: string;
       run_id: string;
       source_effect_id: string;
       canonical_name: string;
     }>(
-      `SELECT v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_version,v.project_id,v.mission_id,v.run_id,
+      `SELECT v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_id,v.project_id,v.mission_id,v.run_id,
          v.source_effect_id,o.canonical_name FROM protected_values v JOIN browser_outputs o ON o.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.project_id=v.project_id AND s.mission_id=v.mission_id AND s.run_id=v.run_id
        WHERE s.id=$1 AND v.id=$2 AND v.state='active'`,
@@ -758,7 +919,7 @@ export class BrowserCommandRepository {
           nonce: row.nonce,
           authenticationTag: row.authentication_tag,
           valueDigest: row.value_digest,
-          keyVersion: row.key_version,
+          keyId: row.key_id,
         } satisfies EncryptedProtectedValue,
         {
           projectId: row.project_id,
@@ -775,11 +936,11 @@ export class BrowserCommandRepository {
       nonce: Buffer;
       authentication_tag: Buffer;
       value_digest: string;
-      key_version: string;
+      key_id: string;
       project_id: string;
       display_name: string;
     }>(
-      `SELECT v.id,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_version,v.project_id,v.display_name
+      `SELECT v.id,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_id,v.project_id,v.display_name
        FROM protected_values v JOIN browser_session_protected_inputs b ON b.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=b.session_id AND s.project_id=v.project_id
        WHERE s.id=$1 AND v.id=$2 AND v.source_kind='user_input' AND v.state='active'
@@ -787,14 +948,14 @@ export class BrowserCommandRepository {
       [sessionId, protectedValueId],
     );
     const input = userInput.rows[0];
-    if (!input) throw new Error("BROWSER_V2_PROTECTED_VALUE_UNAVAILABLE");
+    if (!input) throw new Error("SCRY_BROWSER_PROTECTED_VALUE_UNAVAILABLE");
     return this.cipher.decrypt(
       {
         ciphertext: input.ciphertext,
         nonce: input.nonce,
         authenticationTag: input.authentication_tag,
         valueDigest: input.value_digest,
-        keyVersion: input.key_version,
+        keyId: input.key_id,
       } satisfies EncryptedProtectedValue,
       {
         projectId: input.project_id,
@@ -802,32 +963,6 @@ export class BrowserCommandRepository {
         canonicalName: input.display_name,
         sourceKind: "user_input",
       },
-    );
-  }
-
-  async completeEvidence(input: {
-    sessionId: string;
-    runId: string;
-    chainHead: string;
-    chunkCount: number;
-    totalBytes: number;
-    replayObjectKey: string;
-    videoObjectKey?: string;
-  }): Promise<void> {
-    await this.database.query(
-      `INSERT INTO browser_evidence_streams(id,session_id,run_id,state,chain_head,chunk_count,total_bytes,
-         replay_artifact_key,video_artifact_key,retention_expires_at,completed_at)
-       VALUES(gen_random_uuid(),$1,$2,'complete',$3,$4,$5,$6,$7,now()+interval '30 days',now())
-       ON CONFLICT(session_id) DO NOTHING`,
-      [
-        input.sessionId,
-        input.runId,
-        input.chainHead,
-        input.chunkCount,
-        input.totalBytes,
-        input.replayObjectKey,
-        input.videoObjectKey ?? null,
-      ],
     );
   }
 }
@@ -862,12 +997,20 @@ function isStringRecord(value: unknown): value is Record<string, string> {
   return Object.values(value).every((item) => typeof item === "string");
 }
 
-function safeCommand(command: BrowserCommandV2): BrowserCommandV2 {
-  return command.kind === "fill" && command.publicValue !== undefined
-    ? { ...command, publicValue: "[PROTECTED:COMMAND_INPUT]" }
-    : command;
-}
-
 function digestText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function canonicalArgs(value: Record<string, unknown>): string {
+  const ordered = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(ordered)
+      : value && typeof value === "object"
+        ? Object.fromEntries(
+            Object.keys(value)
+              .sort()
+              .map((key) => [key, ordered((value as Record<string, unknown>)[key])]),
+          )
+        : value;
+  return JSON.stringify(ordered(value));
 }

@@ -1,0 +1,4 @@
+FROM scry-browser-integration:local
+# Isolated apparatus only. Native X11 clipboard avoids helper tabs, grants to
+# tested sites, DOM reconstruction and application-editor APIs.
+RUN apt-get update && apt-get install -y --no-install-recommends xclip && rm -rf /var/lib/apt/lists/*

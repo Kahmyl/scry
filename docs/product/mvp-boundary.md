@@ -10,7 +10,7 @@ delivery slice and are not necessarily excluded from the intended MVP.
 
 ## Product statement
 
-Scry accepts a structured, versioned browser test plan from a human or agent,
+Scry accepts a structured browser test plan from a human or agent,
 validates it against an execution policy, runs it in an isolated Playwright
 context, and returns a durable evidence-backed report.
 
@@ -25,7 +25,7 @@ Codex or another intelligent client:
 
 Scry:
 
-- Validates plan shape and protocol version.
+- Validates plan shape and protocol compatibility.
 - Enforces policy independently of the client.
 - Executes only supported actions.
 - Captures events, assertions, diagnostics, and artifacts.
@@ -60,7 +60,7 @@ Scry:
 
 ## Success scenario
 
-1. Codex converts a feature requirement into a Scry protocol v1 plan.
+1. Codex converts a feature requirement into a Scry-compatible plan.
 2. Scry validates the plan and rejects unsafe capabilities.
 3. Scry runs the plan against an explicitly permitted staging origin.
 4. A failed assertion is returned with its step, screenshot, and diagnostics.

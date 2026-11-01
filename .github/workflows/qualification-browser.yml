@@ -31,49 +31,20 @@ jobs:
       - name: Install exact workspace dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Verify exact Playwright revision
-        run: pnpm run verify:playwright
-
       - name: Install the pinned Chromium runtime
-        run: pnpm --filter @scry/browser-runtime exec playwright install --with-deps chromium
+        run: node packages/praxis/node_modules/playwright/cli.js install --with-deps chromium
 
-      - name: Select bounded runner-aware concurrency
-        run: |
-          workers="$(node -e 'const os=require("node:os"); process.stdout.write(String(Math.max(1,Math.min(2,os.availableParallelism()-1))))')"
-          echo "BROWSER_WORKERS=$workers" >> "$GITHUB_ENV"
+      - name: Qualify browser execution and protected recording
+        run: pnpm qualify browser
 
-      - name: Qualify browser runtime and recording protection
-        run: pnpm --filter @scry/browser-runtime run test
-
-      - name: Qualify browser contracts and MCP surface
-        run: >-
-          pnpm --filter @scry/contracts exec vitest run
-          test/browser-execution-v2.test.ts
-          --maxWorkers=$BROWSER_WORKERS
-
-      - name: Qualify browser MCP tools
-        run: >-
-          pnpm --filter @scry/mcp exec vitest run
-          test/browser-v2-server.test.ts
-          --maxWorkers=$BROWSER_WORKERS
-
-      - name: Build and qualify the browser v2 customer dashboard
-        run: >-
-          pnpm --filter @scry/web build &&
-          pnpm --filter @scry/web exec vitest run
-          src/app/BrowserV2Dashboard.test.tsx
-          --maxWorkers=1
-
-      - name: Qualify API cutover and browser boundary
-        run: >-
-          pnpm --filter @scry/api exec vitest run
-          test/browser-execution-v2-migration.test.ts
-          test/browser-protected-keyring.test.ts
-          test/browser-v2-exception.filter.test.ts
-          --maxWorkers=1
-
-      - name: Verify production entrypoint cutover
-        run: pnpm verify:browser-v2-cutover
+      - name: Retain safe qualification outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assurance-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/assurance/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload browser failure evidence
         if: failure()

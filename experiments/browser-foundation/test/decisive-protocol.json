@@ -1,0 +1,51 @@
+{
+  "purpose": "Falsify shared interaction strategies before production implementation",
+  "productionChangesAllowed": false,
+  "strategies": [
+    "official-fill",
+    "native-paste-with-dom-readback",
+    "native-paste-with-native-copy-readback",
+    "guarded-native-paste",
+    "bounded-range-paste",
+    "native-control-scope",
+    "native-control-scope-all",
+    "native-control-keyboard"
+  ],
+  "selection": "No runtime app names, hostnames, editor-library classes or framework model APIs; same input operation for each target",
+  "trainingTargets": ["Nextcloud", "Grafana", "Odoo"],
+  "realAppHoldouts": [
+    "HedgeDoc first candidate falsification",
+    "WordPress block editor",
+    "Etherpad reserve for revised candidate"
+  ],
+  "controlCases": [
+    "ordinary text and textarea",
+    "controlled input",
+    "nested contenteditable",
+    "noneditable widgets",
+    "iframe focus",
+    "open shadow root",
+    "target replacement during activation",
+    "focus theft",
+    "delayed value rollback",
+    "paste rejection",
+    "formatted values",
+    "readonly",
+    "disabled",
+    "ambiguous target",
+    "submit only after verified acceptance",
+    "slow post-click navigation",
+    "no automatic redispatch"
+  ],
+  "outcomes": ["accepted", "mismatch", "unverified", "not-dispatched", "unknown"],
+  "rejectionRules": [
+    "Any accepted result contradicted by independent readback is a false acceptance",
+    "Any text written to an unintended control is a safety failure",
+    "No business save is automatically retried",
+    "Unexpected formatting is not normalized away to pass",
+    "A rejection is not counted as a successful edit",
+    "A code change after opening a holdout invalidates that target as a fresh holdout for the changed candidate"
+  ],
+  "evidence": "Native screenshots, native paced video where practicable, persisted UI readback and private machine-readable receipt ledger",
+  "limits": "Finite compatibility experiment, not a guarantee of all websites or complete release qualification"
+}

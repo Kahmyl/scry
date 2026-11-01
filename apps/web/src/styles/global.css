@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import "./fonts.css";
 
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -99,12 +99,20 @@ select:focus-visible {
 .brand-mark {
   width: 39px;
   height: 39px;
-  border-radius: 11px;
   display: grid;
   place-items: center;
-  color: #0a0c0d;
-  background: var(--lime);
-  box-shadow: 0 0 24px rgba(199, 243, 107, 0.14);
+}
+.scry-mark {
+  display: block;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+.brand-mark > .scry-mark,
+.landing-brand > span > .scry-mark,
+.auth-brand > span > .scry-mark,
+.mini-logo > .scry-mark {
+  width: 100%;
+  height: 100%;
 }
 .brand strong {
   font-size: 20px;
@@ -1147,6 +1155,9 @@ select:focus-visible {
 .metric.lime .metric-icon {
   color: var(--lime);
 }
+.metric.failure > strong {
+  color: var(--red);
+}
 .content-grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -1161,7 +1172,7 @@ select:focus-visible {
   border-radius: 13px;
   overflow: hidden;
 }
-.browser-v2-fact {
+.browser-fact {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1169,23 +1180,23 @@ select:focus-visible {
   padding: 16px 20px;
   border-bottom: 1px solid var(--line-soft);
 }
-.browser-v2-fact:last-child {
+.browser-fact:last-child {
   border-bottom: 0;
 }
-.browser-v2-fact > div {
+.browser-fact > div {
   min-width: 0;
 }
-.browser-v2-fact strong,
-.browser-v2-fact span {
+.browser-fact strong,
+.browser-fact span {
   display: block;
 }
-.browser-v2-fact > div > span {
+.browser-fact > div > span {
   margin-top: 5px;
   color: var(--muted);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.browser-v2-safe-report {
+.browser-safe-report {
   margin: 0;
   padding: 20px;
   overflow: auto;
@@ -1239,7 +1250,7 @@ select:focus-visible {
 .run-list > button:last-child {
   border-bottom: 0;
 }
-.run-list.browser-v2-list > button {
+.run-list.browser-list > button {
   grid-template-columns: minmax(0, 1fr) auto 15px;
 }
 .run-symbol {
@@ -1278,6 +1289,7 @@ select:focus-visible {
   gap: 6px;
 }
 .status-passed,
+.status-complete,
 .status-resolved {
   color: var(--lime);
   background: var(--lime-soft);
@@ -1287,6 +1299,10 @@ select:focus-visible {
 .status-timed_out {
   color: var(--red);
   background: rgba(255, 116, 108, 0.09);
+}
+.status-incomplete {
+  color: var(--amber);
+  background: rgba(240, 189, 99, 0.1);
 }
 .status-running,
 .status-preparing,
@@ -1898,6 +1914,152 @@ select:focus-visible {
 }
 .assertion-failed svg {
   color: var(--red);
+}
+.native-evidence {
+  padding: 20px;
+  margin-block: 20px;
+}
+.native-evidence h3 {
+  margin: 0 0 12px;
+}
+.native-evidence button {
+  background: #191d23;
+  color: #eef2f7;
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid #58616d;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.native-evidence button:hover {
+  background: #28313b;
+}
+.native-evidence button:focus-visible {
+  outline: 2px solid #c9f48d;
+  outline-offset: 2px;
+}
+.native-evidence video,
+.native-evidence img {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  background: #101216;
+  border-radius: 8px;
+}
+.native-evidence figure {
+  margin: 16px 0;
+}
+.native-evidence-warning {
+  padding: 12px 14px;
+  border: 1px solid #806e39;
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+.native-evidence-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+.native-evidence-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.native-evidence-layout .native-evidence-selector {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  margin: 0;
+  max-height: 70vh;
+  overflow: auto;
+}
+.native-evidence-selector button {
+  text-align: left;
+}
+.native-evidence-selector small {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+.native-evidence-viewer {
+  min-width: 0;
+}
+.native-evidence-viewer h4 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+.native-evidence video {
+  aspect-ratio: 16/9;
+}
+.native-evidence select {
+  font: inherit;
+  padding: 8px;
+  max-width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.native-evidence-mobile {
+  display: none;
+}
+.journey-attempt {
+  border-top: 1px solid var(--line);
+  padding: 16px 20px 0;
+  margin-top: 16px;
+}
+.journey-attempt button,
+.report-observation button {
+  font: inherit;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.journey-attempt button[aria-pressed="true"] {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+.mission-journeys > .panel > h3,
+.mission-journeys > .panel > p {
+  margin-left: 20px;
+  margin-right: 20px;
+}
+.report-observation {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+@media (max-width: 800px) {
+  .native-evidence-layout {
+    grid-template-columns: 1fr;
+  }
+  .native-evidence-layout .native-evidence-selector {
+    display: none;
+  }
+  .native-evidence-mobile {
+    display: block;
+    margin: 16px 0;
+  }
+  .native-evidence-mobile select {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+  }
+}
+.native-evidence-selector button {
+  padding: 8px 12px;
+  border: 1px solid #555;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.native-evidence-selector button[aria-pressed="true"] {
+  border-color: #a7bfff;
+  outline: 1px solid #a7bfff;
 }
 .evidence-grid {
   padding: 14px;
@@ -5548,9 +5710,6 @@ select:focus-visible {
 .auth-brand > span {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
-  background: var(--lime);
-  color: #10140d;
   display: grid;
   place-items: center;
 }
@@ -5751,9 +5910,6 @@ select:focus-visible {
 .mini-logo {
   width: 25px;
   height: 25px;
-  border-radius: 7px;
-  background: var(--lime);
-  color: #11150e;
   display: grid;
   place-items: center;
 }
@@ -6273,7 +6429,7 @@ select:focus-visible {
 }
 .oauth-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 .oauth-grid button {
@@ -7662,6 +7818,10 @@ select:focus-visible {
 }
 /* Privacy-safe operator diagnostics */
 .operational-alert-panel,
+.mission-journeys > section[tabindex="-1"] {
+  scroll-margin-top: 80px;
+}
+
 .operational-event-panel {
   margin-bottom: 24px;
 }

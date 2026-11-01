@@ -1,19 +1,16 @@
 {
   "name": "@scry/mcp",
-  "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "e2e:demo": "tsx scripts/e2e-demo.ts",
-    "start": "tsx src/browser-v2-main.ts",
-    "start:http": "tsx src/browser-v2-http.ts",
+    "start": "tsx src/main.ts",
+    "start:http": "tsx src/http.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.0",
     "@scry/contracts": "workspace:*",
-    "@scry/observability": "workspace:*",
     "zod": "^4.0.0",
     "tsx": "^4.20.0"
   },

@@ -17,7 +17,7 @@ export class BrowserProjectController {
     @Inject(BrowserProjectRepository) private readonly projects: BrowserProjectRepository,
   ) {}
 
-  @Get(["projects", "v2/projects"])
+  @Get("projects")
   list(@CurrentPrincipal() principal: Principal) {
     return this.projects.list(principal);
   }

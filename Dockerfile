@@ -8,15 +8,10 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/mcp/package.json apps/mcp/package.json
 COPY apps/web/package.json apps/web/package.json
-COPY packages/assurance/package.json packages/assurance/package.json
-COPY packages/browser-runtime/package.json packages/browser-runtime/package.json
-COPY packages/chronicle/package.json packages/chronicle/package.json
-COPY packages/contracts/package.json packages/contracts/package.json
-COPY packages/executor/package.json packages/executor/package.json
-COPY packages/observability/package.json packages/observability/package.json
-COPY packages/policy/package.json packages/policy/package.json
 COPY packages/praxis/package.json packages/praxis/package.json
+COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/veil/package.json packages/veil/package.json
+COPY packages/chronicle/package.json packages/chronicle/package.json
 RUN --mount=type=cache,id=scry-pnpm,target=/pnpm/store pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 FROM deps AS prod-deps
@@ -32,6 +27,8 @@ FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble AS runner
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /workspace
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg xvfb xclip \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=prod-deps /workspace/package.json /workspace/pnpm-workspace.yaml /workspace/tsconfig.base.json ./
 COPY --from=prod-deps /workspace/node_modules ./node_modules
@@ -39,16 +36,14 @@ COPY --from=prod-deps /workspace/apps ./apps
 COPY --from=prod-deps /workspace/packages ./packages
 COPY apps/api apps/api
 COPY apps/mcp apps/mcp
-COPY packages/browser-runtime packages/browser-runtime
-COPY packages/chronicle packages/chronicle
-COPY packages/contracts packages/contracts
-COPY packages/executor packages/executor
-COPY packages/observability packages/observability
-COPY packages/policy packages/policy
 COPY packages/praxis packages/praxis
+COPY packages/contracts packages/contracts
 COPY packages/veil packages/veil
-COPY scripts/schema-fingerprint.mjs scripts/verify-deployment-preflight.mjs ./scripts/
+COPY packages/chronicle packages/chronicle
+RUN PLAYWRIGHT_SKIP_BROWSER_GC=1 node packages/praxis/node_modules/playwright-mcp-runtime/cli.js install chromium
+COPY scripts/verify-deployment-preflight.mjs ./scripts/
+COPY scripts/operations/supabase-activity.mjs ./scripts/operations/
 COPY --from=build /workspace/apps/web/dist ./apps/web/dist
 COPY apps/web/scripts ./apps/web/scripts
 
-CMD ["apps/api/node_modules/.bin/tsx", "--tsconfig", "apps/api/tsconfig.json", "apps/api/src/browser-v2-main.ts"]
+CMD ["apps/api/node_modules/.bin/tsx", "--tsconfig", "apps/api/tsconfig.json", "apps/api/src/main.ts"]
