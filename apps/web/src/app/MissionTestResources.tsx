@@ -23,6 +23,11 @@ type Event = {
   content: unknown;
   secrets: Array<{ kind: string; protectedValueId: string }>;
 };
+type ReceiptRead = {
+  resourceId: string | undefined;
+  phase: "idle" | "loading" | "ready" | "failed";
+  events: Event[];
+};
 type Inventory = {
   resources: Resource[];
   capabilities: { mailbox: boolean; webhook: boolean };
@@ -54,8 +59,15 @@ function MissionTestResourcesPanel({
   readOnly: boolean;
 }) {
   const [inventory, setInventory] = useState<Inventory>();
+  const [inventoryFailed, setInventoryFailed] = useState(false);
+  const [inventoryRetry, setInventoryRetry] = useState(0);
   const [selected, setSelected] = useState<string>();
-  const [events, setEvents] = useState<Event[]>([]);
+  const [receiptRead, setReceiptRead] = useState<ReceiptRead>({
+    resourceId: undefined,
+    phase: "idle",
+    events: [],
+  });
+  const [receiptRetry, setReceiptRetry] = useState(0);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,40 +81,50 @@ function MissionTestResourcesPanel({
   useEffect(() => {
     let active = true;
     setInventory(undefined);
+    setInventoryFailed(false);
     setSelected(undefined);
-    setEvents([]);
+    setReceiptRead({ resourceId: undefined, phase: "idle", events: [] });
     setError("");
     void api<Inventory>(`/missions/${missionId}/test-resources`)
       .then((data) => {
         if (active) setInventory(data);
       })
       .catch(() => {
-        if (active)
-          setError(
-            "Test mailboxes and webhook observations could not be loaded. Try again shortly.",
-          );
+        if (active) setInventoryFailed(true);
       });
     return () => {
       active = false;
     };
-  }, [missionId]);
+  }, [missionId, inventoryRetry]);
   useEffect(() => {
     let active = true;
     const request = ++eventsRequest.current;
-    setEvents([]);
+    setReceiptRead((previous) => ({
+      resourceId: selected,
+      phase: selected ? "loading" : "idle",
+      events: previous.resourceId === selected ? previous.events : [],
+    }));
     if (selected)
       void api<Event[]>(`/test-resources/${selected}/events`)
         .then((data) => {
-          if (active && request === eventsRequest.current) setEvents(data);
+          if (active && request === eventsRequest.current)
+            setReceiptRead({ resourceId: selected, phase: "ready", events: data });
         })
         .catch(() => {
           if (active && request === eventsRequest.current)
-            setError("Received messages could not be loaded. Select the resource again to retry.");
+            setReceiptRead((previous) => ({ ...previous, phase: "failed" }));
         });
     return () => {
       active = false;
     };
-  }, [selected, missionId]);
+  }, [selected, missionId, receiptRetry]);
+  // Bind facts and request state to the selected resource, including the render
+  // before its effect starts. Never show a previous mailbox's observations
+  // under a new heading, or infer an empty inbox from an unfinished read.
+  const events = receiptRead.resourceId === selected ? receiptRead.events : [];
+  const eventsLoading =
+    Boolean(selected) && (receiptRead.resourceId !== selected || receiptRead.phase === "loading");
+  const eventsFailed = receiptRead.resourceId === selected && receiptRead.phase === "failed";
   const current = inventory?.resources.find((r) => r.id === selected);
   async function allocate(resource?: Resource) {
     if (!resource && (!kind || !name.trim())) return;
@@ -159,6 +181,11 @@ function MissionTestResourcesPanel({
   async function refresh() {
     if (!current) return;
     ++eventsRequest.current;
+    setReceiptRead((previous) => ({
+      resourceId: current.id,
+      phase: "loading",
+      events: previous.resourceId === current.id ? previous.events : [],
+    }));
     setBusy(true);
     setError("");
     try {
@@ -168,7 +195,7 @@ function MissionTestResourcesPanel({
         retryAfterSeconds?: number;
         availability?: string;
       }>(`/test-resources/${current.id}/refresh`, {});
-      setEvents(data.events);
+      setReceiptRead({ resourceId: current.id, phase: "ready", events: data.events });
       setStatus(
         data.availability === "temporarily_unavailable"
           ? "The message service is temporarily unavailable. Saved observations are unchanged; check again shortly."
@@ -179,6 +206,7 @@ function MissionTestResourcesPanel({
               : `Waiting for a matching message.${data.retryAfterSeconds ? ` Check again in about ${data.retryAfterSeconds} seconds.` : ""}`,
       );
     } catch {
+      setReceiptRead((previous) => ({ ...previous, phase: "failed" }));
       setError(
         "Messages could not be checked right now. Previous observations are unchanged; try again shortly.",
       );
@@ -343,7 +371,20 @@ function MissionTestResourcesPanel({
         </form>
       )}
       {error && <p role="alert">{error}</p>}
-      {!inventory && !error && <p role="status">Loading test resources…</p>}
+      {inventoryFailed && (
+        <div role="alert">
+          <p>Test resources could not be loaded. Saved observations are unchanged.</p>
+          <button
+            onClick={() => {
+              setInventoryFailed(false);
+              setInventoryRetry((attempt) => attempt + 1);
+            }}
+          >
+            Retry loading test resources
+          </button>
+        </div>
+      )}
+      {!inventory && !inventoryFailed && <p role="status">Loading test resources…</p>}
       {inventory && !inventory.resources.length && (
         <div className="test-resource-empty">
           <Mail size={22} />
@@ -430,9 +471,29 @@ function MissionTestResourcesPanel({
                     {status}
                   </p>
                 )}
-                {!events.length ? (
-                  <p>No messages recorded yet. Check after the application sends one.</p>
-                ) : (
+                {eventsLoading && <p role="status">Loading received messages…</p>}
+                {eventsFailed && (
+                  <div role="alert">
+                    <p>Received messages could not be loaded. Saved observations are unchanged.</p>
+                    <button
+                      disabled={busy || eventsLoading}
+                      onClick={() => {
+                        setReceiptRead((previous) => ({ ...previous, phase: "loading" }));
+                        setReceiptRetry((attempt) => attempt + 1);
+                      }}
+                    >
+                      Retry loading messages
+                    </button>
+                  </div>
+                )}
+                {!events.length && !eventsLoading && !eventsFailed && (
+                  <p>
+                    {current.state === "closed"
+                      ? "No messages were recorded for this resource."
+                      : "No messages recorded yet. Check after the application sends one."}
+                  </p>
+                )}
+                {!!events.length &&
                   events.map((event) => (
                     <details className="test-message" key={event.id}>
                       <summary>
@@ -450,8 +511,7 @@ function MissionTestResourcesPanel({
                         </p>
                       )}
                     </details>
-                  ))
-                )}
+                  ))}
               </>
             )}
           </div>
