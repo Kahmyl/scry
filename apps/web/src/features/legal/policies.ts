@@ -15,9 +15,9 @@ export const privacyPolicy: PolicyDocument = {
   sections: [
     {
       id: "who-we-are",
-      title: "Who we are",
+      title: "About Scry",
       paragraphs: [
-        "Scry is a testing platform operated by Kamil. It currently supports browser-based testing and evidence review. For privacy questions or requests, use the contact address on this page.",
+        "Scry provides tools for browser-based testing and evidence review. For privacy questions or requests, contact support using the link on this page.",
       ],
     },
     {
@@ -59,7 +59,7 @@ export const privacyPolicy: PolicyDocument = {
       paragraphs: [
         "Information is processed by the service providers needed to run Scry, including Supabase for authentication and our cloud hosting and storage providers. Google processes information when you choose Google sign-in under its own privacy policy.",
         "Your authorized workspace users and connected agents or tools may receive testing information and evidence within their permitted access. When you connect an external AI agent or export evidence, the receiving service’s own terms and privacy practices also apply. Google sign-in does not itself grant an agent access to your workspace.",
-        "The operator may access information when necessary to provide requested support, investigate service or security problems, or meet legal obligations. We may disclose information when legally required or necessary to protect users, the service or others from unlawful activity.",
+        "Information may be accessed when needed to provide requested support, investigate service or security problems, or meet legal obligations. We may disclose information when legally required or necessary to protect users, the service or others from unlawful activity.",
         "Service providers may process information in countries different from your own. We do not promise a particular country of storage or data residency arrangement.",
       ],
     },
@@ -76,7 +76,7 @@ export const privacyPolicy: PolicyDocument = {
       title: "Retention and your choices",
       paragraphs: [
         "We retain account information, testing records and evidence while needed to provide the service, respond to requests and meet applicable legal or security obligations. Retention depends on the type of information, whether the account or workspace remains in use and whether deletion has been requested. There is no fixed automatic evidence-expiry period promised by this policy.",
-        "Contact us at the address on this page to request access, correction, account closure or deletion. We may need to verify your identity and your authority over a workspace before acting. Your request may affect shared workspace records; another person’s independent records are not automatically deleted.",
+        "Contact support to request access, correction, account closure or deletion. We may need to verify your identity and your authority over a workspace before acting. Your request may affect shared workspace records; another person’s independent records are not automatically deleted.",
         "You can remove Scry’s Google connection through your Google Account settings. Removing that connection is separate from requesting deletion of information already stored in Scry. Backup copies and records required for legal or security reasons may need separate handling. Contact us for information about a particular record or deletion request.",
       ],
     },
@@ -93,14 +93,14 @@ export const privacyPolicy: PolicyDocument = {
 export const termsOfService: PolicyDocument = {
   path: "/terms",
   title: "Terms of Service",
-  summary: "The terms for using Scry’s hosted browser-testing service.",
+  summary: "The terms for using Scry’s testing tools and evidence.",
   sections: [
     {
       id: "about-scry",
       title: "About Scry",
       paragraphs: [
-        "Scry is operated by Kamil. It provides tools for testing applications and reviewing evidence. The current service supports browser-based testing.",
-        "These terms govern use of Scry’s hosted service. By creating an account or using the service, you agree to these terms. For questions, use the contact address on this page.",
+        "Scry provides tools for browser-based testing and reviewing evidence.",
+        "These terms govern use of Scry. By creating an account or using the service, you agree to these terms. For questions, contact support using the link on this page.",
       ],
     },
     {
@@ -131,18 +131,10 @@ export const termsOfService: PolicyDocument = {
       ],
     },
     {
-      id: "beta-limitations",
-      title: "Hosted beta limitations",
-      paragraphs: [
-        "The service is currently a beta. Features may change, work may be interrupted, and availability or evidence capture may be limited. These beta terms do not include an uptime service-level agreement, unlimited storage or a guarantee that every interaction can be completed.",
-        "Keep independent copies of material you need. We may change or withdraw beta features and will communicate material changes where reasonably practicable. Any future paid offering must disclose its pricing and applicable terms before you agree to a charge; these terms do not authorize a purchase on your behalf.",
-      ],
-    },
-    {
       id: "ending-use",
       title: "Service protection and ending use",
       paragraphs: [
-        "You may stop using Scry at any time. Contact us at the address on this page to request account closure or deletion of associated information as described in the Privacy Policy.",
+        "You may stop using Scry at any time. Contact support to request account closure or deletion of associated information as described in the Privacy Policy.",
         "We may restrict access when necessary to address unauthorized use, material abuse, security risks or legal requirements. Where appropriate and permitted, we will explain the restriction and provide a way to contact us. Account closure does not automatically remove another user’s independently held data.",
       ],
     },
@@ -150,7 +142,7 @@ export const termsOfService: PolicyDocument = {
       id: "responsibility",
       title: "Warranties, responsibility and mandatory rights",
       paragraphs: [
-        "To the extent permitted by applicable law, the beta is provided as available, without a promise of uninterrupted operation, complete test coverage or error-free results. Nothing in these terms excludes a right or responsibility that cannot lawfully be excluded.",
+        "To the extent permitted by applicable law, Scry is provided as available, without a promise of uninterrupted operation, complete test coverage or error-free results. Nothing in these terms excludes a right or responsibility that cannot lawfully be excluded.",
       ],
     },
     {

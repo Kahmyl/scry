@@ -49,9 +49,7 @@ describe("public legal pages", () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "kamilhabib556@gmail.com" }).length).toBeGreaterThan(
-      0,
-    );
+    expect(screen.getAllByRole("link", { name: "Contact support" }).length).toBeGreaterThan(0);
     expect(auth.initialize).not.toHaveBeenCalled();
     expect(auth.getSession).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();

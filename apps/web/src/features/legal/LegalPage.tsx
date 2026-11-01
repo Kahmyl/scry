@@ -46,7 +46,6 @@ export function LegalPage({ policy }: { policy: PolicyDocument }) {
           <p>{policy.summary}</p>
           <div className="legal-meta">
             <span>Effective {policyEffectiveDate}</span>
-            <span>Operated by Kamil</span>
           </div>
         </div>
 
@@ -84,10 +83,10 @@ export function LegalPage({ policy }: { policy: PolicyDocument }) {
               </section>
             ))}
             <div className="legal-contact">
-              <h2>Let’s help you with that.</h2>
-              <p>Questions about this policy or your information? Contact Kamil.</p>
+              <h2>Need help?</h2>
+              <p>Contact support with questions about this policy or your information.</p>
               <a href={`mailto:${privacyContact}`}>
-                {privacyContact} <ArrowUpRight size={16} aria-hidden="true" />
+                Contact support <ArrowUpRight size={16} aria-hidden="true" />
               </a>
             </div>
           </article>
@@ -95,7 +94,7 @@ export function LegalPage({ policy }: { policy: PolicyDocument }) {
       </main>
       <footer className="legal-footer">
         <span>© {new Date().getFullYear()} Scry</span>
-        <a href={`mailto:${privacyContact}`}>{privacyContact}</a>
+        <a href={`mailto:${privacyContact}`}>Contact support</a>
       </footer>
     </div>
   );

@@ -24,9 +24,11 @@ describe("public policies", () => {
       const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
       expect(new Set(ids).size).toBe(ids.length);
       expect(
-        screen.getAllByRole("link", { name: "kamilhabib556@gmail.com" })[0]!.getAttribute("href"),
+        screen.getAllByRole("link", { name: "Contact support" })[0]!.getAttribute("href"),
       ).toBe("mailto:kamilhabib556@gmail.com");
-      expect(screen.getByText("Operated by Kamil")).toBeTruthy();
+      expect(view.container.textContent).not.toMatch(
+        /\bKamil\b|\bKameo\b|operated by|\bbeta\b|kamilhabib556@gmail\.com/i,
+      );
       expect(
         screen.queryByText(/review draft|not published or effective|before publication/i),
       ).toBeNull();
