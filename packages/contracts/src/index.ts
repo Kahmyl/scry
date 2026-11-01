@@ -5,3 +5,4 @@ export * from "./boundary-ports.js";
 export * from "./chronicle-ports.js";
 export * from "./praxis-ports.js";
 export * from "./native-browser-command.js";
+export * from "./test-resources.js";

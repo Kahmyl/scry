@@ -8,9 +8,10 @@ import { IdentityRepository } from "./auth/repositories/identity.repository.js";
 import { McpTokenRepository } from "./auth/repositories/mcp-token.repository.js";
 import { BrowserExecutionModule } from "./browser-execution/index.js";
 import { BrowserExceptionFilter } from "./browser-execution/browser-exception.filter.js";
+import { TestResourcesModule } from "./test-resources/test-resources.module.js";
 
 @Module({
-  imports: [BrowserExecutionModule],
+  imports: [BrowserExecutionModule, TestResourcesModule],
   controllers: [McpTokensController],
   providers: [
     IdentityRepository,

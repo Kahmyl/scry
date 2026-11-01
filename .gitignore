@@ -4,6 +4,7 @@ coverage/
 *.tsbuildinfo
 .env
 .env.auth.local
+.env.test-resources.local
 !.env.auth.example
 /artifacts/
 /apps/api/artifacts/

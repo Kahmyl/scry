@@ -220,6 +220,13 @@ export const checks: readonly CheckDefinition[] = [
     { database: true, redis: true },
   ),
   tests(
+    "test-resources",
+    "Mission-scoped receipts, shared provider pacing, retries and secret binding",
+    "@scry/api",
+    ["test/test-resources.integration.test.ts"],
+    { database: true, minimum: 19 },
+  ),
+  tests(
     "worker-shutdown",
     "Busy native browser cancellation precedes actual Redis job and transport drain",
     "@scry/api",
@@ -336,7 +343,7 @@ export const profiles: Readonly<Record<string, readonly string[]>> = {
     "command-cancellation",
     "browser-recording",
   ],
-  database: ["schema-upgrades", "database-lifecycle"],
+  database: ["schema-upgrades", "database-lifecycle", "test-resources"],
   worker: ["command-queue", "worker-shutdown", "worker-journey", "command-lifetime"],
   owner: [
     "owner-admission",

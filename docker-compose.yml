@@ -100,6 +100,8 @@ services:
         required: false
     environment:
       <<: [*app-environment, *release-environment]
+      SCRY_TEST_MAIL_ENABLED: "${SCRY_TEST_MAIL_ENABLED:-false}"
+      HOOKDECK_API_KEY: "${HOOKDECK_API_KEY:-}"
       API_HOST: 0.0.0.0
       API_PORT: 4000
       API_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173

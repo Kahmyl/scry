@@ -374,6 +374,15 @@ export class PraxisMcpBrowserEngine {
           secret = await this.commands.protectedValueForBrowser(id, protectedValueId);
           tool = "browser_type";
           args = { target, text: "", ...(submit === undefined ? {} : { submit }) };
+        } else if (tool === "browser_navigate_secret") {
+          if (typeof command.args.protectedValueId !== "string")
+            throw failure("INVALID_TOOL_ARGUMENTS");
+          const url = await this.commands.protectedValueForBrowser(
+            id,
+            command.args.protectedValueId,
+          );
+          tool = "browser_navigate";
+          args = { url };
         } else if (tool === "browser_edit_text") {
           args = editBrowserTextSchema.parse(command.args);
         } else {

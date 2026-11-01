@@ -1,4 +1,5 @@
 export * from "./classifier.js";
+export * from "./test-message-protection.js";
 export * from "./sanitizer.js";
 export * from "./protection-authority.js";
 export * from "./protected-capture-vault.js";

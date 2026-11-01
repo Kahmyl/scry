@@ -82,6 +82,14 @@ export async function assertBrowserSchema(database: Queryable): Promise<void> {
   );
   if (attempts.rowCount !== 1)
     throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:attempt_conclusions");
+  const testResources =
+    await database.query(`SELECT table_name||'.'||column_name FROM information_schema.columns
+    WHERE table_schema='public' AND
+      ((table_name='test_resources' AND column_name IN ('id','mission_id','private_data','lease_id','lease_until','expires_at','idempotency_key','requested_lifetime','ownership','connected_address','password_credential_id')) OR
+       (table_name='test_resource_events' AND column_name IN ('resource_id','provider_event_id','safe_content','protected_refs')) OR
+       (table_name='test_provider_limits' AND column_name IN ('provider','next_request_at','blocked_until')))`);
+  if (testResources.rowCount !== 18)
+    throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:test_resources");
 }
 
 /** Frozen retained-baseline requirements for transactional adoption. New runtime
