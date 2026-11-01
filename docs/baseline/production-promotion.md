@@ -1,5 +1,27 @@
 # Production promotion
 
+## Staging compatibility
+
+Before interrupting an installed release, the deployment controller binds its
+rollback health route to the retained API container's exact release and immutable
+image identity. It accepts only the two known API health contracts. Candidate
+health always uses the current route; recovery and replay propagate failed
+checks explicitly. Unknown rollback contracts refuse before service interruption.
+
+For historical staging configuration, run
+`node scripts/operations/preserve-browser-key-config.mjs /absolute/environment`
+to inspect pending aliases, then add `--apply` only after review. This mechanical
+operation preserves exact key values and identifiers, retains historical names,
+creates a private original-file backup and atomically adds current names. It
+refuses conflicts rather than rotating keys. It does not change authentication.
+
+The isolated staging-copy rehearsal on 1 November 2026 preserved all 87 rows
+across 32 historical tables, including ciphertext, while adopting the retained
+schema and applying six additive migrations. All fourteen migration receipts and
+the existing activation receipt were verified. A second migration changed no
+historical data. The disposable, network-isolated copy was removed; no live
+database reset, mutation or browser execution was part of this rehearsal.
+
 ## Current candidate status
 
 The accepted interface and the experimentally qualified stop/finalize correction

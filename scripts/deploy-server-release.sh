@@ -206,6 +206,25 @@ else
   fi
 fi
 
+# Bind rollback to the retained API container's declared health contract. Older
+# releases declare it in Compose, not the image. Inspect stopped containers too.
+# Do not probe arbitrary routes or relax the candidate's current health check.
+previous_api_health_path=/api/health
+if [[ "$previous_available" == true ]]; then
+  previous_api=$(run_compose "$previous_compose" "$previous_image" "$previous_release" ps -aq api)
+  [[ "$previous_api" =~ ^[A-Za-z0-9_-]+$ ]] || fail "exactly one retained API container is required for rollback verification"
+  [[ "$(docker inspect --format '{{.Config.Image}}' "$previous_api")" == "$previous_image" &&
+    "$(container_env_value "$previous_api" SCRY_RELEASE_ID)" == "$previous_release" ]] ||
+    fail "retained API container does not match saved rollback identity"
+  previous_health_test=$(docker inspect --format '{{json .Config.Healthcheck.Test}}' "$previous_api")
+  case "$previous_health_test" in
+    '["CMD","wget","-qO-","http://127.0.0.1:4000/api/health"]') ;;
+    '["CMD","wget","-qO-","http://127.0.0.1:4000/api/v2/health"]')
+      previous_api_health_path=/api/v2/health ;;
+    *) fail "previous API health contract is unsupported; refusing before service interruption" ;;
+  esac
+fi
+
 log "Pulling immutable candidate image $image_ref."
 docker pull "$image_ref" >/dev/null
 resolved_image=$(docker image inspect --format '{{index .RepoDigests 0}}' "$image_ref")
@@ -243,17 +262,18 @@ health_check() {
   local compose_file=$1
   local selected_image=$2
   local selected_release=$3
+  local api_health_path=${4:-/api/health}
   run_compose "$compose_file" "$selected_image" "$selected_release" \
-    exec -T api wget -qO- http://127.0.0.1:4000/api/health >/dev/null
+    exec -T api wget -qO- "http://127.0.0.1:4000$api_health_path" >/dev/null || return 1
   run_compose "$compose_file" "$selected_image" "$selected_release" \
-    exec -T mcp wget -qO- http://127.0.0.1:4100/health >/dev/null
+    exec -T mcp wget -qO- http://127.0.0.1:4100/health >/dev/null || return 1
   run_compose "$compose_file" "$selected_image" "$selected_release" \
-    exec -T web wget -qO- http://127.0.0.1:3000/ >/dev/null
+    exec -T web wget -qO- http://127.0.0.1:3000/ >/dev/null || return 1
   for service in api worker mcp web; do
     actual_release=$(run_compose "$compose_file" "$selected_image" "$selected_release" \
-      exec -T "$service" printenv SCRY_RELEASE_ID)
+      exec -T "$service" printenv SCRY_RELEASE_ID) || return 1
     [[ "$actual_release" == "$selected_release" ]] ||
-      fail "$service is running release $actual_release instead of $selected_release"
+      { fail "$service is running release $actual_release instead of $selected_release"; return 1; }
   done
 }
 
@@ -302,7 +322,7 @@ rollback() {
     if ! run_compose "$previous_compose" "$previous_image" "$previous_release" \
       up -d --no-deps --force-recreate --wait --wait-timeout "$health_timeout" api worker mcp web caddy; then
       recovery_failed=true
-    elif ! health_check "$previous_compose" "$previous_image" "$previous_release"; then
+    elif ! health_check "$previous_compose" "$previous_image" "$previous_release" "$previous_api_health_path"; then
       recovery_failed=true
     fi
   fi

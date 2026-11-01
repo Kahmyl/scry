@@ -105,6 +105,70 @@ assertInOrder(migrationFailure.log, [
 ]);
 assert.match(migrationFailure.state, new RegExp(`CURRENT_RELEASE_ID=${previousRelease}`));
 
+const legacyRollback = runScenario("legacy-health-rollback", {
+  FAIL_MIGRATE: "true",
+  PREVIOUS_API_PATH: "/api/v2/health",
+});
+assert.equal(legacyRollback.status, 55, legacyRollback.stderr);
+assert.match(legacyRollback.stderr, /Previous release restored/);
+assert.match(legacyRollback.log, /api wget -qO- http:\/\/127.0.0.1:4000\/api\/v2\/health/);
+
+const unknownHealth = runScenario("unknown-health-contract", {
+  PREVIOUS_API_PATH: "/unknown/health",
+});
+assert.notEqual(unknownHealth.status, 0);
+assert.match(unknownHealth.stderr, /previous API health contract is unsupported/);
+assert.ok(
+  !unknownHealth.log.includes("stop -t"),
+  "unknown recovery contract must refuse before fencing",
+);
+
+const candidateHealthFailure = runScenario("candidate-health-failure", {
+  FAIL_CANDIDATE_HEALTH: "true",
+  PREVIOUS_API_PATH: "/api/v2/health",
+});
+assert.notEqual(candidateHealthFailure.status, 0);
+assert.match(candidateHealthFailure.stderr, /Previous release restored/);
+assert.ok(
+  !candidateHealthFailure.log
+    .split("\n")
+    .some(
+      (line) =>
+        line.startsWith(`SCRY_RELEASE_ID=${candidateRelease} `) &&
+        line.includes("4000/api/v2/health"),
+    ),
+  "candidate must never use the legacy health endpoint",
+);
+assert.match(candidateHealthFailure.state, new RegExp(`CURRENT_RELEASE_ID=${previousRelease}`));
+
+const unhealthyReplay = runScenario("unhealthy-replay", {
+  SAME_RELEASE: "true",
+  FAIL_CANDIDATE_HEALTH: "true",
+});
+assert.notEqual(unhealthyReplay.status, 0);
+assert.ok(!unhealthyReplay.stdout.includes("already healthy"));
+
+const legacyHealthFailure = runScenario("legacy-health-failure", {
+  FAIL_MIGRATE: "true",
+  PREVIOUS_API_PATH: "/api/v2/health",
+  FAIL_PREVIOUS_HEALTH: "true",
+});
+assert.equal(legacyHealthFailure.status, 90);
+assert.match(legacyHealthFailure.stderr, /public traffic remains fenced/);
+
+const mismatchedIdentity = runScenario("mismatched-rollback-identity", {
+  INSPECTED_RELEASE: "3".repeat(40),
+});
+assert.notEqual(mismatchedIdentity.status, 0);
+assert.match(mismatchedIdentity.stderr, /does not match saved rollback identity/);
+assert.ok(!mismatchedIdentity.log.includes("stop -t"));
+
+const wrongServiceRelease = runScenario("wrong-service-release", {
+  WRONG_CANDIDATE_SERVICE_RELEASE: "true",
+});
+assert.notEqual(wrongServiceRelease.status, 0);
+assert.match(wrongServiceRelease.stderr, /Previous release restored/);
+
 const recoveryFailure = runScenario("recovery-failure", {
   FAIL_MIGRATE: "true",
   FAIL_RESTORE: "true",
@@ -214,9 +278,11 @@ set -u
 printf 'SCRY_RELEASE_ID=%s %s\\n' "\${SCRY_RELEASE_ID:-}" "$*" >>"$MOCK_DOCKER_LOG"
 args="$*"
 if [[ "$args" == "compose version --short" ]]; then printf '2.40.0\\n'; exit 0; fi
+if [[ "$args" == *"ps -aq api" ]]; then printf 'existing-api\\n'; exit 0; fi
 if [[ "$args" == ps\\ -q* ]]; then [[ "\${BOOTSTRAP:-false}" == true ]] && printf 'existing-api\\n'; exit 0; fi
-if [[ "$args" == *"range .Config.Env"* ]]; then printf 'SCRY_RELEASE_ID=%s\\n' "$PREVIOUS_RELEASE"; exit 0; fi
+if [[ "$args" == *"range .Config.Env"* ]]; then printf 'SCRY_RELEASE_ID=%s\\n' "\${INSPECTED_RELEASE:-$PREVIOUS_RELEASE}"; exit 0; fi
 if [[ "$args" == *".Config.Image"* ]]; then printf '%s\\n' "$PREVIOUS_IMAGE"; exit 0; fi
+if [[ "$args" == *".Config.Healthcheck.Test"* ]]; then printf '["CMD","wget","-qO-","http://127.0.0.1:4000%s"]\\n' "\${PREVIOUS_API_PATH:-/api/health}"; exit 0; fi
 if [[ "$args" == *"com.docker.compose.project.config_files"* ]]; then [[ "\${OMIT_CONFIG_LABEL:-false}" == true ]] || printf '%s\\n' "$DISCOVERED_COMPOSE"; exit 0; fi
 if [[ "$args" == *"com.docker.compose.project.working_dir"* ]]; then printf '%s\\n' "$DEPLOY_DIR"; exit 0; fi
 if [[ "$args" == *"index .RepoDigests 0"* ]]; then printf '%s\\n' "$CANDIDATE_IMAGE"; exit 0; fi
@@ -224,7 +290,17 @@ if [[ "$args" == *"org.scry.release-id"* ]]; then printf '%s\\n' "$CANDIDATE_REL
 if [[ "$args" == *"SELECT 1 FROM pg_database"* ]]; then printf '1\\n'; exit 0; fi
 if [[ "$args" == *"browser_execution_sessions"* ]]; then printf '%s\\n' "\${ACTIVE_WORK:-0}"; exit 0; fi
 if [[ "$args" == *"pg_dump"* ]]; then printf 'mock-database-dump\\n'; exit 0; fi
-if [[ "$args" == *"printenv SCRY_RELEASE_ID"* ]]; then printf '%s\\n' "$SCRY_RELEASE_ID"; exit 0; fi
+if [[ "$args" == *"exec -T api wget"* ]]; then
+  if [[ "$SCRY_RELEASE_ID" == "$CANDIDATE_RELEASE" ]]; then
+    [[ "$args" == *"4000/api/health"* && "\${FAIL_CANDIDATE_HEALTH:-false}" != true ]]; exit $?
+  fi
+  [[ "$args" == *"4000\${PREVIOUS_API_PATH:-/api/health}"* && "\${FAIL_PREVIOUS_HEALTH:-false}" != true ]]; exit $?
+fi
+if [[ "$args" == *"printenv SCRY_RELEASE_ID"* ]]; then
+  if [[ "$SCRY_RELEASE_ID" == "$CANDIDATE_RELEASE" && "\${WRONG_CANDIDATE_SERVICE_RELEASE:-false}" == true ]]; then printf '%s\\n' "$PREVIOUS_RELEASE";
+  else printf '%s\\n' "$SCRY_RELEASE_ID"; fi
+  exit 0
+fi
 if [[ "$args" == *"run --rm --no-deps migrate"* && "\${FAIL_MIGRATE:-false}" == true ]]; then exit 55; fi
 if [[ "$args" == *"pg_restore"* && "\${FAIL_RESTORE:-false}" == true ]]; then exit 66; fi
 if [[ "$args" == *"run --rm --no-deps --entrypoint caddy caddy validate"* && "\${FAIL_CADDY_VALIDATE:-false}" == true ]]; then exit 77; fi
@@ -243,8 +319,8 @@ exit 0
         MOCK_DOCKER_LOG: logFile,
         CANDIDATE_IMAGE: candidateImage,
         CANDIDATE_RELEASE: candidateRelease,
-        PREVIOUS_RELEASE: previousRelease,
-        PREVIOUS_IMAGE: previousImage,
+        PREVIOUS_RELEASE: savedRelease,
+        PREVIOUS_IMAGE: savedImage,
         DISCOVERED_COMPOSE: discoveredComposeFiles,
         DEPLOY_DIR: deployDir,
         ...additions,
