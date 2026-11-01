@@ -117,6 +117,12 @@ Mission observations read-only. A report's written findings must identify the
 receipt, timestamp, expected content and application state actually checked.
 Later Mission receipts do not change the report's reviewed findings.
 
+Saved-observation reads distinguish loading, a successful empty result and a
+failed request. Both Mission and read-only Report panels offer an explicit
+same-resource retry that reads Scry's saved receipts only; it does not replay a
+provider call or application action. Late responses cannot replace another
+resource's observations or a newer refresh result.
+
 ## API and MCP
 
 All endpoints require existing bearer authentication and workspace access.
