@@ -218,7 +218,34 @@ async function exercise() {
   });
   assert.ok(sessionId, "MCP_SESSION_NOT_RETAINED");
   const tools = await rpc("tools/list", {});
-  assert.equal(tools.tools.length, 16);
+  assert.deepEqual(
+    tools.tools.map((tool) => tool.name).sort(),
+    [
+      "list_projects",
+      "list_missions",
+      "list_environments",
+      "create_environment",
+      "list_credentials",
+      "create_credential",
+      "bind_credentials",
+      "start_mission",
+      "create_objective",
+      "create_flow",
+      "start_run",
+      "get_mission",
+      "finalize_run",
+      "publish_mission_report",
+      "command",
+      "get_command",
+      "connect_test_mailbox",
+      "list_test_resources",
+      "create_test_mailbox",
+      "create_webhook_listener",
+      "read_test_messages",
+      "bind_test_message_secret",
+      "close_test_resource",
+    ].sort(),
+  );
   const call = async (name, args) => {
     const result = await rpc("tools/call", { name, arguments: args });
     assert.ok(!result.isError, `MCP fixture tool refused: ${name}`);
@@ -245,6 +272,14 @@ async function exercise() {
       "Read the local fixture, fill the explicitly supplied credential, and close with evidence.",
     provider: "human",
   });
+  const testResources = await call("list_test_resources", { missionId: mission.missionId });
+  assert.deepEqual(testResources.resources, []);
+  assert.equal(typeof testResources.capabilities.mailbox, "boolean");
+  assert.equal(typeof testResources.capabilities.webhook, "boolean");
+  assert.ok(
+    !JSON.stringify(testResources).includes(credential),
+    "TEST_RESOURCE_CREDENTIAL_ESCAPED",
+  );
   const objective = await call("create_objective", {
     missionId: mission.missionId,
     agentSessionId: mission.agentSessionId,

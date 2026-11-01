@@ -266,8 +266,9 @@ export class BrowserLifecycleRepository {
             const available = await client.query<{ id: string }>(
               `SELECT id FROM protected_values
            WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
+             AND (mission_id IS NULL OR mission_id=$3)
              AND (expires_at IS NULL OR expires_at>now()) FOR UPDATE`,
-              [protectedInputIds, input.projectId],
+              [protectedInputIds, input.projectId, input.missionId],
             );
             if (available.rowCount !== protectedInputIds.length)
               throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
@@ -542,7 +543,8 @@ export class BrowserLifecycleRepository {
        FROM protected_values v
        JOIN browser_session_protected_inputs i ON i.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=i.session_id
-       WHERE s.mission_id=$1 AND v.project_id=$2 AND v.source_kind='user_input' AND v.state='active'`,
+       WHERE s.mission_id=$1 AND v.project_id=$2 AND v.source_kind='user_input' AND v.state='active'
+         AND (v.mission_id IS NULL OR v.mission_id=s.mission_id)`,
       [missionId, projectId],
     );
     const protectedValues: Record<string, string> = {};

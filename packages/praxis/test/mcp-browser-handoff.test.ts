@@ -13,6 +13,54 @@ import type {
 } from "@scry/contracts";
 
 describe("official adapter command handoff", () => {
+  it("resolves a bound access link privately but refuses navigation outside the Run origin", async () => {
+    let link = "http://outside.invalid/verify?token=fictional_access_link";
+    const effects = { assertOwner: vi.fn(async () => {}) } as unknown as PraxisEffectsPort;
+    const commands = {
+      protectedValuesForSession: vi.fn(async () => ({})),
+      protectedValueForBrowser: vi.fn(async () => link),
+    } as unknown as PraxisCommandsPort;
+    const engine = new PraxisMcpBrowserEngine(
+      commands,
+      effects,
+      {} as ChronicleEvidencePort,
+      {} as VeilBrowserProtectionPort,
+      "unused",
+    );
+    const c = (engine as unknown as { cell(id: string): any }).cell("private-link");
+    c.scope = { baseOrigin: "http://app.test", allowedOrigins: ["http://app.test"] };
+    c.lease = new PraxisOwnerLease(
+      { sessionId: c.id, generation: 1, leaseToken: "private" },
+      effects,
+      { sampleStartedAt: performance.now(), leaseRemainingMs: 60000 },
+    );
+    c.opening = Promise.resolve();
+    c.policyDigest = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    c.custody = { synchronize: vi.fn(async () => {}) };
+    c.worker = {
+      call: vi.fn(async () => ({ content: [{ type: "text", text: "Application view" }] })),
+    };
+    const command = {
+      kind: "browser_tool",
+      tool: "browser_navigate_secret",
+      args: { protectedValueId: "opaque-reference" },
+    } as const;
+    try {
+      await expect(engine.execute(c.id, command)).rejects.toThrow("ORIGIN_DENIED");
+      expect(c.worker.call).not.toHaveBeenCalled();
+      link = "http://app.test/verify?token=fictional_access_link";
+      await expect(engine.execute(c.id, command)).resolves.toMatchObject({
+        execution: "completed",
+      });
+      expect(c.worker.call.mock.calls[0][0]).toMatchObject({
+        tool: "browser_navigate",
+        args: { url: link },
+      });
+      expect(JSON.stringify(command)).not.toContain("fictional_access_link");
+    } finally {
+      c.lease.revoke();
+    }
+  });
   it("uses the same bounded native observation allowance after an action as for an explicit snapshot", async () => {
     const effects = { assertOwner: vi.fn(async () => {}) } as unknown as PraxisEffectsPort;
     const commands = {

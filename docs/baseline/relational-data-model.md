@@ -2,6 +2,11 @@
 
 Status: canonical baseline relational model
 
+The test-resource capability uses mission-owned `test_resources`, immutable
+`test_resource_events` and database-wide `test_provider_limits`. Credentials
+and usable access values reuse the existing cipher; raw message copies are not
+retained. See [Test resources](test-resources.md) for lifecycle and limits.
+
 The active `browser_execution_sessions` inventory also represents live browser
 capacity reservations. Creation is serialized across both entry paths by one
 short database transaction lock, with exact replay checked before the capacity

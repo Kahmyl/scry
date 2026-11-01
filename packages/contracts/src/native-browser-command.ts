@@ -43,7 +43,7 @@ export const browserToolCommandSchema = z.object({
     .refine(
       (name) =>
         nativeBrowserTools.has(name as never) ||
-        ["browser_type_secret", "browser_edit_text"].includes(name),
+        ["browser_type_secret", "browser_navigate_secret", "browser_edit_text"].includes(name),
     ),
   args: z
     .record(z.string(), z.unknown())

@@ -32,6 +32,13 @@ describe("browser baseline MCP profile", () => {
       "publish_mission_report",
       "command",
       "get_command",
+      "connect_test_mailbox",
+      "list_test_resources",
+      "create_test_mailbox",
+      "create_webhook_listener",
+      "read_test_messages",
+      "bind_test_message_secret",
+      "close_test_resource",
     ]);
     const flow = tools.find((tool) => tool.name === "create_flow")!;
     expect(flow.description).toContain("agent's discretion");

@@ -16,6 +16,7 @@ import { z } from "zod";
 
 import { BrowserApiClient } from "./api-client.js";
 import { reportingInstructions } from "./reporting-guidance.js";
+import { registerTestResourceTools, testResourceInstructions } from "./test-resource-tools.js";
 import {
   nativeBrowserInstructions,
   nativeCommandResult,
@@ -41,12 +42,13 @@ export function createBrowserMcpServer(client = new BrowserApiClient()) {
   const server = new McpServer(
     { name: "scry-browser", version: "baseline" },
     {
-      instructions: `${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${reportingInstructions}`,
+      instructions: `${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${testResourceInstructions}\n\n${reportingInstructions}`,
     },
   );
   registerLifecycleTools(server, client, native);
   registerBrowserCommandTools(server, client, native);
   if (native) registerNativeBrowserTools(server, client, awaitCommand);
+  registerTestResourceTools(server, client);
   return server;
 }
 

@@ -107,7 +107,7 @@ export class BrowserCommandRepository {
                      THEN 'expired' ELSE state END AS state,
                 created_at AS "createdAt",expires_at AS "expiresAt"
          FROM protected_values
-         WHERE project_id=$1 AND source_kind='user_input' AND state<>'deleted'
+         WHERE project_id=$1 AND source_kind='user_input' AND mission_id IS NULL AND state<>'deleted'
          ORDER BY display_name,created_at`,
         [projectId],
       );
@@ -181,8 +181,12 @@ export class BrowserCommandRepository {
       const uniqueIds = [...new Set(protectedInputIds)];
       if (uniqueIds.length !== protectedInputIds.length)
         throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
-      const session = await client.query<{ sessionId: string; projectId: string }>(
-        `SELECT s.id AS "sessionId",s.project_id AS "projectId"
+      const session = await client.query<{
+        sessionId: string;
+        projectId: string;
+        missionId: string;
+      }>(
+        `SELECT s.id AS "sessionId",s.project_id AS "projectId",s.mission_id AS "missionId"
          FROM runs r
          JOIN browser_execution_sessions s ON s.run_id=r.id
          JOIN projects p ON p.id=r.project_id
@@ -195,9 +199,10 @@ export class BrowserCommandRepository {
       const available = await client.query<{ id: string }>(
         `SELECT id FROM protected_values
          WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
+           AND (mission_id IS NULL OR mission_id=$3)
            AND (expires_at IS NULL OR expires_at>now())
          FOR UPDATE`,
-        [uniqueIds, session.rows[0].projectId],
+        [uniqueIds, session.rows[0].projectId, session.rows[0].missionId],
       );
       if (available.rowCount !== uniqueIds.length)
         throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
@@ -637,6 +642,7 @@ export class BrowserCommandRepository {
        JOIN browser_session_protected_inputs i ON i.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=i.session_id AND s.project_id=v.project_id
        WHERE s.id=$1 AND v.state='active' AND v.source_kind='user_input'
+         AND (v.mission_id IS NULL OR v.mission_id=s.mission_id)
          AND (v.expires_at IS NULL OR v.expires_at>now()) ORDER BY v.id`,
       [sessionId],
     );
@@ -944,6 +950,7 @@ export class BrowserCommandRepository {
        FROM protected_values v JOIN browser_session_protected_inputs b ON b.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=b.session_id AND s.project_id=v.project_id
        WHERE s.id=$1 AND v.id=$2 AND v.source_kind='user_input' AND v.state='active'
+         AND (v.mission_id IS NULL OR v.mission_id=s.mission_id)
          AND (v.expires_at IS NULL OR v.expires_at>now())`,
       [sessionId, protectedValueId],
     );

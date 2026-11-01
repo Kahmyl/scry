@@ -23,6 +23,7 @@ import { ProjectSettings } from "./ProjectSettings.js";
 import { RunEvidence } from "./RunEvidence.js";
 import { reportNarrative, type EvidenceSelection } from "./ReportNarrative.js";
 import { MissionCollection } from "./MissionCollection.js";
+import { MissionTestResources } from "./MissionTestResources.js";
 import {
   MissionDetailDesign,
   JourneyEvidenceDesign,
@@ -362,7 +363,12 @@ function MissionDetailView({
       {...(mission.finalReportId
         ? { onReport: () => navigate(`/dashboard/reports/${mission.finalReportId}`) }
         : {})}
-      journeys={<MissionJourneys mission={mission} />}
+      journeys={
+        <>
+          <MissionJourneys mission={mission} />
+          <MissionTestResources missionId={missionId} />
+        </>
+      }
     />
   );
 }
@@ -499,11 +505,14 @@ function ReportDetail({
       onEvidence={setSelection}
       evidenceRequested={!!selection}
       evidence={
-        <ReportMissionEvidence
-          missionId={report.missionId}
-          {...(selection ? { selection } : {})}
-          onSelect={setSelection}
-        />
+        <>
+          <ReportMissionEvidence
+            missionId={report.missionId}
+            {...(selection ? { selection } : {})}
+            onSelect={setSelection}
+          />
+          <MissionTestResources missionId={report.missionId} readOnly />
+        </>
       }
     />
   );

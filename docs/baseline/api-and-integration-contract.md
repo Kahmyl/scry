@@ -2,6 +2,10 @@
 
 Status: canonical baseline contract
 
+Mission-scoped email and webhook operations, pacing and rollout requirements
+are specified in [Test resources](test-resources.md). Provider credentials and
+activation are configured separately on the server.
+
 ## Live browser capacity
 
 Both supported session-creation paths share database-wide admission. A Session

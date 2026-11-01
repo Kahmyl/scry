@@ -1,0 +1,218 @@
+.test-resources {
+  margin: 2rem 0;
+  padding: 1.5rem;
+  border: 1px solid var(--border, #2c353d);
+  border-radius: 16px;
+  background: var(--panel, #101518);
+  color: var(--text, #e6ecef);
+}
+.test-resources > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+.test-resources h2 {
+  font-size: 1.25rem;
+  margin: 0.3rem 0;
+}
+.test-resources h3 {
+  font-size: 1rem;
+}
+.test-resources p {
+  color: var(--muted, #9ba8b0);
+  line-height: 1.6;
+}
+.test-resources-eyebrow {
+  font-size: 0.7rem !important;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0;
+  color: #b8df72 !important;
+}
+.test-resource-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.test-resources button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid #344049;
+  border-radius: 8px;
+  padding: 0.55rem 0.75rem;
+  background: #171e23;
+  color: inherit;
+  cursor: pointer;
+}
+.test-resources button:hover:not(:disabled) {
+  border-color: #b8df72;
+}
+.test-resources button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.test-resource-empty {
+  padding: 1.75rem;
+  text-align: center;
+  border: 1px dashed #344049;
+  border-radius: 12px;
+  margin: 1.25rem 0;
+}
+.test-resource-empty > svg {
+  color: #a9d5ee;
+}
+.test-resource-empty small {
+  color: #89969e;
+}
+.test-resource-layout {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 1.5rem;
+  margin: 1.5rem 0;
+}
+.test-resource-layout nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.test-resource-layout nav button {
+  text-align: left;
+  align-items: flex-start;
+  padding: 0.8rem;
+}
+.test-resource-layout nav button[aria-pressed="true"] {
+  background: #1a251a;
+  border-color: #91b94f;
+}
+.test-resource-layout nav small {
+  display: block;
+  color: #9ba8b0;
+  margin-top: 0.3rem;
+  font-size: 0.75rem;
+}
+.test-resource-content {
+  min-width: 0;
+}
+.test-resource-current code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  color: #a9d5ee;
+  margin-bottom: 1rem;
+}
+.test-message {
+  border-top: 1px solid #2c353d;
+  padding: 1rem 0;
+}
+.test-message summary {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  cursor: pointer;
+}
+.test-message summary > svg {
+  color: #b8df72;
+  flex-shrink: 0;
+}
+.test-message summary span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.test-message time {
+  font-size: 0.75rem;
+  color: #89969e;
+}
+.test-message-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 25rem;
+  overflow: auto;
+  font-size: 0.85rem;
+  padding: 0.75rem;
+  background: #0b0f12;
+  border-radius: 8px;
+}
+.test-resource-secret-note {
+  font-size: 0.8rem;
+  border-left: 2px solid #a9d5ee;
+  padding-left: 0.75rem;
+}
+.test-resource-status {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.85rem;
+}
+.test-resources > footer {
+  border-top: 1px solid #2c353d;
+  padding-top: 1rem;
+  color: #89969e;
+  font-size: 0.75rem;
+}
+.test-resources a {
+  color: #a9d5ee;
+}
+.test-resources form {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.7rem;
+  margin: 1rem 0;
+  flex-wrap: wrap;
+}
+.test-resources label {
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  flex: 1;
+}
+.test-mailbox-connection-fields {
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+}
+.test-resources input {
+  background: #0b0f12;
+  color: inherit;
+  border: 1px solid #344049;
+  border-radius: 8px;
+  padding: 0.6rem;
+  min-width: 0;
+}
+.test-resources :focus-visible {
+  outline: 2px solid #b8df72;
+  outline-offset: 3px;
+}
+.is-busy {
+  animation: test-resource-spin 1s linear infinite;
+}
+@keyframes test-resource-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .is-busy {
+    animation: none;
+  }
+}
+@media (max-width: 700px) {
+  .test-resources {
+    padding: 1rem;
+  }
+  .test-resources > header {
+    flex-direction: column;
+  }
+  .test-resource-layout {
+    grid-template-columns: 1fr;
+  }
+  .test-message summary {
+    flex-wrap: wrap;
+  }
+  .test-message time {
+    width: 100%;
+    padding-left: 1.7rem;
+  }
+}
