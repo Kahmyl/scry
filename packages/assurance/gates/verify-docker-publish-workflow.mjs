@@ -107,6 +107,8 @@ for (const required of ["pnpm qualify ci-fast", "path: artifacts/assurance/"]) {
 }
 
 const runtimePackages = ["praxis", "contracts", "veil", "chronicle"];
+if (!dockerfile.includes("COPY scripts/operations/supabase-activity.mjs ./scripts/operations/"))
+  fail("the optional authentication activity service entrypoint is missing from the runtime image");
 
 const workspaceManifests = [
   "apps/api/package.json",

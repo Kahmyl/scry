@@ -42,6 +42,7 @@ COPY packages/veil packages/veil
 COPY packages/chronicle packages/chronicle
 RUN PLAYWRIGHT_SKIP_BROWSER_GC=1 node packages/praxis/node_modules/playwright-mcp-runtime/cli.js install chromium
 COPY scripts/verify-deployment-preflight.mjs ./scripts/
+COPY scripts/operations/supabase-activity.mjs ./scripts/operations/
 COPY --from=build /workspace/apps/web/dist ./apps/web/dist
 COPY apps/web/scripts ./apps/web/scripts
 

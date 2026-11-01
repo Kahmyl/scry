@@ -168,7 +168,7 @@ try {
     "api",
     "node",
     "--eval",
-    "const fs=require('node:fs'); for(const p of ['packages/assurance','packages/executor','packages/policy','packages/observability','apps/agent-lab','apps/api/migrations','node_modules/typescript']) if(fs.existsSync(p)) process.exit(1)",
+    "const fs=require('node:fs'); for(const p of ['packages/assurance','packages/executor','packages/policy','packages/observability','apps/agent-lab','apps/api/migrations','node_modules/typescript']) if(fs.existsSync(p)) process.exit(1); if(!fs.existsSync('scripts/operations/supabase-activity.mjs')) process.exit(1)",
   ]);
   process.stdout.write(
     "Isolated deployed baseline passed: authenticated API/MCP, real Chromium, protected fill, unavailable evidence closure, success refusal with limited application report, workspace/session refusal, and signed-in desktop/mobile dashboard; no production Assurance dependency.\n",
