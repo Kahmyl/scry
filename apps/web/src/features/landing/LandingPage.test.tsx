@@ -53,7 +53,9 @@ describe("adopted landing page", () => {
   it("opens navigation, closes on Escape and restores keyboard focus", () => {
     mount();
     const toggle = screen.getByRole("button", { name: "Open navigation" });
-    expect(toggle.getAttribute("aria-controls")).toBe(screen.getByRole("navigation").id);
+    expect(toggle.getAttribute("aria-controls")).toBe(
+      screen.getByRole("navigation", { name: "Main navigation" }).id,
+    );
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     fireEvent.keyDown(document, { key: "Escape" });
@@ -65,7 +67,9 @@ describe("adopted landing page", () => {
     const toggle = screen.getByRole("button", { name: "Open navigation" });
     fireEvent.click(toggle);
     fireEvent.click(
-      within(screen.getByRole("navigation")).getByRole("link", { name: "How it works" }),
+      within(screen.getByRole("navigation", { name: "Main navigation" })).getByRole("link", {
+        name: "How it works",
+      }),
     );
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });

@@ -231,7 +231,15 @@ function AuthDialog({
               </button>
             </p>
             <small className="auth-terms">
-              By continuing, you agree to Scry’s Terms and Privacy Policy.
+              By continuing, you agree to Scry’s{" "}
+              <a href="/terms" target="_blank" rel="noopener noreferrer">
+                Terms of Service
+              </a>{" "}
+              and acknowledge the{" "}
+              <a href="/privacy" target="_blank" rel="noopener noreferrer">
+                Privacy Policy
+              </a>
+              .
             </small>
           </>
         )}

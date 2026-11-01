@@ -37,6 +37,41 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe("public legal pages", () => {
+  it.each([
+    ["/privacy", "Privacy Policy"],
+    ["/terms", "Terms of Service"],
+  ])("opens %s without waiting for or starting session restoration", (path, title) => {
+    auth.initialize.mockImplementation(() => new Promise(() => {}));
+    render(
+      <MemoryRouter initialEntries={[path]}>
+        <ProductApp />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: "kamilhabib556@gmail.com" }).length).toBeGreaterThan(
+      0,
+    );
+    expect(auth.initialize).not.toHaveBeenCalled();
+    expect(auth.getSession).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("links to public policies from the homepage and preserves the sign-in form when reviewing terms", () => {
+    render(<Landing authError="Sign in to continue." />);
+    expect(screen.getByRole("contentinfo").querySelector('a[href="/privacy"]')).toBeTruthy();
+    expect(screen.getByRole("contentinfo").querySelector('a[href="/terms"]')).toBeTruthy();
+    const dialog = screen.getByRole("dialog", { name: "Sign in to Scry" });
+    for (const name of ["Privacy Policy", "Terms of Service"]) {
+      const link = within(dialog).getByRole("link", { name });
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toContain("noopener");
+    }
+    expect(auth.signInWithOAuth).not.toHaveBeenCalled();
+    expect(auth.signInWithPassword).not.toHaveBeenCalled();
+  });
+});
+
 describe("adopted landing account actions", () => {
   it("opens the real signup dialog from the primary CTA without submitting an account request", () => {
     render(<Landing />);

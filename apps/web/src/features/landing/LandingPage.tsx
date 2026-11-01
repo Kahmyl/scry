@@ -497,6 +497,10 @@ export function LandingPage({
             <strong>Scry</strong>
           </div>
           <p>Controlled browser testing for teams that ship.</p>
+          <nav className="lp-legal-links" aria-label="Legal">
+            <a href="/privacy">Privacy Policy</a>
+            <a href="/terms">Terms of Service</a>
+          </nav>
           <small>© {new Date().getFullYear()} Scry</small>
         </div>
       </footer>
