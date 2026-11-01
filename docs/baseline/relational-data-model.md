@@ -2,7 +2,7 @@
 
 Status: canonical baseline relational model
 
-The local test-resource addition uses mission-owned `test_resources`, immutable
+The test-resource capability uses mission-owned `test_resources`, immutable
 `test_resource_events` and database-wide `test_provider_limits`. Credentials
 and usable access values reuse the existing cipher; raw message copies are not
 retained. See [Test resources](test-resources.md) for lifecycle and limits.

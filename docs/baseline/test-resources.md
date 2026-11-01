@@ -1,6 +1,6 @@
 # Test mailboxes and webhook listeners
 
-Status: local implementation; not activated on the hosted service
+Status: baseline capability; provider activation requires server configuration
 
 ## Purpose
 
@@ -14,6 +14,10 @@ authenticated webhook inspection. Scry displays attribution for both. This does
 not provide outgoing email, SMS, WhatsApp, attachment inspection, permanent
 recovery addresses, or automatic webhook replay. Use authorized test accounts
 and subscriptions, not production customer payloads or existing business routes.
+
+Mail.tm's authenticated message account reference is accepted only as the exact
+bare account ID or its exact relative `/accounts/<id>` JSON-LD representation.
+Foreign account references and absolute response URLs are rejected.
 
 ## Ownership and lifecycle
 

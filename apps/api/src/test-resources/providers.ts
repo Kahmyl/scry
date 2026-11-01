@@ -138,7 +138,15 @@ export class TestResourceProviders {
               headers: { authorization: `Bearer ${auth.token}` },
             })
           ).data;
-          if (message.accountId !== auth.id) resourceError("TEST_PROVIDER_SCOPE_INVALID");
+          // JSON-LD represents the account relationship as a relative IRI;
+          // ordinary JSON may return the bare ID. Match only these exact
+          // representations of the authenticated account, never an arbitrary
+          // URL or a suffix extracted from a foreign provider response.
+          if (
+            message.accountId !== auth.id &&
+            message.accountId !== `/accounts/${encodeURIComponent(auth.id)}`
+          )
+            resourceError("TEST_PROVIDER_SCOPE_INVALID");
           result.push({
             id: message.id,
             receivedAt: message.createdAt,

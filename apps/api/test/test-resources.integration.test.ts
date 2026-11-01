@@ -191,7 +191,9 @@ const target = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
       messages.set(resource.address!, [
         {
           id: randomUUID(),
-          accountId: a.id,
+          // Actual application/ld+json responses encode this relationship as
+          // a relative resource IRI, not the token endpoint's bare account ID.
+          accountId: `/accounts/${a.id}`,
           createdAt: new Date().toISOString(),
           subject: "Accept your invitation",
           text: "Your verification code is 654321. Your role is Editor.",
@@ -228,6 +230,48 @@ const target = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
       );
       await withProviderBudget(() => service.close(scope.workspaceId, resource.id));
       expect(await repo.events(scope.workspaceId, resource.id)).toHaveLength(1);
+    }, 20000);
+    it("accepts only exact account references for received email", async () => {
+      const resource = await allocate();
+      const account = accounts.get(resource.address!)!;
+      const message = {
+        id: randomUUID(),
+        accountId: account.id,
+        createdAt: new Date().toISOString(),
+        subject: "Account-reference qualification",
+        text: "Fictional delivery",
+      };
+      messages.set(resource.address!, [message]);
+      try {
+        for (const accountId of [account.id, `/accounts/${account.id}`]) {
+          message.accountId = accountId;
+          expect(
+            await providers.messages(
+              "mailbox",
+              { address: resource.address!, password: account.password },
+              new Set(),
+            ),
+          ).toHaveLength(1);
+        }
+        for (const accountId of [
+          "foreign-account",
+          "/accounts/foreign-account",
+          `https://api.mail.tm/accounts/${account.id}`,
+          `/accounts/${account.id}/extra`,
+          "",
+        ]) {
+          message.accountId = accountId;
+          await expect(
+            providers.messages(
+              "mailbox",
+              { address: resource.address!, password: account.password },
+              new Set(),
+            ),
+          ).rejects.toThrow("TEST_PROVIDER_SCOPE_INVALID");
+        }
+      } finally {
+        await withProviderBudget(() => service.close(scope.workspaceId, resource.id));
+      }
     }, 20000);
     it("allocates an authenticated Hookdeck listener without exposing the project key", async () => {
       const key = randomUUID();

@@ -224,7 +224,7 @@ export const checks: readonly CheckDefinition[] = [
     "Mission-scoped receipts, shared provider pacing, retries and secret binding",
     "@scry/api",
     ["test/test-resources.integration.test.ts"],
-    { database: true, minimum: 19 },
+    { database: true, minimum: 20 },
   ),
   tests(
     "worker-shutdown",
