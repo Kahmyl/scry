@@ -107,6 +107,9 @@ const missionStates: Record<string, string> = {
 };
 const missionLabel = (state: string) =>
   Object.hasOwn(missionStates, state) ? missionStates[state]! : "Status unavailable";
+// Historical execution outcomes share the customer's work-status group, not
+// separate indistinguishable filter options. Persisted states stay unchanged.
+const missionFilterGroup = (state: string) => (state === "failed" ? "ended" : state);
 const dateValue = (value: string) => (Number.isFinite(Date.parse(value)) ? Date.parse(value) : 0);
 
 export function SurfaceButton({
@@ -330,7 +333,9 @@ export function MissionCollectionSurface({
     .filter(
       (m) =>
         (status === "all" ||
-          (status === "unknown" ? !Object.hasOwn(missionStates, m.state) : m.state === status)) &&
+          (status === "unknown"
+            ? !Object.hasOwn(missionStates, m.state)
+            : missionFilterGroup(m.state) === status)) &&
         `${m.title} ${m.originalInstruction}`.toLowerCase().includes(query.trim().toLowerCase()),
     )
     .sort((a, b) => dateValue(b.updatedAt) - dateValue(a.updatedAt));
@@ -368,7 +373,9 @@ export function MissionCollectionSurface({
               onChange={setStatus}
               options={[
                 { value: "all", label: "All statuses" },
-                ...Object.entries(missionStates).map(([value, label]) => ({ value, label })),
+                ...Object.entries(missionStates)
+                  .filter(([value]) => missionFilterGroup(value) === value)
+                  .map(([value, label]) => ({ value, label })),
                 ...(missions.some((m) => !Object.hasOwn(missionStates, m.state))
                   ? [{ value: "unknown", label: "Status unavailable" }]
                   : []),
