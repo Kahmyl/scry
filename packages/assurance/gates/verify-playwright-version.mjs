@@ -35,6 +35,24 @@ if (lockedSpecifier !== expected || lockedVersion !== expected) {
   );
 }
 
+// Both pinned drivers export a bin named playwright. pnpm's generated shim can
+// select the MCP alias, whose browser revision differs from the stable driver.
+for (const file of [
+  ".github/workflows/qualification-browser.yml",
+  ".github/workflows/qualification-database.yml",
+]) {
+  const contents = await readFile(new URL(`../../../${file}`, import.meta.url), "utf8");
+  if (
+    !contents.includes(
+      "node packages/praxis/node_modules/playwright/cli.js install --with-deps chromium",
+    ) ||
+    contents.includes("exec playwright install")
+  )
+    failures.push(
+      `${file}: install the stable browser through its explicit package CLI, not the shared bin`,
+    );
+}
+
 if (failures.length) {
   throw new Error(`Playwright runtime compatibility check failed:\n- ${failures.join("\n- ")}`);
 }

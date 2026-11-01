@@ -32,7 +32,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install the pinned Chromium runtime
-        run: pnpm --filter @scry/praxis exec playwright install --with-deps chromium
+        run: node packages/praxis/node_modules/playwright/cli.js install --with-deps chromium
 
       - name: Qualify browser execution and protected recording
         run: pnpm qualify browser

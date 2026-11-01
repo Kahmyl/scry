@@ -73,7 +73,7 @@ jobs:
         run: pnpm qualify database
 
       - name: Install Chromium for the durable-worker protection regression
-        run: pnpm --filter @scry/praxis exec playwright install --with-deps chromium
+        run: node packages/praxis/node_modules/playwright/cli.js install --with-deps chromium
 
       - name: Create isolated worker qualification database
         run: >-
