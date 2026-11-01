@@ -3,10 +3,22 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { Landing } from "../features/landing/index.js";
+import { LegalPage } from "../features/legal/LegalPage.js";
+import { privacyPolicy, termsOfService } from "../features/legal/policies.js";
 import { isSupabaseConfigured, supabase } from "../infrastructure/auth/index.js";
 import { Dashboard } from "./Dashboard.js";
 
 export function ProductApp() {
+  return (
+    <Routes>
+      <Route path="/privacy" element={<LegalPage policy={privacyPolicy} />} />
+      <Route path="/terms" element={<LegalPage policy={termsOfService} />} />
+      <Route path="*" element={<AccountApp />} />
+    </Routes>
+  );
+}
+
+function AccountApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [checkingSession, setCheckingSession] = useState(isSupabaseConfigured);
   const [authError, setAuthError] = useState("");

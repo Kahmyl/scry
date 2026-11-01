@@ -1137,6 +1137,25 @@
   align-items: center;
   justify-content: space-between;
   gap: 24px;
+  flex-wrap: wrap;
+}
+
+.lp-legal-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: #a6b3bb;
+}
+
+.lp-legal-links a:hover {
+  color: var(--lp-lime);
+}
+
+.auth-terms a {
+  color: #c7f36b;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .lp-footer .lp-brand {
