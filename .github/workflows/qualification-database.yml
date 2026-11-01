@@ -70,7 +70,18 @@ jobs:
         run: pnpm run db:migrate
 
       - name: Qualify database lifecycle and safe failure contracts
+        id: database_qualification
         run: pnpm qualify database
+
+      # This suite creates only random disposable scry_migration_* databases
+      # against the job's fictional Postgres service. No provider/customer
+      # credentials are present. Keep the original failed gate failed: this
+      # direct repeat exposes its case/error instead of losing it in counters.
+      - name: Diagnose a failed disposable migration qualification
+        if: failure() && steps.database_qualification.outcome == 'failure'
+        run: >-
+          pnpm --filter @scry/api exec vitest run
+          test/baseline-migration.integration.test.ts --maxWorkers=1 --reporter=verbose
 
       - name: Install Chromium for the durable-worker protection regression
         run: node packages/praxis/node_modules/playwright/cli.js install --with-deps chromium
