@@ -18,7 +18,7 @@ import {
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { post, type Project } from "../../infrastructure/api/index.js";
-import { Modal } from "../../shared/components/index.js";
+import { BrandMark, Modal } from "../../shared/components/index.js";
 import type { DashboardView as View } from "../../shared/state/index.js";
 
 export function Sidebar({
@@ -231,7 +231,7 @@ function Brand() {
   return (
     <div className="brand">
       <div className="brand-mark">
-        <Eye size={21} strokeWidth={2.3} />
+        <BrandMark size={39} />
       </div>
       <div>
         <strong>Scry</strong>
@@ -354,7 +354,7 @@ export function CreateProjectDialog({
   return (
     <Modal
       title="Create project"
-      subtitle="Create a home for related Flows, runs, and durable test history."
+      subtitle="Keep related testing missions, reports and evidence together."
       onClose={onClose}
     >
       <form onSubmit={(event) => void submit(event)} className="stack-form">
@@ -401,16 +401,13 @@ export function EmptyWorkspace({ onCreate }: { onCreate: () => void }) {
         <span />
         <span />
         <span />
-        <Eye size={38} />
+        <BrandMark size={48} />
       </div>
       <div className="eyebrow lime">WELCOME TO SCRY</div>
-      <h1>
-        Give every test
-        <br />a permanent memory.
-      </h1>
+      <h1>Start with a project.</h1>
       <p>
-        Create a project, then build connected Flows with their own related URLs, ordered Sequences,
-        and durable browser evidence.
+        Create a project, connect your agent, then describe what you want to test. Your missions,
+        reports and evidence will stay together here.
       </p>
       <button className="primary-button" onClick={onCreate}>
         <Plus size={16} /> Create first project
@@ -422,12 +419,12 @@ export function BootScreen() {
   return (
     <div className="boot">
       <div className="brand-mark">
-        <Eye size={25} />
+        <BrandMark size={39} />
       </div>
       <div className="boot-line">
         <span />
       </div>
-      <small>INITIALIZING TEST COMMAND</small>
+      <small>Opening your workspace…</small>
     </div>
   );
 }

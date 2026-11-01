@@ -8,6 +8,45 @@ import {
 } from "../src/native-browser-command.js";
 import { publishBrowserMissionReportSchema } from "../src/browser-lifecycle.js";
 describe("pinned native browser surface", () => {
+  it("compares application expectations, not execution pass/fail, in new reports", () => {
+    const base = {
+      agentSessionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      summary: "Saved note inspected",
+    };
+    const presentation = {
+      subject: "application",
+      scope: ["Note editing"],
+      checks: [
+        {
+          title: "Saved note",
+          expected: "Revised note on reopen",
+          actual: "Revised note remained visible",
+          status: "matched_expectation",
+          evidence: [],
+        },
+      ],
+      observations: [],
+      limitations: [],
+    };
+    const parse = (p: unknown) =>
+      publishBrowserMissionReportSchema.safeParse({ ...base, safeReport: { presentation: p } })
+        .success;
+    expect(parse(presentation)).toBe(true);
+    for (const status of ["passed", "failed", "tool_error", "infrastructure_error"])
+      expect(parse({ ...presentation, checks: [{ ...presentation.checks[0], status }] })).toBe(
+        false,
+      );
+    expect(
+      parse({ ...presentation, checks: [{ ...presentation.checks[0], expected: undefined }] }),
+    ).toBe(false);
+    expect(
+      parse({
+        ...presentation,
+        checks: [{ title: "Sharing", actual: "Not reached", status: "not_tested" }],
+      }),
+    ).toBe(true);
+    expect(parse({ ...presentation, checks: [] })).toBe(false);
+  });
   it("requires current opaque edit references and explicit input intent without exposing execution code", () => {
     const input = { target: "f2e42", text: "A replacement", intent: "replace", method: "paste" };
     expect(editBrowserTextSchema.parse(input)).toEqual(input);

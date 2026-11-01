@@ -68,7 +68,8 @@ for (const item of publication.items) {
 }
 const run = await (await get("/runs/" + result.runId)).json(),
   report = await (await get("/reports/" + result.reportId)).json();
-assert.equal(run.state, "passed");
+assert.equal(run.state, "ended");
+assert.ok(!run.activity && !run.outcomeClassification);
 assert.equal(report.state, "final");
 assert.equal(report.missionId, result.missionId);
 assert.ok(items.some((i) => i.kind === "video" && i.coverage === "complete"));

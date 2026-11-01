@@ -3,6 +3,7 @@ dist/
 coverage/
 *.tsbuildinfo
 .env
+.env.auth.local
 !.env.auth.example
 /artifacts/
 /apps/api/artifacts/

@@ -182,6 +182,10 @@ async function exercise() {
     assert.ok(response.ok, `API fixture request refused: ${target} (${response.status})`);
     return response.json();
   };
+  const operator = (target) => {
+    assert.ok(process.env.SCRY_FIXTURE_SERVICE_TOKEN, "FIXTURE_OPERATOR_AUTH_MISSING");
+    return api(`/operator${target}`, undefined, process.env.SCRY_FIXTURE_SERVICE_TOKEN);
+  };
   assert.equal((await fetch("http://api:4000/api/projects")).status, 401);
   const project = await api("/projects", {
     name: "Isolated deployed baseline",
@@ -277,7 +281,11 @@ async function exercise() {
       const observed = await call("get_command", { commandId: result.commandId });
       result = { ...result, state: observed.command.state, command: observed.command };
     }
-    assert.equal(result.state, "completed", `BROWSER_COMMAND_FAILED: ${input.kind}`);
+    assert.equal(
+      result.state,
+      "completed",
+      `BROWSER_COMMAND_FAILED: ${input.kind}; code=${result.command?.errorCode ?? "unavailable"}`,
+    );
     return result.command.result;
   };
   await command({ kind: "navigate", url: "http://fixture:8080/app" });
@@ -303,18 +311,54 @@ async function exercise() {
     missionId: mission.missionId,
     agentSessionId: mission.agentSessionId,
     summary: "Deployed fixture complete",
-    safeReport: { outcome: "passed", privacyProbe: credential },
+    safeReport: {
+      privacyProbe: credential,
+      presentation: {
+        subject: "application",
+        scope: ["Discover and enter the supplied value in the isolated fixture"],
+        checks: [
+          {
+            title: "Protected input is available",
+            expected: "The fixture exposes a password control",
+            actual: "The password control was discovered and the supplied value entered",
+            status: "matched_expectation",
+            evidence: [],
+          },
+        ],
+        observations: [],
+        limitations: [
+          "Isolated Chromium fixture only; no application persistence or other browser was tested",
+        ],
+      },
+    },
   });
   const finished = await api(`/runs/${run.runId}`);
-  assert.equal(finished.state, "passed");
+  assert.equal(finished.state, "ended", "CUSTOMER_ATTEMPT_EXPOSED_EXECUTION_VERDICT");
+  assert.ok(!JSON.stringify(finished).includes("chainHead"), "CUSTOMER_CUSTODY_DETAILS_EXPOSED");
+  const operatorFinished = await operator(`/runs/${run.runId}`);
+  assert.equal(operatorFinished.state, "passed", "OPERATOR_EXECUTION_OUTCOME_LOST");
   assert.ok(
-    finished.evidence.some(
+    operatorFinished.evidence.some(
       (entry) => entry.state === "complete" && entry.chunkCount > 0 && entry.chainHead,
     ),
     "EVIDENCE_NOT_COMPLETE",
   );
   const published = await api(`/reports/${report.reportId}`);
-  assert.ok(published.evidenceDigest, "REPORT_NOT_BOUND_TO_EVIDENCE");
+  assert.equal(published.safeReport.presentation.subject, "application");
+  assert.equal(published.safeReport.presentation.checks[0].status, "matched_expectation");
+  assert.ok(!("evidenceDigest" in published), "CUSTOMER_REPORT_EXPOSED_CUSTODY_DETAILS");
+  const operatorReport = await operator(`/reports/${report.reportId}`);
+  assert.ok(operatorReport.evidenceDigest, "REPORT_NOT_BOUND_TO_EVIDENCE");
+  assert.ok(
+    !JSON.stringify(operatorReport).includes(credential),
+    "OPERATOR_REPORT_DISCLOSED_PROTECTED_VALUE",
+  );
+  for (const target of [`/operator/runs/${run.runId}`, `/operator/reports/${report.reportId}`]) {
+    const refused = await fetch(`http://api:4000/api${target}`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(refused.status, 403, "CUSTOMER_GRANTED_OPERATOR_ACCESS");
+  }
   assert.ok(!JSON.stringify(published).includes(credential), "REPORT_DISCLOSED_PROTECTED_VALUE");
   const denied = await fetch(`http://api:4000/api/runs/${run.runId}`, {
     headers: { authorization: `Bearer ${otherToken}` },
@@ -366,9 +410,13 @@ async function exercise() {
       !readFileSync(filename, "utf8").includes(credential),
       "ARTIFACT_DISCLOSED_PROTECTED_VALUE",
     );
-  assert.match(await (await fetch("http://web:3000/")).text(), /<div id="root">/u);
+  assert.match(
+    await (await fetch("http://web:3000/")).text(),
+    /<div id="root" class="scry-product">/u,
+  );
   await unavailableDashboardJourney({
     api,
+    operator,
     call,
     rpc,
     command,
@@ -382,6 +430,7 @@ async function exercise() {
 
 async function unavailableDashboardJourney({
   api,
+  operator,
   call,
   rpc,
   command,
@@ -422,7 +471,7 @@ async function unavailableDashboardJourney({
   await command({ kind: "observe" }, run);
   let owned;
   for (let attempt = 0; attempt < 20; attempt++) {
-    owned = await api(`/runs/${run.runId}`);
+    owned = await operator(`/runs/${run.runId}`);
     if (owned.evidence.some((item) => item.chunkCount > 0)) break;
     await command({ kind: "observe" }, run);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -466,8 +515,24 @@ async function unavailableDashboardJourney({
     const closed = await command({ kind: "close_for_failure" }, run);
     assert.equal(closed.evidenceState, "incomplete", "MCP_CLOSE_OMITTED_EVIDENCE_STATE");
     assert.equal(closed.evidenceIssue, "object_unavailable", "MCP_CLOSE_OMITTED_EVIDENCE_ISSUE");
-    const failed = await api(`/runs/${run.runId}`);
+    const failed = await operator(`/runs/${run.runId}`);
     assert.equal(failed.evidence[0]?.closureIssue, "object_unavailable");
+    const customerFailure = await api(`/runs/${run.runId}`);
+    assert.equal(customerFailure.evidence[0]?.state, "unavailable");
+    assert.ok(
+      !JSON.stringify(customerFailure).includes("object_unavailable"),
+      "CUSTOMER_OPERATOR_DIAGNOSTICS_EXPOSED",
+    );
+    const success = await rpc("tools/call", {
+      name: "finalize_run",
+      arguments: {
+        runId: run.runId,
+        ownerGeneration: Number(failed.ownerGeneration),
+        outcome: "passed",
+        conclusion: "This intentionally unavailable evidence must not authorize success",
+      },
+    });
+    assert.equal(success.isError, true, "UNAVAILABLE_EVIDENCE_AUTHORIZED_SUCCESS");
     await call("finalize_run", {
       runId: run.runId,
       ownerGeneration: Number(failed.ownerGeneration),
@@ -475,16 +540,34 @@ async function unavailableDashboardJourney({
       conclusion:
         "Application was reachable; its recording object was intentionally unavailable in the isolated fixture.",
     });
-    const report = await rpc("tools/call", {
-      name: "publish_mission_report",
-      arguments: {
-        missionId: mission.missionId,
-        agentSessionId: mission.agentSessionId,
-        summary: "Unavailable evidence cannot establish success",
-        safeReport: {},
+    const report = await call("publish_mission_report", {
+      missionId: mission.missionId,
+      agentSessionId: mission.agentSessionId,
+      summary: "Application behavior could not be verified from the available evidence",
+      safeReport: {
+        presentation: {
+          subject: "application",
+          scope: ["Inspect the fictional availability application"],
+          checks: [
+            {
+              title: "Application behavior",
+              actual: "The available evidence is insufficient to verify this check",
+              status: "inconclusive",
+              evidence: [],
+            },
+          ],
+          observations: [],
+          limitations: [
+            "No recording is available for this attempt; no application result is established",
+          ],
+        },
       },
     });
-    assert.equal(report.isError, true, "UNAVAILABLE_EVIDENCE_AUTHORIZED_A_REPORT");
+    const limited = await api(`/reports/${report.reportId}`);
+    assert.equal(limited.safeReport.presentation.checks[0].status, "inconclusive");
+    assert.equal(limited.evidenceCoverage.complete, 0);
+    assert.equal(limited.evidenceCoverage.unavailable, 1);
+    assert.ok(!JSON.stringify(limited).includes("object_unavailable"));
     assert.ok(!JSON.stringify(report).includes(credential));
     const { chromium } = createRequire("/workspace/packages/praxis/package.json")("playwright");
     const browser = await chromium.launch({ headless: true });
@@ -503,13 +586,33 @@ async function unavailableDashboardJourney({
       );
       const contrast = await page
         .getByRole("button", { name: "Refresh evidence" })
-        .evaluate((button) => ({
-          foreground: getComputedStyle(button).color,
-          background: getComputedStyle(button).backgroundColor,
-        }));
-      assert.notEqual(contrast.foreground, contrast.background, "EVIDENCE_CONTROLS_INVISIBLE");
-      assert.equal(contrast.background, "rgb(25, 29, 35)", "EVIDENCE_CONTROLS_NOT_THEMED");
-      await page.getByRole("button", { name: /Screenshot.*fill/u }).click();
+        .evaluate((button) => {
+          let surface = button;
+          while (
+            surface.parentElement &&
+            getComputedStyle(surface).backgroundColor === "rgba(0, 0, 0, 0)"
+          )
+            surface = surface.parentElement;
+          const luminance = (color) => {
+            const channels = color
+              .match(/[\d.]+/g)
+              .slice(0, 3)
+              .map(Number)
+              .map((value) => value / 255)
+              .map((value) =>
+                value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4,
+              );
+            return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+          };
+          const ink = luminance(getComputedStyle(button).color);
+          const background = luminance(getComputedStyle(surface).backgroundColor);
+          return (Math.max(ink, background) + 0.05) / (Math.min(ink, background) + 0.05);
+        });
+      assert.ok(contrast >= 4.5, "EVIDENCE_CONTROLS_INSUFFICIENT_CONTRAST");
+      await page
+        .getByRole("group", { name: "Select evidence" })
+        .getByRole("button", { name: /After entering text/u })
+        .click();
       await page.waitForFunction(
         () => document.querySelector(".native-evidence img")?.naturalWidth > 0,
       );
@@ -552,31 +655,32 @@ async function unavailableDashboardJourney({
       await page.goto(`http://web:3000/dashboard/runs/${run.runId}`);
       await page.getByText("Recording unavailable", { exact: true }).waitFor();
       await page
-        .getByText(/evidence-storage issue, not a finding about your application/)
+        .getByText(
+          "No recording is available for this attempt. Do not infer an application result from missing evidence.",
+          { exact: true },
+        )
         .waitFor();
-      const layout = await page
-        .locator(".browser-fact")
-        .filter({ hasText: "Recording unavailable" })
-        .evaluate((row) => {
-          const title = row.querySelector("strong"),
-            detail = row.querySelector("div > span");
-          const state = document.querySelector(".metric.failure > strong"),
-            warning = row.querySelector(".status-incomplete");
-          return {
-            display: getComputedStyle(row).display,
-            titleBottom: title?.getBoundingClientRect().bottom,
-            detailTop: detail?.getBoundingClientRect().top,
-            stateColor: state ? getComputedStyle(state).color : null,
-            warningColor: warning ? getComputedStyle(warning).color : null,
-          };
-        });
-      assert.equal(layout.display, "flex", "EVIDENCE_ROW_STYLES_NOT_APPLIED");
+      const layout = await page.locator(".sp-recording-notes").evaluate((row) => {
+        const title = row.querySelector("h2");
+        const detail = [...row.querySelectorAll("p")].find((p) =>
+          p.textContent.startsWith("No recording"),
+        );
+        const state = document.querySelector(".sp-run-facts .sp-work-state");
+        return {
+          titleBottom: title?.getBoundingClientRect().bottom,
+          detailTop: detail?.getBoundingClientRect().top,
+          progress: state?.textContent,
+          progressColor: state ? getComputedStyle(state).color : null,
+          copy: row.textContent,
+        };
+      });
       assert.ok(layout.detailTop >= layout.titleBottom, "EVIDENCE_WARNING_COPY_OVERLAPS_TITLE");
-      assert.equal(layout.stateColor, "rgb(255, 116, 108)", "FAILED_RUN_USES_SUCCESS_COLOR");
-      assert.equal(
-        layout.warningColor,
-        "rgb(240, 189, 99)",
-        "INCOMPLETE_RECORDING_WARNING_NOT_DISTINCT",
+      assert.equal(layout.progress, "Ended", "EXECUTION_FAILURE_PRESENTED_AS_APP_VERDICT");
+      assert.equal(layout.progressColor, "rgb(155, 166, 176)", "ENDED_PROGRESS_NOT_NEUTRAL");
+      assert.ok(layout.copy.includes("Recording unavailable"), "MISSING_RECORDING_NOT_EXPLAINED");
+      assert.ok(
+        !layout.copy.includes("object_unavailable"),
+        "OPERATOR_REASON_EXPOSED_IN_CUSTOMER_UI",
       );
       assert.equal(await page.locator("video").count(), 0);
       assert.ok(!(await page.locator("body").innerText()).includes(credential));
@@ -633,7 +737,7 @@ async function unavailableDashboardJourney({
     renameSync(held, filename);
   }
   assert.equal(
-    (await api(`/runs/${run.runId}`)).evidence[0]?.closureIssue,
+    (await operator(`/runs/${run.runId}`)).evidence[0]?.closureIssue,
     "object_unavailable",
     "RESTORED_OBJECT_REWROTE_FAILURE_SEAL",
   );

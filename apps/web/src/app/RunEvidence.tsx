@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, apiBlob } from "../infrastructure/api/client.js";
+import { CustomSelect } from "../shared/components/CustomSelect.js";
 
 type Media = {
   index: number;
@@ -95,31 +96,32 @@ export function RunEvidence({
         <p role="status">Loading evidence…</p>
       ) : !publication ? null : !publication.items.length ? (
         <p>
-          No native media is available yet. Refresh after the Run closes. Historical recordings are
-          not rewritten.
+          No recordings or screenshots are available for this attempt yet. Refresh to check again.
+          Missing evidence does not establish an application result.
         </p>
       ) : (
         <>
-          <label className="native-evidence-mobile">
-            Choose evidence
-            <select
-              aria-label="Choose evidence"
-              value={selected?.index ?? ""}
-              onChange={(e) => {
-                const item = publication.items.find(
-                  (item) => item.index === Number(e.target.value),
-                );
-                setSelected(item ? { ...item } : undefined);
-              }}
-            >
-              {!selected && <option value="">Choose an available item</option>}
-              {publication.items.map((item) => (
-                <option key={item.index} value={item.index}>
-                  {title(item)} · {item.kind === "video" ? "Recording" : "Screenshot"}
-                </option>
-              ))}
-            </select>
-          </label>
+          {(publication.items.length > 1 || !selected) && (
+            <div className="native-evidence-mobile">
+              <CustomSelect
+                label="Choose evidence"
+                value={selected ? String(selected.index) : "choose-item"}
+                options={[
+                  ...(!selected
+                    ? [{ value: "choose-item", label: "Choose an available item", disabled: true }]
+                    : []),
+                  ...publication.items.map((item) => ({
+                    value: String(item.index),
+                    label: `${title(item)} · ${item.kind === "video" ? "Recording" : "Screenshot"}`,
+                  })),
+                ]}
+                onChange={(value) => {
+                  const item = publication.items.find((item) => item.index === Number(value));
+                  setSelected(item ? { ...item } : undefined);
+                }}
+              />
+            </div>
+          )}
           <div className="native-evidence-layout">
             <div className="native-evidence-selector" role="group" aria-label="Select evidence">
               {publication.items.map((item) => (
@@ -154,7 +156,7 @@ export function RunEvidence({
                       controls
                       preload="metadata"
                       playsInline
-                      aria-label="Native browser recording"
+                      aria-label="Browser recording"
                       onError={() =>
                         setError(
                           "This recording cannot be played. Choose another item or refresh the evidence list.",
@@ -182,12 +184,8 @@ export function RunEvidence({
                     </p>
                     {selected.coverage === "partial" && (
                       <p role="status">
-                        This recording covers only part of the Run. Missing footage is an evidence
-                        gap, not a defect in the tested app.
-                        {selected.interruptionReason === "recording_capacity" &&
-                          " The recording reached its storage allowance."}
-                        {selected.interruptionReason === "browser_interrupted" &&
-                          " Browser execution was interrupted."}
+                        This recording covers only part of the attempt. Missing footage is an
+                        evidence gap, not a defect in the tested app.
                       </p>
                     )}
                   </>
@@ -202,6 +200,11 @@ export function RunEvidence({
                         )
                       }
                     />
+                    <figcaption>
+                      <a href={source} target="_blank" rel="noopener noreferrer">
+                        Open full-size screenshot
+                      </a>
+                    </figcaption>
                   </figure>
                 )
               ) : !error ? (

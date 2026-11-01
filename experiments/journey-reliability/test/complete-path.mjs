@@ -21,7 +21,7 @@ const env = await p.life("create_environment", {
 });
 const mission = await p.life("start_mission", {
   projectId: project.id,
-  title: "Native editing, recovery history and reviewable evidence",
+  title: "Project note editing and save confirmation",
   instruction:
     "Test ordinary and rich text editing, inspect saved application state, retain every attempt and publish a useful report.",
   provider: "human",
@@ -153,29 +153,72 @@ try {
     missionId: mission.missionId,
     agentSessionId: mission.agentSessionId,
     summary:
-      "Native input and save checks passed after a deliberately refused stale-reference trial.",
+      "The project note was edited and its save confirmation was inspected. Sharing and backend persistence were not tested.",
     safeReport: {
       presentation: {
-        verified: [
-          "Rich document replacement through native paste",
-          "Ordinary input replacement through native keyboard",
-          "Save status inspected separately",
-          "Repeated action identity did not repeat a save",
+        subject: "application",
+        scope: ["Edit the project document and public note, then inspect the save confirmation"],
+        checks: [
+          {
+            title: "Edited project note",
+            expected: "The note field shows the revised text",
+            actual: "The revised note was visible in the application",
+            status: "matched_expectation",
+            evidence: [{ runId: active.runId, artifactId: screenshotId }],
+          },
+          {
+            title: "Save confirmation",
+            expected: "The application acknowledges saving the note",
+            actual: "Saved successfully was displayed with the revised note",
+            status: "matched_expectation",
+            evidence: [{ runId: active.runId, artifactId: screenshotId }],
+          },
+          {
+            title: "Sharing",
+            actual: "Not included in this test",
+            status: "not_tested",
+            evidence: [],
+          },
         ],
         observations: [
           {
             title: "Final saved project note inspected",
             detail:
-              "The screenshot shows the final styled application and its save status. The separate stale-reference refusal is recorded in the earlier attempt's conclusion, not proved by this screenshot.",
+              "The application displayed its save confirmation with the updated project note.",
             evidence: [{ runId: active.runId, artifactId: screenshotId }],
           },
         ],
         limitations: [
-          "Controlled qualification, not blind-agent acceptance. The fixture save status is not proof of a real product’s backend persistence. Automatic masking remains best effort.",
+          "The visible save confirmation was checked; backend persistence after reopening and sharing were not tested. Only the assigned browser was used.",
         ],
       },
+      operatorDiagnostics: { qualificationOnly: "PRIVATE_REPORT_QUALIFICATION_MARKER" },
     },
   });
+  const customerReport = await p.api("/reports/" + report.reportId);
+  assert.equal(customerReport.safeReport.presentation.subject, "application");
+  assert.equal(customerReport.safeReport.presentation.checks[2].status, "not_tested");
+  assert.ok(!JSON.stringify(customerReport).includes("PRIVATE_REPORT_QUALIFICATION_MARKER"));
+  const customerMission = await p.api("/dashboard/missions/" + mission.missionId);
+  assert.equal(customerMission.runs.length, 2);
+  assert.ok(
+    customerMission.runs.every(
+      (r) => r.state === "ended" && !r.conclusion && !r.outcomeClassification,
+    ),
+  );
+  const denied = await fetch("http://api:4000/api/operator/reports/" + report.reportId, {
+    headers: {
+      authorization:
+        "Bearer " + (await (await fetch("http://fixture:8080/fixture-input")).json()).token,
+    },
+  });
+  assert.equal(denied.status, 403);
+  const operator = await fetch("http://api:4000/api/operator/reports/" + report.reportId, {
+    headers: { authorization: "Bearer " + process.env.SCRY_SERVICE_TOKEN },
+  });
+  assert.equal(operator.status, 200);
+  assert.ok(JSON.stringify(await operator.json()).includes("PRIVATE_REPORT_QUALIFICATION_MARKER"));
+  check("customer app checks and private operator original are separated over real HTTP");
   const media = await p.api("/runs/" + active.runId + "/media"),
     video = media.items.find((i) => i.kind === "video");
   assert.ok(video);

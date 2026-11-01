@@ -71,10 +71,21 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
   }): Promise<void> {
     const diagnostics = await this.requiredRecording().flush();
     const snapshot = await this.scope.admission.readStream();
-    const media = nativeMediaReceipts((await this.store.verify()).events);
+    let mediaComplete: boolean;
+    try {
+      const media = nativeMediaReceipts((await this.store.verify()).events);
+      mediaComplete = !media.some((item) => item.coverage === "partial");
+    } catch (error) {
+      if (!(error instanceof EvidenceArtifactFailure)) throw error;
+      // Missing/unreadable stored content cannot negate a confirmed browser
+      // stop and recorder drain. Preserve that stop with incomplete coverage;
+      // only explicit failure sealing may acknowledge unavailable evidence.
+      // Flush, authority and database failures remain outside this fallback.
+      mediaComplete = false;
+    }
     const recordingComplete =
       receipt.recordingComplete !== false &&
-      !media.some((item) => item.coverage === "partial") &&
+      mediaComplete &&
       diagnostics.errors.length === 0 &&
       diagnostics.diagnostics.length === 0 &&
       diagnostics.receivedEvents === (snapshot.chunks.at(-1)?.lastSequence ?? -1) + 1;
@@ -83,7 +94,16 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
   async recoverNativeCaptures(
     native: import("@scry/contracts").ChronicleNativeRecordingPort,
   ): Promise<number> {
-    const verified = await this.store.verify();
+    const verified = await this.store.verify().catch(async (error: unknown) => {
+      if (!(error instanceof EvidenceArtifactFailure)) throw error;
+      // No authenticated reservation can be recovered from unavailable events.
+      // Return no recovery, not a successful recording. The caller must still
+      // admit a confirmed incomplete stop and use explicit failure sealing.
+      await this.scope.admission.checkpoint();
+      this.scope.admission.assertActive();
+      return null;
+    });
+    if (!verified) return 0;
     return recoverNativeCaptures(this.scope.root, verified.events, native);
   }
 

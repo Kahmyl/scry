@@ -93,8 +93,9 @@ paths and network/header dumps are not part of this surface. Native screenshot
 image responses are retrieved through the same authorized media API.
 
 Browser-tool completion is not proof of an applied business change. The agent
-must inspect the resulting application state. The dashboard distinguishes these
-interaction receipts from historical mutation-effect records.
+must inspect the resulting application state. These receipts support agent
+recovery; they are not customer report results. The dashboard does not show raw
+tool diagnostics.
 
 The journey-reliability candidate adds `browser_edit_text` with an observed
 opaque target reference, explicit `replace` or `insert` intent, and a selected
@@ -113,14 +114,43 @@ behavior. This is distinct from a browser command's `actionId`.
 Native screenshots accept optional `evidenceTitle` and `evidenceDescription`.
 These are bounded, sanitized presentation data attached to Chronicle's admitted
 receipt, not claims that Scry automatically verified the described outcome.
-Media descriptors may include these fields and a fixed interruption reason.
+Media descriptors may include these fields and complete/partial coverage, but
+not internal interruption diagnostics.
 
-Reports may supply `safeReport.presentation` with `verified` text, titled
-`observations` (detail, optional suggestion and exact Run/artifact references),
-and explicit `limitations`. Historical report data remains readable. A report
+Customer reports supply `safeReport.presentation` with `subject: application`,
+`scope`, `checks` (title, optional expectation, actual observation, status and
+exact Run/artifact references), application `observations` and `limitations`.
+Check status is `matched_expectation`, `different_from_expectation`,
+`inconclusive` or `not_tested`; comparisons require an explicit app expectation.
+Execution errors and capability qualifications do not belong in these checks.
+
+The MCP initialization instructions and `publish_mission_report` tool description
+carry the same self-contained reporting guidance for both supported profiles.
+External agents receive the application-report shape through `tools/list`, not
+only prose or context from a prior chat. The instructions include a valid format
+example, explain recovery without uncertain-write replay, distinguish app-check
+coverage from recording coverage, and require honest untested/inconclusive scope.
+They do not authorize operator access or assume familiarity with Scry internals.
+
+Legacy publication input remains accepted for compatibility, but unclassified
+historical data is not automatically promoted into customer findings. A report
 links the Mission's existing authorized evidence; it does not manufacture or
 duplicate artifacts. A missing reference is shown as unavailable, never silently
 replaced with a different screenshot.
+
+`GET /api/reports/{reportId}` and the project report list return allowlisted
+customer projections. Unknown/raw payload keys and technical digests are omitted.
+`GET /api/dashboard/missions/{missionId}` returns customer journey history without
+execution conclusions; the agent's existing Mission observation contract is
+unchanged. Customer Run reads describe progress and recording availability,
+not application pass/fail. Owner generation remains available for command
+recovery, but is not presented as a customer result.
+
+`GET /api/operator/reports/{reportId}` and `GET /api/operator/runs/{runId}` expose
+original safe records only to the existing internal service principal. Customer
+workspace owner/admin status and MCP credentials do not grant operator access.
+These routes are private/no-store. No new customer-admin role or public log
+viewer is introduced.
 
 See the local [controlled integration record](../../experiments/journey-reliability/INTEGRATION.md)
 for the activation gate and qualification results.

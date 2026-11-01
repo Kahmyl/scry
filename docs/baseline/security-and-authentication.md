@@ -68,6 +68,62 @@ On first valid authentication, Scry may create the local user mapping, personal
 workspace, and owner membership in one transaction. The external identity
 subject remains the stable login identity.
 
+### Google sign-in and pre-revenue activity checks
+
+Google OAuth uses Supabase Auth; it is not a second identity database. The dashboard
+starts sign-in with the current application origin as the return URL. Google sends
+its callback to `https://<project-ref>.supabase.co/auth/v1/callback`, then Supabase
+returns the session to an explicitly allowed application origin. Configure exact
+local origins for local testing and exact HTTPS origins before customer activation.
+The Google client secret belongs only in Supabase's provider configuration, never
+in frontend configuration or the repository. Request only basic identity scopes:
+OpenID, email and profile. Configure Google's audience and publishing status
+separately from Supabase; the local trial uses Testing status and the owner's
+configured test account. Local success is not public-launch approval or brand
+verification.
+
+Only configured Google sign-in and email sign-in are advertised. GitHub sign-in is
+not advertised while its provider is disabled. Failed or cancelled OAuth completion
+returns to a retryable sign-in screen without exposing provider error details.
+
+During pre-revenue operation, an optional external activity checker performs a
+read-only Supabase database query immediately on startup and every six hours.
+`supabase/migrations/20261101093651_scry_auth_healthcheck.sql` belongs to the
+Supabase identity project, not Scry's application database or its migration runner.
+It installs one stable, security-invoker function returning `true`, without reading
+tables. Public-role execution is revoked; only the `anon` and `authenticated` roles
+receive execution permission. The caller uses a publishable key, not a service-role
+key, management token, fake login or customer credential.
+
+After installing that SQL on the correct Supabase project, configure `SUPABASE_URL`
+and `SUPABASE_PUBLISHABLE_KEY` in the server environment. The public-only local
+template is `.env.auth.local.example`; its filled `.env.auth.local` is ignored by
+Git and Docker builds. Run a single check with
+`node --env-file=.env.auth.local scripts/operations/supabase-activity.mjs`. Enable
+the independent local service with
+`docker compose --env-file .env.auth.local --profile auth-activity up -d supabase-activity`;
+for the deployment
+compose file, use `docker compose -f compose.deploy.yml --profile auth-activity up
+-d supabase-activity` after the candidate image is published and approved. The
+service is not coupled to browser command admission, evidence capture or API
+readiness. Disable it by stopping that service; removing the SQL function is not
+necessary to stop requests.
+
+Each request has a ten-second timeout and follows no redirects. Failures produce
+safe operator logs and an unhealthy container status, then the next scheduled
+attempt can recover. Health checks inspect the recorded result and freshness;
+they do not generate additional database requests. No external alert destination
+is configured by this feature. The host must remain running, and an operator must
+monitor unhealthy status or connect it to their alerting. Laptop sleep stops checks.
+
+This is a best-effort inactivity mitigation, not an uptime guarantee or a way to
+resume an already paused project. Supabase documents that a few daily database
+requests typically prevent pausing; paid plans remove inactivity pausing. Review
+that operational trade-off before promising customer availability.
+
+References: [Google provider setup](https://supabase.com/docs/guides/auth/social-sign-in/auth-google),
+[project pausing](https://supabase.com/docs/guides/platform/free-project-pausing).
+
 ### Agent principal
 
 An AI agent uses a Scry agent access token. Tokens carry a distinctive prefix
@@ -224,6 +280,16 @@ never written with them, and every historical record must still pass its
 original authentication and digest checks.
 
 ## Report security
+
+Customer report and dashboard reads use explicit allowlists, separating app
+checks from execution diagnostics. Unclassified historical report payloads are
+retained, not exposed as inferred application findings. Missing testing and
+recording coverage remain honestly visible without raw runtime errors.
+
+The operator Run/report endpoints accept only the existing internal service
+principal and return private/no-store responses. A customer workspace owner,
+admin or MCP token is not an operator credential. The service secret must never
+be placed in dashboard storage, a customer bundle or an agent connection.
 
 Before storage, report text and structured data are checked against bound
 protected inputs and generated protected outputs. Detected secret material is

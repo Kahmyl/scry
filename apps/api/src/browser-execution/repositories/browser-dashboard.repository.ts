@@ -65,20 +65,7 @@ export class BrowserDashboardRepository {
           : ""),
       playbackRate: 1,
       items: (publication?.media ?? []).map(
-        (
-          {
-            kind,
-            timestamp,
-            label,
-            durationMs,
-            coverage,
-            digest,
-            title,
-            description,
-            interruptionReason,
-          },
-          index,
-        ) => ({
+        ({ kind, timestamp, label, durationMs, coverage, digest, title, description }, index) => ({
           index,
           artifactId: digest,
           kind,
@@ -100,7 +87,6 @@ export class BrowserDashboardRepository {
                 )[label] ??
                 `Screenshot at ${new Date(timestamp).toISOString().slice(11, 19)} UTC`)),
           ...(description ? { description } : {}),
-          ...(interruptionReason ? { interruptionReason } : {}),
           ...(coverage ? { coverage } : {}),
           ...(durationMs === undefined ? {} : { durationMs }),
         }),
@@ -174,7 +160,7 @@ export class BrowserDashboardRepository {
   async listReports(workspaceId: string | undefined, projectId: string) {
     const result = await this.database.query(
       `SELECT mr.id,mr.mission_id AS "missionId",m.title AS "missionTitle",mr.state,
-              mr.summary,mr.evidence_digest AS "evidenceDigest",mr.created_at AS "createdAt",
+              mr.summary,mr.safe_report AS "safeReport",mr.created_at AS "createdAt",
               mr.finalized_at AS "finalizedAt"
        FROM mission_reports mr JOIN missions m ON m.id=mr.mission_id
        JOIN projects p ON p.id=m.project_id

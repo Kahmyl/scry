@@ -211,6 +211,23 @@ correct.
 
 ## Finalization and reporting policy
 
+Customer reports concern the application under test, not Scry qualification.
+They state the requested scope, application expectations, actual observations,
+supporting evidence and checks that remain inconclusive or untested. Recovery
+may complete an application check; a failed first interaction does not make the
+application defective. A tool receipt or complete video does not prove an app
+expectation was met.
+
+Internal execution outcomes remain lifecycle facts, not customer app verdicts.
+Raw browser errors, ownership/custody diagnostics and technical report payloads
+are operator records. Customer reads use explicit report projections, not raw
+JSON dumps. Missing footage and unverified scope must remain visible in plain
+language; hiding diagnostics must never turn missing testing into success.
+
+Historical records are immutable. Reports without structured application checks
+retain their evidence and a coverage limitation rather than being automatically
+reclassified as app findings. Their originals remain available to operators.
+
 A passing Run cannot close while any mutation outcome is pending or unknown,
 any durable capture is unsettled, or evidence is incomplete.
 

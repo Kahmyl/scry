@@ -9,8 +9,11 @@ const result = JSON.parse(await readFile(filename, "utf8")),
   root = path.dirname(filename);
 const { token } = await (await fetch("http://fixture:8080/fixture-input")).json();
 const get = async (url) => {
+  const operator = url.startsWith("/operator/");
+  if (operator && !process.env.SCRY_SERVICE_TOKEN)
+    throw Error("Explicit internal operator credential required for capacity diagnostics");
   const response = await fetch("http://api:4000/api" + url, {
-    headers: { authorization: "Bearer " + token },
+    headers: { authorization: "Bearer " + (operator ? process.env.SCRY_SERVICE_TOKEN : token) },
     signal: AbortSignal.timeout(45000),
   });
   assert.ok(response.ok, url + ": " + response.status);
@@ -18,7 +21,7 @@ const get = async (url) => {
 };
 const runs = [];
 for (const started of result.runs) {
-  const run = await (await get("/runs/" + started.runId)).json();
+  const run = await (await get("/operator/runs/" + started.runId)).json();
   assert.ok(["failed", "cancelled", "passed"].includes(run.state));
   const publication = await (await get("/runs/" + started.runId + "/media")).json(),
     media = [];

@@ -139,7 +139,14 @@ for (const packageName of runtimePackages) {
 if (!dockerfile.includes("--store-dir /pnpm/store"))
   fail("pnpm cache mount exists but pnpm is not explicitly bound to it");
 
-for (const ignored of ["**/test", "**/tests", "**/*.test.ts", "**/*.spec.ts"]) {
+for (const ignored of [
+  "**/test",
+  "**/tests",
+  "**/*.test.ts",
+  "**/*.test.tsx",
+  "**/*.spec.ts",
+  "**/*.spec.tsx",
+]) {
   if (!dockerignore.split(/\r?\n/).includes(ignored))
     fail(`Docker context does not exclude test-only source: ${ignored}`);
 }

@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import "./fonts.css";
 
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -99,12 +99,20 @@ select:focus-visible {
 .brand-mark {
   width: 39px;
   height: 39px;
-  border-radius: 11px;
   display: grid;
   place-items: center;
-  color: #0a0c0d;
-  background: var(--lime);
-  box-shadow: 0 0 24px rgba(199, 243, 107, 0.14);
+}
+.scry-mark {
+  display: block;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+.brand-mark > .scry-mark,
+.landing-brand > span > .scry-mark,
+.auth-brand > span > .scry-mark,
+.mini-logo > .scry-mark {
+  width: 100%;
+  height: 100%;
 }
 .brand strong {
   font-size: 20px;
@@ -5702,9 +5710,6 @@ select:focus-visible {
 .auth-brand > span {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
-  background: var(--lime);
-  color: #10140d;
   display: grid;
   place-items: center;
 }
@@ -5905,9 +5910,6 @@ select:focus-visible {
 .mini-logo {
   width: 25px;
   height: 25px;
-  border-radius: 7px;
-  background: var(--lime);
-  color: #11150e;
   display: grid;
   place-items: center;
 }
@@ -6427,7 +6429,7 @@ select:focus-visible {
 }
 .oauth-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 .oauth-grid button {

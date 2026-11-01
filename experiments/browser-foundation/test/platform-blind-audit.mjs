@@ -8,8 +8,11 @@ const base = process.env.SCRY_BLIND_API ?? "http://api:4000/api";
 const fixture = process.env.SCRY_BLIND_FIXTURE ?? "http://fixture:8080/fixture-input";
 const { token } = await (await fetch(fixture)).json();
 const get = async (path) => {
+  const operator = path.startsWith("/operator/");
+  if (operator && !process.env.SCRY_SERVICE_TOKEN)
+    throw new Error("Explicit internal operator credential required for qualification diagnostics");
   const response = await fetch(base + path, {
-    headers: { authorization: "Bearer " + token },
+    headers: { authorization: "Bearer " + (operator ? process.env.SCRY_SERVICE_TOKEN : token) },
     signal: AbortSignal.timeout(30000),
   });
   if (!response.ok) throw new Error(`Audit ${path}: ${response.status}`);
@@ -49,7 +52,7 @@ for (const app of apps) {
   await mkdir(directory + "/audited", { recursive: true });
   for (const started of runs) {
     try {
-      const run = await (await get(`/runs/${started.runId}`)).json();
+      const run = await (await get(`/operator/runs/${started.runId}`)).json();
       const publication = await (await get(`/runs/${started.runId}/media`)).json();
       const media = [];
       for (const item of publication.items) {
@@ -130,7 +133,7 @@ for (const app of apps) {
   );
   for (const id of reportIds) {
     try {
-      record.reports.push(await (await get(`/reports/${id}`)).json());
+      record.reports.push(await (await get(`/operator/reports/${id}`)).json());
     } catch (error) {
       record.errors.push({ reportId: id, message: String(error.message) });
     }

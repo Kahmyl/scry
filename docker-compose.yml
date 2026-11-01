@@ -20,6 +20,26 @@ x-node-build: &node-build
   dockerfile: docker/Dockerfile.dev
 
 services:
+  supabase-activity:
+    profiles: [auth-activity]
+    build: *node-build
+    command: ["node", "scripts/operations/supabase-activity.mjs", "--watch"]
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD", "node", "scripts/operations/supabase-activity.mjs", "--health"]
+      interval: 1m
+      timeout: 5s
+      retries: 1
+      start_period: 20s
+
   postgres:
     image: postgres:17-alpine
     environment:

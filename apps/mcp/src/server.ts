@@ -15,6 +15,7 @@ import {
 import { z } from "zod";
 
 import { BrowserApiClient } from "./api-client.js";
+import { reportingInstructions } from "./reporting-guidance.js";
 import {
   nativeBrowserInstructions,
   nativeCommandResult,
@@ -39,7 +40,9 @@ export function createBrowserMcpServer(client = new BrowserApiClient()) {
     process.env.SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED === "true";
   const server = new McpServer(
     { name: "scry-browser", version: "baseline" },
-    { instructions: native ? nativeBrowserInstructions : INSTRUCTIONS },
+    {
+      instructions: `${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${reportingInstructions}`,
+    },
   );
   registerLifecycleTools(server, client, native);
   registerBrowserCommandTools(server, client, native);
@@ -410,8 +413,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
     "publish_mission_report",
     {
       title: "Publish Mission report",
-      description:
-        "Publish the final safe Mission report. Include safeReport.presentation with verified steps, titled observations (not automatic defect judgments), optional suggestions/evidence references, and explicit limitations. Include unsuccessful/recovered attempts; tool completion alone is not business success. The API derives evidence coverage and digest; do not invent them.",
+      description: `Publish the tested application's report after terminal work. ${reportingInstructions}`,
       inputSchema: { missionId: uuid, ...publishBrowserMissionReportSchema.shape },
       outputSchema: { message, reportId: uuid, replay: z.boolean() },
       annotations: idempotentDurableWrite,

@@ -1,0 +1,28 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 384 128"
+  fill="none"
+  role="img"
+  aria-label="Scry"
+>
+  <svg x="0" y="8" width="112" height="112" viewBox="24 24 208 208">
+    <g fill="#4D7C0F">
+      <path
+        id="scry-fold"
+        d="M139 42H215C218 42 219 43 218 47C214 66 201 78 181 86L121 111C110 115 105 121 107 128C108 134 115 139 126 144L118 147C100 153 81 150 67 140C54 131 48 119 50 106C52 92 61 81 75 74L139 42Z"
+      />
+      <use href="#scry-fold" transform="rotate(180 128 128)" />
+    </g>
+  </svg>
+  <text
+    x="140"
+    y="90"
+    fill="#090B0D"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="96"
+    font-weight="700"
+    letter-spacing="-4"
+  >
+    Scry
+  </text>
+</svg>

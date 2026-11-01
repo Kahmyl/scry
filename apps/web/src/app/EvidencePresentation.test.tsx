@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunEvidence } from "./RunEvidence.js";
 import { ReportNarrative, reportNarrative } from "./ReportNarrative.js";
 import { api, apiBlob } from "../infrastructure/api/client.js";
+import { mockSelectBrowserApis } from "../../test/select-dom.js";
 vi.mock("../infrastructure/api/client.js", () => ({ api: vi.fn(), apiBlob: vi.fn() }));
 const media = [
   {
@@ -24,6 +25,7 @@ const media = [
   },
 ];
 beforeEach(() => {
+  mockSelectBrowserApis();
   vi.mocked(api).mockResolvedValue({
     items: media,
     warning: "Best effort masking; review before sharing.",
@@ -40,6 +42,63 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe("human-readable evidence and report presentation", () => {
+  it("reports application checks without treating execution status as a test verdict", () => {
+    render(
+      <ReportNarrative
+        onEvidence={() => {}}
+        value={{
+          presentation: {
+            subject: "application",
+            scope: ["Save and reopen a design"],
+            checks: [
+              {
+                title: "Revised text persists",
+                expected: "Readable revised text after reopening",
+                actual: "All three revised lines remained visible",
+                status: "matched_expectation",
+                evidence: [],
+              },
+              {
+                title: "Safari layout",
+                actual: "This browser was not included",
+                status: "not_tested",
+                evidence: [],
+              },
+              {
+                title: "Welcome layout",
+                expected: "One line",
+                actual: "The message wrapped",
+                status: "different_from_expectation",
+                evidence: [],
+              },
+              {
+                title: "Email delivery",
+                actual: "Delivery was not independently confirmed",
+                status: "inconclusive",
+                evidence: [],
+              },
+            ],
+            observations: [
+              {
+                title: "Pasted text initially invisible",
+                detail: "The text layer existed but its glyphs were absent",
+                evidence: [],
+              },
+            ],
+            limitations: ["Only Chromium was tested"],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Application checks" })).toBeTruthy();
+    expect(screen.getByText("All three revised lines remained visible")).toBeTruthy();
+    expect(screen.getByText("As expected")).toBeTruthy();
+    expect(screen.getByText("Not tested")).toBeTruthy();
+    expect(screen.getByText("Different from expected")).toBeTruthy();
+    expect(screen.getByText("Needs confirmation")).toBeTruthy();
+    expect(screen.queryByText(/recovered interaction problems/)).toBeNull();
+    expect(screen.queryByText(/passed|failed/)).toBeNull();
+  });
   it("defaults to original timing without autoplay and releases replaced media", async () => {
     const view = render(<RunEvidence runId="run-one" />);
     await waitFor(() =>
@@ -53,6 +112,9 @@ describe("human-readable evidence and report presentation", () => {
     expect(screen.getByText("Native timing, including the save wait.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Project after reopening/ }));
     expect(await screen.findByAltText("Project after reopening")).toBeTruthy();
+    const fullSize = screen.getByRole("link", { name: "Open full-size screenshot" });
+    expect(fullSize.getAttribute("href")).toBe("blob:fictional-evidence");
+    expect(fullSize.getAttribute("rel")).toBe("noopener noreferrer");
     expect(URL.revokeObjectURL).toHaveBeenCalled();
     expect(document.querySelector("video")).toBeNull();
     view.unmount();
@@ -65,7 +127,12 @@ describe("human-readable evidence and report presentation", () => {
       expect.stringContaining("not a substitute"),
     );
     expect(apiBlob).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Choose evidence"), { target: { value: "1" } });
+    fireEvent.keyDown(screen.getByRole("combobox", { name: "Choose evidence" }), {
+      key: "ArrowDown",
+    });
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Project after reopening · Screenshot" }),
+    );
     expect(await screen.findByAltText("Project after reopening")).toBeTruthy();
     view.rerender(<RunEvidence runId="run-two" initialArtifactId={"b".repeat(64)} />);
     await waitFor(() =>

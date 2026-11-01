@@ -45,6 +45,129 @@ afterEach(() => {
 });
 
 describe("browser baseline production dashboard", () => {
+  it("keeps mission search scoped to its project when switching projects", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === "/projects")
+        return [
+          { id: "first", name: "First project" },
+          { id: "second", name: "Second project" },
+        ];
+      if (path === "/projects/first/missions" || path === "/projects/second/missions")
+        return [
+          {
+            id: path.includes("first") ? "first-mission" : "second-mission",
+            title: path.includes("first") ? "Checkout" : "Preferences",
+            originalInstruction: "Review the application",
+            state: "running",
+            objectiveCount: 1,
+            terminalObjectiveCount: 0,
+            updatedAt: "2026-11-01T11:30:00Z",
+          },
+        ];
+      return [];
+    });
+    render(
+      <MemoryRouter initialEntries={["/dashboard/missions"]}>
+        <Dashboard userEmail="owner@example.test" />
+      </MemoryRouter>,
+    );
+    await screen.findByRole("button", { name: /Open mission: Checkout/ });
+    fireEvent.change(screen.getByLabelText("Search missions"), { target: { value: "checkout" } });
+    fireEvent.click(screen.getByRole("button", { name: "First project" }));
+    fireEvent.click(screen.getByRole("option", { name: /Second project/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Missions$/ }));
+    expect(await screen.findByRole("button", { name: /Open mission: Preferences/ })).toBeTruthy();
+    expect(screen.getByLabelText("Search missions")).toHaveProperty("value", "");
+    expect(screen.queryByRole("button", { name: /Open mission: Checkout/ })).toBeNull();
+  });
+  it("retries the project missions read and opens the selected mission", async () => {
+    let reads = 0;
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === "/projects") return [{ id: "project", name: "Project" }];
+      if (path === "/projects/project/missions") {
+        if (++reads === 1) throw new Error("PRIVATE_DATABASE_DETAIL");
+        return [
+          {
+            id: "mission",
+            title: "Review checkout",
+            originalInstruction: "Check saved orders",
+            state: "running",
+            objectiveCount: 2,
+            terminalObjectiveCount: 1,
+            updatedAt: "2026-11-01T11:30:00Z",
+          },
+        ];
+      }
+      if (path === "/dashboard/missions/mission")
+        return {
+          id: "mission",
+          projectId: "project",
+          title: "Review checkout",
+          instruction: "Check saved orders",
+          state: "running",
+          objectives: [],
+          flows: [],
+          runs: [],
+        };
+      return [];
+    });
+    render(
+      <MemoryRouter initialEntries={["/dashboard/missions"]}>
+        <Dashboard userEmail="owner@example.test" />
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Review checkout/ }));
+    expect(await screen.findByRole("heading", { name: "Review checkout" })).toBeTruthy();
+    expect(reads).toBe(2);
+    expect(screen.queryByText("PRIVATE_DATABASE_DETAIL")).toBeNull();
+  });
+  it("does not turn execution failures or raw report data into customer findings", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === "/projects") return [{ id: "project", name: "Project" }];
+      if (path === "/reports/app-report")
+        return {
+          id: "app-report",
+          missionId: "app-mission",
+          missionTitle: "Design editing",
+          state: "final",
+          summary: "The revised design was saved and reopened",
+          safeReport: {
+            executionFailure: "PRIVATE_WORKER_ERROR",
+            presentation: {
+              verified: ["Visible saved text"],
+              observations: [],
+              limitations: ["Sharing was not tested"],
+            },
+          },
+        };
+      if (path === "/missions/app-mission" || path === "/dashboard/missions/app-mission")
+        return {
+          id: "app-mission",
+          flows: [{ id: "flow", name: "Edit the card" }],
+          runs: [
+            {
+              id: "attempt",
+              flowId: "flow",
+              state: "failed",
+              outcomeClassification: "environment_failure",
+              conclusion: "PRIVATE_CUSTODIAN_ERROR",
+            },
+          ],
+        };
+      return [];
+    });
+    render(
+      <MemoryRouter initialEntries={["/dashboard/reports/app-report"]}>
+        <Dashboard userEmail="owner@example.test" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Visible saved text")).toBeTruthy();
+    await screen.findByLabelText("Selected attempt evidence");
+    expect(screen.queryByText(/PRIVATE_WORKER_ERROR|PRIVATE_CUSTODIAN_ERROR/)).toBeNull();
+    expect(screen.queryByText(/Technical details and original report data/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Attempt 1 · Ended" })).toBeTruthy();
+  });
   it("does not carry a selected artifact into another report", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === "/projects") return [{ id: "project", name: "Project" }];
@@ -72,7 +195,11 @@ describe("browser baseline production dashboard", () => {
           },
         };
       const mission =
-        path === "/missions/first" ? "first" : path === "/missions/second" ? "second" : undefined;
+        path === "/dashboard/missions/first"
+          ? "first"
+          : path === "/dashboard/missions/second"
+            ? "second"
+            : undefined;
       if (mission)
         return {
           id: mission,
@@ -104,7 +231,7 @@ describe("browser baseline production dashboard", () => {
             { id: "unrelated-project", name: "Unrelated project" },
             { id: "owning-project", name: "Owning project" },
           ];
-        if (path === "/missions/resource")
+        if (path === "/dashboard/missions/resource")
           return {
             id: "resource",
             projectId: "owning-project",
@@ -167,7 +294,7 @@ describe("browser baseline production dashboard", () => {
             },
           },
         };
-      if (path === "/missions/mission-one")
+      if (path === "/dashboard/missions/mission-one")
         return {
           id: "mission-one",
           flows: [{ id: "flow-one", name: "Save the project" }],
@@ -195,12 +322,15 @@ describe("browser baseline production dashboard", () => {
       block: "start",
       behavior: "auto",
     });
+    expect(vi.mocked(HTMLElement.prototype.scrollIntoView).mock.contexts.at(-1)).toBe(
+      screen.getByLabelText("Selected journey evidence"),
+    );
   });
-  it("groups named journeys and retains every attempt conclusion while mounting one evidence gallery", async () => {
+  it("groups named journeys and retains every attempt without exposing execution conclusions", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === "/projects")
         return [{ id: "project-1", name: "Project", description: "", createdAt: "now" }];
-      if (path === "/missions/mission-one")
+      if (path === "/dashboard/missions/mission-one")
         return {
           id: "mission-one",
           title: "A useful mission",
@@ -253,13 +383,18 @@ describe("browser baseline production dashboard", () => {
         <Dashboard userEmail="owner@example.test" />
       </MemoryRouter>,
     );
-    expect(await screen.findByRole("heading", { name: "Save the document" })).toBeTruthy();
-    expect(screen.getByText("First attempt was refused before input.")).toBeTruthy();
-    expect(screen.getByText("The saved document was reopened.")).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: /01 Save the document 2 attempts/ }),
+    ).toBeTruthy();
+    expect(screen.queryByText("First attempt was refused before input.")).toBeNull();
+    expect(screen.queryByText("The saved document was reopened.")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /Attempt \d · Ended/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Show attempts for Save the document" }));
+    expect(screen.getAllByRole("button", { name: /Attempt \d · Ended/ })).toHaveLength(3);
     expect(screen.getAllByLabelText("Attempt media test seam")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Attempt 1 · failed" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Attempt 1 · Ended" })[0]!);
     expect(screen.getByText("Media for trial")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "View test report" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Read test report/ })).toBeTruthy();
   });
   it("loads only the active project, Mission, Run, and report read models", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
@@ -304,23 +439,27 @@ describe("browser baseline production dashboard", () => {
     [
       "object_unavailable",
       "Recording unavailable",
-      /evidence-storage issue, not a finding about your application/,
+      /Do not infer an application result from missing evidence/,
     ],
     [
       "integrity_mismatch",
       "Recording unavailable",
-      /evidence-integrity issue, not a finding about your application/,
+      /Do not infer an application result from missing evidence/,
     ],
     [
       "content_unverifiable",
       "Recording unavailable",
-      /does not establish that your application is broken/,
+      /Do not infer an application result from missing evidence/,
     ],
-    ["video_unavailable", "Video unavailable", /captured evidence was verified/],
+    [
+      "video_unavailable",
+      "Recording unavailable",
+      /Do not infer an application result from missing evidence/,
+    ],
     [
       "publication_unavailable",
       "Recording unavailable",
-      /evidence-publication issue, not a finding about your application/,
+      /Do not infer an application result from missing evidence/,
     ],
   ] as const)(
     "explains %s as an evidence problem without implying that the application is broken",
@@ -363,9 +502,9 @@ describe("browser baseline production dashboard", () => {
         </MemoryRouter>,
       );
       expect(await screen.findByText(title)).toBeTruthy();
-      expect(screen.getByText("failed").closest(".metric")?.classList.contains("failure")).toBe(
-        true,
-      );
+      expect(screen.getByText("Ended")).toBeTruthy();
+      expect(screen.queryByText("failed")).toBeNull();
+      expect(screen.queryByText(issue)).toBeNull();
       expect(screen.getByText(copy)).toBeTruthy();
       expect(screen.queryByText(/decisions are pending/i)).toBeNull();
       expect(document.querySelector("video")).toBeNull();

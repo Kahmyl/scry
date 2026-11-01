@@ -1,10 +1,16 @@
-import { Activity, AlertTriangle, ArrowRight, Eye, FileText, ShieldCheck } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle } from "lucide-react";
+import {
+  OverviewSurface,
+  RunCollectionSurface,
+  RunDetailSurface,
+  AccountSurface,
+} from "./product-design/ProductSurfaces.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { matchPath, useLocation, useNavigate } from "react-router-dom";
 
 import { Integrations } from "../features/settings/integrations.js";
 import { api, type Project } from "../infrastructure/api/index.js";
-import { EmptyBlock, PageSkeleton, PageTitle } from "../shared/components/index.js";
+import { PageSkeleton } from "../shared/components/index.js";
 import { reconcileProjectSelection } from "../shared/state/index.js";
 import {
   BootScreen,
@@ -15,7 +21,14 @@ import {
 } from "./components/index.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { RunEvidence } from "./RunEvidence.js";
-import { ReportNarrative, type EvidenceSelection } from "./ReportNarrative.js";
+import { reportNarrative, type EvidenceSelection } from "./ReportNarrative.js";
+import { MissionCollection } from "./MissionCollection.js";
+import {
+  MissionDetailDesign,
+  JourneyEvidenceDesign,
+  ReportCollectionDesign,
+  ReportDetailDesign,
+} from "./TestingWorkspace.js";
 
 type Mission = {
   id: string;
@@ -46,7 +59,6 @@ type MissionDetail = {
     title: string;
     description: string;
     state: string;
-    conclusion?: string;
   }>;
   flows: Array<{ id: string; name: string; purpose: string; state: string; revision: number }>;
   runs: Array<{
@@ -54,8 +66,6 @@ type MissionDetail = {
     flowId: string;
     objectiveId: string;
     state: string;
-    outcomeClassification?: string;
-    conclusion?: string | null;
   }>;
 };
 
@@ -66,10 +76,8 @@ type Run = {
   flowId: string;
   flowName: string;
   state: string;
-  outcomeClassification?: string;
   environmentName: string;
   baseOrigin: string;
-  browserSessionState?: string;
   artifactCount: number;
   completeEvidenceStreams: number;
   createdAt: string;
@@ -79,48 +87,11 @@ type Run = {
 
 type RunDetail = Run & {
   projectId: string;
-  runtimeAdapter?: "legacy" | "playwright_mcp";
-  activity?: Array<{
-    id: string;
-    tool: string;
-    state: string;
-    execution?: string;
-    businessOutcome?: string;
-    observation?: string;
-    errorCode?: string;
-  }>;
   flowPurpose: string;
-  flowDefinition: Record<string, unknown>;
-  authenticationCommitsUsed: number;
-  authenticationCommitLimit: number;
-  businessCommitsUsed: number;
-  businessCommitLimit: number;
-  effects: Array<{
-    id: string;
-    effectClass: string;
-    effectOrdinal: number;
-    dispatchState: string;
-    captureState: string;
-    publicationState: string;
-    mutationOutcome: string;
-    reasonCode?: string;
-  }>;
   evidence: Array<{
     id: string;
     state: string;
-    chainHead?: string;
-    chunkCount: number;
-    totalBytes: string;
-    sealedAt?: string;
-    interruptions: number;
-    custodyMode: "legacy" | "admitted";
     closureIssue?: string;
-  }>;
-  artifacts: Array<{
-    id: string;
-    kind: string;
-    digest: string;
-    safeMetadata: Record<string, unknown>;
   }>;
 };
 
@@ -141,7 +112,6 @@ type Report = {
     missing: number;
     unavailable?: number;
   };
-  evidenceDigest: string;
   createdAt: string;
   finalizedAt?: string;
 };
@@ -253,18 +223,24 @@ export function Dashboard({
             />
           ) : view === "missions" ? (
             <MissionList
+              key={projectId}
               projectId={projectId}
               onOpen={(id) => navigate(`/dashboard/missions/${id}`)}
             />
           ) : view === "runs" ? (
-            <RunList projectId={projectId} onOpen={(id) => navigate(`/dashboard/runs/${id}`)} />
+            <RunList
+              key={projectId}
+              projectId={projectId}
+              onOpen={(id) => navigate(`/dashboard/runs/${id}`)}
+            />
           ) : view === "reports" ? (
             <ReportList
+              key={projectId}
               projectId={projectId}
               onOpen={(id) => navigate(`/dashboard/reports/${id}`)}
             />
           ) : (
-            <Overview projectId={projectId} onNavigate={navigate} />
+            <Overview key={projectId} projectId={projectId} onNavigate={navigate} />
           )}
         </div>
       </main>
@@ -303,90 +279,59 @@ function Overview({
   if (error) return <LoadFailure value={error} />;
   if (!data) return <PageSkeleton />;
   return (
-    <>
-      <PageTitle
-        eyebrow="PROJECT OVERVIEW"
-        title="Dashboard"
-        copy="Mission progress, browser runs, durable evidence, and final reports for this project."
-      />
-      <section className="metric-grid metric-grid-compact">
-        <Metric label="Missions" value={data.missions.length} />
-        <Metric
-          label="Active runs"
-          value={data.runs.filter((run) => !isTerminal(run.state)).length}
-        />
-        <Metric label="Final reports" value={data.reports.length} />
-      </section>
-      <section className="content-grid">
-        <div className="panel span-2">
-          <ListHeading title="Recent runs" onOpen={() => onNavigate("/dashboard/runs")} />
-          <RunRows
-            runs={data.runs.slice(0, 6)}
-            onOpen={(id) => onNavigate(`/dashboard/runs/${id}`)}
-          />
-        </div>
-        <div className="panel">
-          <ListHeading title="Recent missions" onOpen={() => onNavigate("/dashboard/missions")} />
-          <MissionRows
-            missions={data.missions.slice(0, 6)}
-            onOpen={(id) => onNavigate(`/dashboard/missions/${id}`)}
-          />
-        </div>
-      </section>
-    </>
+    <OverviewSurface
+      missions={data.missions}
+      runs={data.runs}
+      reportCount={data.reports.length}
+      onMission={(id) => onNavigate(`/dashboard/missions/${id}`)}
+      onRun={(id) => onNavigate(`/dashboard/runs/${id}`)}
+      onMissions={() => onNavigate("/dashboard/missions")}
+      onRuns={() => onNavigate("/dashboard/runs")}
+      onReports={() => onNavigate("/dashboard/reports")}
+      onIntegrations={() => onNavigate("/dashboard/integrations")}
+    />
   );
 }
 
 function MissionList({ projectId, onOpen }: { projectId: string; onOpen: (id: string) => void }) {
+  const navigate = useNavigate();
   const state = useResource<Mission[]>(`/projects/${projectId}/missions`);
   return (
-    <ResourcePage
-      state={state}
-      title="Missions"
-      eyebrow="MISSION HISTORY"
-      copy="Agent-directed work, including multiple Flows and Runs inside one Mission."
-    >
-      <MissionRows missions={state.data ?? []} onOpen={onOpen} />
-    </ResourcePage>
+    <MissionCollection
+      missions={state.data ?? []}
+      state={state.error ? "error" : state.data ? "ready" : "loading"}
+      onOpen={onOpen}
+      onIntegrations={() => navigate("/dashboard/integrations")}
+      onRetry={state.reload}
+    />
   );
 }
 
 function RunList({ projectId, onOpen }: { projectId: string; onOpen: (id: string) => void }) {
+  const navigate = useNavigate();
   const state = useResource<Run[]>(`/projects/${projectId}/runs`, 2_000);
   return (
-    <ResourcePage
-      state={state}
-      title="Runs"
-      eyebrow="EXECUTION HISTORY"
-      copy="Current and completed browser executions with durable evidence state."
-    >
-      <RunRows runs={state.data ?? []} onOpen={onOpen} />
-    </ResourcePage>
+    <RunCollectionSurface
+      runs={state.data ?? []}
+      state={state.error ? "error" : state.data ? "ready" : "loading"}
+      onOpen={onOpen}
+      onRetry={state.reload}
+      onMissions={() => navigate("/dashboard/missions")}
+    />
   );
 }
 
 function ReportList({ projectId, onOpen }: { projectId: string; onOpen: (id: string) => void }) {
+  const navigate = useNavigate();
   const state = useResource<Report[]>(`/projects/${projectId}/reports`);
   return (
-    <ResourcePage
-      state={state}
-      title="Reports"
-      eyebrow="FINAL EVIDENCE"
-      copy="Sanitized Mission conclusions derived from completed durable evidence."
-    >
-      <div className="run-list browser-list">
-        {(state.data ?? []).map((report) => (
-          <button key={report.id} onClick={() => onOpen(report.id)}>
-            <span className="run-primary">
-              <strong>{report.missionTitle}</strong>
-              <span>{report.summary}</span>
-            </span>
-            <StateBadge state={report.state} />
-            <ArrowRight size={16} />
-          </button>
-        ))}
-      </div>
-    </ResourcePage>
+    <ReportCollectionDesign
+      reports={state.data ?? []}
+      state={state.error ? "error" : state.data ? "ready" : "loading"}
+      onOpen={onOpen}
+      onMissions={() => navigate("/dashboard/missions")}
+      onRetry={state.reload}
+    />
   );
 }
 
@@ -405,51 +350,20 @@ function MissionDetailView({
   onProjectResolved,
 }: { missionId: string; onBack: () => void } & ProjectResolution) {
   const navigate = useNavigate();
-  const state = useResource<MissionDetail>(`/missions/${missionId}`, 2_000);
+  const state = useResource<MissionDetail>(`/dashboard/missions/${missionId}`, 2_000);
   useResourceProject(state.data?.projectId, onProjectResolved);
   if (state.error) return <LoadFailure value={state.error} />;
   if (!state.data) return <PageSkeleton />;
   const mission = state.data;
   return (
-    <>
-      <Back onClick={onBack} />
-      <PageTitle
-        eyebrow="MISSION"
-        title={mission.title}
-        copy="Review progress, test journeys and their supporting evidence."
-      />
-      {mission.finalReportId && (
-        <button
-          className="primary-button"
-          onClick={() => navigate(`/dashboard/reports/${mission.finalReportId}`)}
-        >
-          View test report <ArrowRight size={16} />
-        </button>
-      )}
-      <details className="panel">
-        <summary>Original request</summary>
-        <p>{mission.instruction}</p>
-      </details>
-      <section className="metric-grid metric-grid-compact">
-        <Metric label="State" value={human(mission.state)} state={mission.state} />
-        <Metric label="Objectives" value={mission.objectives.length} />
-        <Metric label="Flows / Runs" value={`${mission.flows.length} / ${mission.runs.length}`} />
-      </section>
-      <section className="content-grid">
-        <div className="panel">
-          <ListHeading title="Objectives" />
-          {mission.objectives.map((item) => (
-            <Fact
-              key={item.id}
-              title={item.title}
-              detail={item.conclusion ?? item.description}
-              state={item.state}
-            />
-          ))}
-        </div>
-      </section>
-      <MissionJourneys mission={mission} />
-    </>
+    <MissionDetailDesign
+      mission={mission}
+      onBack={onBack}
+      {...(mission.finalReportId
+        ? { onReport: () => navigate(`/dashboard/reports/${mission.finalReportId}`) }
+        : {})}
+      journeys={<MissionJourneys mission={mission} />}
+    />
   );
 }
 
@@ -466,210 +380,101 @@ function MissionJourneys({
   const evidenceDestination = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!selection && !local) return;
-    evidenceDestination.current?.scrollIntoView({ block: "start", behavior: "auto" });
+    const destination = evidenceDestination.current;
+    // Keep the selected journey and attempt visible above the media when arriving from a report.
+    (destination?.closest("[data-evidence-stage]") ?? destination)?.scrollIntoView({
+      block: "start",
+      behavior: "auto",
+    });
     evidenceDestination.current?.focus({ preventScroll: true });
   }, [selection, local]);
+  const request = selection ?? local;
   const selected =
-    selection ?? local ?? (mission.runs.at(-1) ? { runId: mission.runs.at(-1)!.id } : undefined);
-  const run = mission.runs.find((r) => r.id === selected?.runId),
-    flow = mission.flows.find((f) => f.id === run?.flowId);
+    request ?? (mission.runs.at(-1) ? { runId: mission.runs.at(-1)!.id } : undefined);
+  const run = mission.runs.find((r) => r.id === selected?.runId);
   const choose = (value: EvidenceSelection) => {
     setLocal(value);
     onSelect?.(value);
   };
   return (
-    <section className="mission-journeys" aria-label="Mission test journeys">
-      <h2>Test journeys</h2>
-      <p>
-        Flows are directions within this mission. Each run is an attempt; earlier failures and
-        recovery attempts remain visible.
-      </p>
-      {mission.flows.map((flow) => (
-        <section className="panel" key={flow.id}>
-          <h3>{flow.name}</h3>
-          {flow.purpose && <p>{flow.purpose}</p>}
-          {mission.runs
-            .filter((r) => r.flowId === flow.id)
-            .map((run, index) => (
-              <div className="journey-attempt" key={run.id}>
-                <button
-                  aria-pressed={selected?.runId === run.id}
-                  onClick={() => choose({ runId: run.id })}
-                >
-                  Attempt {index + 1} · {human(run.outcomeClassification ?? run.state)}
-                </button>
-                <p>
-                  {run.conclusion ??
-                    (["passed", "failed", "cancelled", "infrastructure_error"].includes(run.state)
-                      ? "This historical attempt has no separately recorded conclusion."
-                      : "This attempt is still in progress.")}
-                </p>
-              </div>
-            ))}
-          {!mission.runs.some((r) => r.flowId === flow.id) && (
-            <p>No attempts have started for this journey.</p>
-          )}
-        </section>
-      ))}
-      {!mission.flows.length && <p>No test journeys have been created yet.</p>}
-      {(run || selected) && (
-        <section aria-label="Selected attempt evidence" ref={evidenceDestination} tabIndex={-1}>
-          {run ? (
-            <>
-              <h3>
-                {flow?.name ?? "Selected test journey"} · Attempt{" "}
-                {mission.runs
-                  .filter((r) => r.flowId === run.flowId)
-                  .findIndex((r) => r.id === run.id) + 1}
-              </h3>
+    <JourneyEvidenceDesign
+      key={mission.id}
+      journeys={mission.flows.map((flow) => ({
+        id: flow.id,
+        name: flow.name,
+        purpose: flow.purpose,
+        attempts: mission.runs
+          .filter((run) => run.flowId === flow.id)
+          .map((run) => ({ id: run.id, progress: attemptProgress(run.state) })),
+      }))}
+      {...(selected ? { selectedRunId: selected.runId } : {})}
+      {...(request ? { selectionRequest: request } : {})}
+      onSelect={(runId) => choose({ runId })}
+      evidence={
+        (run || selected) && (
+          <section aria-label="Selected attempt evidence" ref={evidenceDestination} tabIndex={-1}>
+            {run ? (
               <RunEvidence
                 key={run.id}
                 runId={run.id}
                 {...(selected?.artifactId ? { initialArtifactId: selected.artifactId } : {})}
               />
-            </>
-          ) : (
-            <p role="alert">
-              That evidence reference does not belong to an available attempt in this mission.
-              Choose an attempt above.
-            </p>
-          )}
-        </section>
-      )}
-    </section>
+            ) : (
+              <p role="alert">
+                That evidence reference does not belong to an available attempt in this mission.
+                Choose an attempt above.
+              </p>
+            )}
+          </section>
+        )
+      }
+    />
   );
 }
 
-const evidenceIssueMessages: Readonly<Record<string, string>> = {
-  object_unavailable:
-    "Scry could not read the captured recording. No replay is available; this is an evidence-storage issue, not a finding about your application.",
-  integrity_mismatch:
-    "The captured recording did not match its admitted receipt. Scry has withheld the replay; this is an evidence-integrity issue, not a finding about your application.",
-  content_unverifiable:
-    "Scry could not verify the encrypted recording with the available read capability. No replay is available; this does not establish that your application is broken or that the recording was tampered with.",
-  video_unavailable:
-    "The captured evidence was verified, but Scry could not produce its video. No video is available; this is a recording-processing issue, not a finding about your application.",
-  publication_unavailable:
-    "Scry could not publish the recording artifacts. No replay is available; this is an evidence-publication issue, not a finding about your application.",
-};
 function RunDetailView({
   runId,
   onBack,
   onProjectResolved,
 }: { runId: string; onBack: () => void } & ProjectResolution) {
+  const navigate = useNavigate();
   const state = useResource<RunDetail>(`/runs/${runId}`, 2_000);
   useResourceProject(state.data?.projectId, onProjectResolved);
   if (state.error) return <LoadFailure value={state.error} />;
   if (!state.data) return <PageSkeleton />;
   const run = state.data;
+  const notes = run.evidence.flatMap((item) =>
+    item.closureIssue || item.state === "unavailable"
+      ? [
+          "Recording unavailable",
+          "No recording is available for this attempt. Do not infer an application result from missing evidence.",
+        ]
+      : item.state === "complete"
+        ? ["Recording saved", "The recording is available for review."]
+        : [
+            item.state === "incomplete" ? "Partial recording" : "Recording in progress",
+            "Only the available footage can support visual review. Missing footage does not establish an application defect.",
+          ],
+  );
   return (
-    <>
-      <Back onClick={onBack} />
-      <PageTitle
-        eyebrow="RUN ATTEMPT"
-        title={run.flowName}
-        copy={`${run.environmentName} · ${run.baseOrigin}`}
-      />
-      <section className="metric-grid metric-grid-compact">
-        <Metric label="State" value={human(run.state)} state={run.state} />
-        {run.runtimeAdapter === "playwright_mcp" ? (
-          <Metric label="Browser interactions" value={String(run.activity?.length ?? 0)} />
-        ) : (
-          <>
-            <Metric
-              label="Authentication effects"
-              value={`${run.authenticationCommitsUsed}/${run.authenticationCommitLimit}`}
-            />
-            <Metric
-              label="Business effects"
-              value={`${run.businessCommitsUsed}/${run.businessCommitLimit}`}
-            />
-          </>
-        )}
-      </section>
-      {run.runtimeAdapter === "playwright_mcp" ? (
-        <details className="panel">
-          <summary>Browser activity · {run.activity?.length ?? 0} interactions</summary>
-          <p>
-            A completed interaction means the browser tool returned. Verify application outcomes
-            using the observations and evidence; an uncertain action must not be repeated blindly.
-          </p>
-          {(run.activity ?? []).map((action) => (
-            <Fact
-              key={action.id}
-              title={human(action.tool.replace(/^browser_/u, ""))}
-              detail={`Execution ${human(action.execution ?? action.state)} · observation ${human(action.observation ?? "unavailable")}${action.errorCode ? ` · ${action.errorCode}` : ""}`}
-              state={action.state}
-            />
-          ))}
-          {!run.activity?.length && <p>No browser interactions have been recorded yet.</p>}
-        </details>
-      ) : (
-        <section className="panel">
-          <ListHeading title="Effect truth" />
-          {run.effects.map((effect) => (
-            <Fact
-              key={effect.id}
-              title={`${human(effect.effectClass)} #${effect.effectOrdinal}`}
-              detail={`dispatch ${human(effect.dispatchState)} · capture ${human(effect.captureState)} · publication ${human(effect.publicationState)}`}
-              state={effect.mutationOutcome}
-            />
-          ))}
-          {!run.effects.length && (
-            <EmptyBlock
-              icon={<ShieldCheck />}
-              title="No mutation effects"
-              copy="This Run has not admitted a browser mutation."
-            />
-          )}
-        </section>
-      )}
-      <RunEvidence runId={runId} />
-      <section className="panel">
-        <ListHeading title="Recording status" />
-        {run.evidence.map((item) => (
-          <Fact
-            key={item.id}
-            title={
-              item.closureIssue
-                ? item.closureIssue === "video_unavailable"
-                  ? "Video unavailable"
-                  : "Recording unavailable"
-                : item.state === "complete"
-                  ? "Recording saved"
-                  : item.state === "incomplete"
-                    ? "Partial recording"
-                    : "Recording in progress"
-            }
-            detail={
-              item.closureIssue
-                ? (evidenceIssueMessages[item.closureIssue] ??
-                  "This recording is unavailable. Scry has not published unverifiable evidence.")
-                : `${item.state === "complete" ? "The captured evidence was saved for review." : "Review the available evidence and any gaps before relying on this attempt."}${item.interruptions ? ` ${item.interruptions} recording interruption${item.interruptions === 1 ? "" : "s"}; this is not a complete recording.` : ""}${item.state === "incomplete" && !item.chunkCount ? " Recording unavailable; no captured evidence was admitted." : ""}`
-            }
-            state={item.state}
-          />
-        ))}
-        {!!run.evidence.length && (
-          <details>
-            <summary>Technical evidence details</summary>
-            {run.evidence.map((item) => (
-              <p key={item.id}>
-                {item.chunkCount} admitted chunks · {item.totalBytes} bytes · chain{" "}
-                {item.chainHead ?? "unavailable"}
-              </p>
-            ))}
-          </details>
-        )}
-        {!run.evidence.length && (
-          <EmptyBlock
-            icon={<FileText />}
-            title="No evidence stream yet"
-            copy="Evidence appears after the browser runtime starts this Run."
-          />
-        )}
-      </section>
-    </>
+    <RunDetailSurface
+      run={run}
+      onBack={onBack}
+      {...(run.missionId
+        ? { onMission: () => navigate(`/dashboard/missions/${run.missionId}`) }
+        : {})}
+      evidence={<RunEvidence runId={runId} />}
+      recordingNotes={[
+        ...new Set(
+          notes.length
+            ? notes
+            : [
+                "No recording available yet",
+                "Review the test report for what was checked and what remains unverified.",
+              ],
+        ),
+      ]}
+    />
   );
 }
 
@@ -686,43 +491,21 @@ function ReportDetail({
   if (!state.data) return <PageSkeleton />;
   const report = state.data;
   return (
-    <>
-      <Back onClick={onBack} />
-      <PageTitle eyebrow="FINAL MISSION REPORT" title={report.missionTitle} copy={report.summary} />
-      <button onClick={() => navigate(`/dashboard/missions/${report.missionId}`)}>
-        Back to mission
-      </button>
-      <section className="panel">
-        <ListHeading title="Recording coverage" />
-        {report.evidenceCoverage && (
-          <p role="status">
-            Evidence coverage: {report.evidenceCoverage.complete} complete,{" "}
-            {report.evidenceCoverage.incomplete} incomplete, {report.evidenceCoverage.open} still
-            open, {report.evidenceCoverage.missing} unavailable.
-            {!!report.evidenceCoverage.unavailable &&
-              ` ${report.evidenceCoverage.unavailable} of the incomplete attempts also have unavailable recording artifacts.`}
-            {report.evidenceCoverage.complete < report.evidenceCoverage.runs &&
-              " Some attempts do not have a complete recording. Review those attempts before relying on their visual evidence."}
-          </p>
-        )}
-      </section>
-      <ReportNarrative
-        {...(report.safeReport ? { value: report.safeReport } : {})}
-        onEvidence={setSelection}
-      />
-      <ReportMissionEvidence
-        missionId={report.missionId}
-        {...(selection ? { selection } : {})}
-        onSelect={setSelection}
-      />
-      <details className="panel">
-        <summary>Technical details and original report data</summary>
-        <Fact title="Evidence reference" detail={report.evidenceDigest} state={report.state} />
-        <pre className="browser-safe-report">
-          {JSON.stringify(report.safeReport ?? {}, null, 2)}
-        </pre>
-      </details>
-    </>
+    <ReportDetailDesign
+      report={report}
+      content={reportNarrative(report.safeReport)}
+      onBack={onBack}
+      onMission={() => navigate(`/dashboard/missions/${report.missionId}`)}
+      onEvidence={setSelection}
+      evidenceRequested={!!selection}
+      evidence={
+        <ReportMissionEvidence
+          missionId={report.missionId}
+          {...(selection ? { selection } : {})}
+          onSelect={setSelection}
+        />
+      }
+    />
   );
 }
 function ReportMissionEvidence({
@@ -734,7 +517,7 @@ function ReportMissionEvidence({
   selection?: EvidenceSelection;
   onSelect: (selection: EvidenceSelection) => void;
 }) {
-  const state = useResource<MissionDetail>(`/missions/${missionId}`);
+  const state = useResource<MissionDetail>(`/dashboard/missions/${missionId}`);
   if (state.error) return <LoadFailure value={state.error} />;
   if (!state.data) return <p role="status">Loading mission attempts and evidence…</p>;
   return (
@@ -746,88 +529,15 @@ function ReportMissionEvidence({
   );
 }
 
-function ResourcePage({
-  state,
-  title,
-  eyebrow,
-  copy,
-  children,
-}: {
-  state: { data?: unknown; error: string };
-  title: string;
-  eyebrow: string;
-  copy: string;
-  children: ReactNode;
-}) {
-  if (state.error) return <LoadFailure value={state.error} />;
-  if (!state.data) return <PageSkeleton />;
-  return (
-    <>
-      <PageTitle eyebrow={eyebrow} title={title} copy={copy} />
-      <section className="panel">{children}</section>
-    </>
-  );
-}
-
-function MissionRows({ missions, onOpen }: { missions: Mission[]; onOpen: (id: string) => void }) {
-  if (!missions.length)
-    return (
-      <EmptyBlock
-        icon={<Eye />}
-        title="No Missions yet"
-        copy="Connect an MCP agent to create the first Mission."
-      />
-    );
-  return (
-    <div className="run-list browser-list">
-      {missions.map((mission) => (
-        <button key={mission.id} onClick={() => onOpen(mission.id)}>
-          <span className="run-primary">
-            <strong>{mission.title}</strong>
-            <span>
-              {mission.terminalObjectiveCount} of {mission.objectiveCount} objectives ·{" "}
-              {mission.acceptedEvidenceCount} evidence streams
-            </span>
-          </span>
-          <StateBadge state={mission.state} />
-          <ArrowRight size={16} />
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function RunRows({ runs, onOpen }: { runs: Run[]; onOpen: (id: string) => void }) {
-  if (!runs.length)
-    return (
-      <EmptyBlock
-        icon={<Activity />}
-        title="No Runs yet"
-        copy="Runs appear when an MCP agent starts browser execution."
-      />
-    );
-  return (
-    <div className="run-list browser-list">
-      {runs.map((run) => (
-        <button key={run.id} onClick={() => onOpen(run.id)}>
-          <span className="run-primary">
-            <strong>{run.flowName}</strong>
-            <span>
-              {run.environmentName} · {run.completeEvidenceStreams} complete evidence stream
-              {run.completeEvidenceStreams === 1 ? "" : "s"}
-            </span>
-          </span>
-          <StateBadge state={run.state} />
-          <ArrowRight size={16} />
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function useResource<T>(path: string, intervalMs?: number) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");
+  const [reloadIndex, setReloadIndex] = useState(0);
+  const reload = useCallback(() => {
+    setData(undefined);
+    setError("");
+    setReloadIndex((current) => current + 1);
+  }, []);
   useEffect(() => {
     let active = true;
     const load = () =>
@@ -847,65 +557,26 @@ function useResource<T>(path: string, intervalMs?: number) {
       active = false;
       if (timer) window.clearInterval(timer);
     };
-  }, [intervalMs, path]);
-  return useMemo(() => ({ data, error }), [data, error]);
+  }, [intervalMs, path, reloadIndex]);
+  return useMemo(() => ({ data, error, reload }), [data, error, reload]);
 }
 
-function ListHeading({ title, onOpen }: { title: string; onOpen?: () => void }) {
-  return (
-    <div className="panel-head">
-      <h2>{title}</h2>
-      {onOpen && (
-        <button onClick={onOpen}>
-          View all <ArrowRight size={14} />
-        </button>
-      )}
-    </div>
-  );
+function attemptProgress(state: string) {
+  if (
+    [
+      "passed",
+      "failed",
+      "infrastructure_error",
+      "application_failure",
+      "environment_failure",
+      "blocked",
+      "ended",
+    ].includes(state)
+  )
+    return "Ended";
+  return human(state);
 }
-function Metric({
-  label,
-  value,
-  state,
-}: {
-  label: string;
-  value: string | number;
-  state?: string;
-}) {
-  const tone =
-    !state || ["passed", "completed", "complete", "resolved"].includes(state)
-      ? "lime"
-      : ["failed", "infrastructure_error", "timed_out", "corrupt"].includes(state)
-        ? "failure"
-        : "";
-  return (
-    <div className={`metric ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-function Fact({ title, detail, state }: { title: string; detail: string; state: string }) {
-  return (
-    <div className="browser-fact">
-      <div>
-        <strong>{title}</strong>
-        <span>{detail}</span>
-      </div>
-      <StateBadge state={state} />
-    </div>
-  );
-}
-function StateBadge({ state }: { state: string }) {
-  return <span className={`status status-${state}`}>{human(state)}</span>;
-}
-function Back({ onClick }: { onClick: () => void }) {
-  return (
-    <button className="back-button" onClick={onClick}>
-      ← Back
-    </button>
-  );
-}
+
 function ErrorBanner({ value, onDismiss }: { value: string; onDismiss: () => void }) {
   return (
     <div className="global-error">
@@ -925,22 +596,9 @@ function LoadFailure({ value }: { value: string }) {
   );
 }
 function AccountView({ userEmail }: { userEmail: string }) {
-  return (
-    <>
-      <PageTitle
-        eyebrow="ACCOUNT"
-        title="Your account"
-        copy="Your identity and access are managed securely for this workspace."
-      />
-      <section className="panel">
-        <Fact title={userEmail} detail="Current authenticated account" state="active" />
-      </section>
-    </>
-  );
+  return <AccountSurface email={userEmail} />;
 }
-function isTerminal(state: string) {
-  return ["passed", "failed", "cancelled", "infrastructure_error"].includes(state);
-}
+
 function human(value: string) {
   return value.replaceAll("_", " ");
 }

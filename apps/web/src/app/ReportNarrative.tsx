@@ -1,3 +1,4 @@
+import { ReportContentDesign } from "./TestingWorkspace.js";
 export type EvidenceSelection = { runId: string; artifactId?: string };
 type Observation = {
   title: string;
@@ -21,7 +22,41 @@ function strings(value: unknown): string[] {
 export function reportNarrative(value: Record<string, unknown> = {}) {
   const p = record(value.presentation),
     verified = strings(p.verified ?? value.verification),
+    scope = strings(p.scope),
     limitations = strings(p.limitations ?? value.limitations);
+  const checks = (Array.isArray(p.checks) ? p.checks : []).slice(0, 200).flatMap((item) => {
+    const c = record(item);
+    const labels: Record<string, string> = {
+      matched_expectation: "As expected",
+      different_from_expectation: "Different from expected",
+      inconclusive: "Needs confirmation",
+      not_tested: "Not tested",
+    };
+    if (
+      typeof c.title !== "string" ||
+      typeof c.actual !== "string" ||
+      typeof c.status !== "string" ||
+      !Object.hasOwn(labels, c.status)
+    )
+      return [];
+    const evidence = (Array.isArray(c.evidence) ? c.evidence : []).flatMap((item) => {
+      const ref = record(item);
+      return typeof ref.runId === "string" &&
+        typeof ref.artifactId === "string" &&
+        /^[a-f0-9]{64}$/.test(ref.artifactId)
+        ? [{ runId: ref.runId, artifactId: ref.artifactId }]
+        : [];
+    });
+    return [
+      {
+        title: c.title,
+        actual: c.actual,
+        expected: typeof c.expected === "string" ? c.expected : undefined,
+        label: labels[c.status]!,
+        evidence,
+      },
+    ];
+  });
   const raw = p.observations ?? value.findings;
   const observations: Observation[] = (Array.isArray(raw) ? raw : [])
     .slice(0, 200)
@@ -53,7 +88,7 @@ export function reportNarrative(value: Record<string, unknown> = {}) {
         },
       ];
     });
-  return { verified, limitations, observations };
+  return { scope, checks, verified, limitations, observations };
 }
 export function ReportNarrative({
   value,
@@ -62,65 +97,5 @@ export function ReportNarrative({
   value?: Record<string, unknown>;
   onEvidence: (selection: EvidenceSelection) => void;
 }) {
-  const report = reportNarrative(value);
-  return (
-    <>
-      <section className="panel">
-        <h2>What was verified</h2>
-        {report.verified.length ? (
-          <ol>
-            {report.verified.map((text, index) => (
-              <li key={index}>{text}</li>
-            ))}
-          </ol>
-        ) : (
-          <p>
-            This report does not include a separate verification checklist. Review the summary and
-            individual attempts; do not infer unrecorded coverage.
-          </p>
-        )}
-      </section>
-      <section className="panel">
-        <h2>Observations to review</h2>
-        <p>
-          Observations are not automatically a judgment that the application is defective. Recovered
-          interaction problems remain part of the record.
-        </p>
-        {report.observations.map((item, index) => (
-          <article className="report-observation" key={index}>
-            <h3>{item.title}</h3>
-            <p>{item.detail}</p>
-            {item.suggestion && (
-              <p>
-                <strong>Suggestion:</strong> {item.suggestion}
-              </p>
-            )}
-            {item.evidence.map((ref, index) => (
-              <button key={index} onClick={() => onEvidence(ref)}>
-                Review supporting evidence{item.evidence.length > 1 ? ` ${index + 1}` : ""}
-              </button>
-            ))}
-          </article>
-        ))}
-        {!report.observations.length && (
-          <p>No separate observations were recorded in this report.</p>
-        )}
-      </section>
-      <section className="panel">
-        <h2>Limitations and unverified scope</h2>
-        {report.limitations.length ? (
-          <ul>
-            {report.limitations.map((text, index) => (
-              <li key={index}>{text}</li>
-            ))}
-          </ul>
-        ) : (
-          <p>
-            Limitations were not specified. This does not mean that every capability or scenario was
-            tested.
-          </p>
-        )}
-      </section>
-    </>
-  );
+  return <ReportContentDesign content={reportNarrative(value)} onEvidence={onEvidence} />;
 }

@@ -39,7 +39,7 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
       <PageTitle
         eyebrow="PROJECT"
         title="Project settings"
-        copy="Manage the protected information available to this project’s browser runs."
+        copy="Manage the credentials your agent can use when testing this project."
       />
       <section className="panel credential-settings">
         <div className="credential-settings-head">
@@ -47,8 +47,8 @@ export function ProjectSettings({ projectId }: { projectId: string }) {
             <span className="eyebrow">PROTECTED INFORMATION</span>
             <h3>Credentials</h3>
             <p>
-              Store logins, tokens, and test-account values without exposing them in missions,
-              recordings, or reports.
+              Supply passwords, tokens and other protected inputs by name. Automatic evidence
+              masking is best effort; review recordings and screenshots before sharing.
             </p>
           </div>
           <button className="primary-button" onClick={() => setDialogOpen(true)}>

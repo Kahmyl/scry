@@ -38,6 +38,7 @@ writeFileSync(
         environment: {
           FIXTURE_DATABASE_URL: "postgres://scry:isolated-smoke-only@postgres:5432/scry_smoke",
           SCRY_FIXTURE_REVIEW: visualReview ? "true" : "false",
+          SCRY_FIXTURE_SERVICE_TOKEN: "isolated-smoke-service-only",
         },
         healthcheck: {
           test: [
@@ -170,7 +171,7 @@ try {
     "const fs=require('node:fs'); for(const p of ['packages/assurance','packages/executor','packages/policy','packages/observability','apps/agent-lab','apps/api/migrations','node_modules/typescript']) if(fs.existsSync(p)) process.exit(1)",
   ]);
   process.stdout.write(
-    "Isolated deployed baseline passed: authenticated API/MCP, real Chromium, protected fill, unavailable evidence closure, report refusal, workspace/session refusal, and signed-in desktop/mobile dashboard; no production Assurance dependency.\n",
+    "Isolated deployed baseline passed: authenticated API/MCP, real Chromium, protected fill, unavailable evidence closure, success refusal with limited application report, workspace/session refusal, and signed-in desktop/mobile dashboard; no production Assurance dependency.\n",
   );
 } finally {
   let cleanupFailed = false;

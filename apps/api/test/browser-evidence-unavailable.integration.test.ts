@@ -6,7 +6,11 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PraxisExecutionPort } from "@scry/contracts";
 import { EvidenceCipher } from "@scry/veil";
-import { AdmittedEvidenceReader, ChronicleRepository } from "@scry/chronicle";
+import {
+  AdmittedEvidenceReader,
+  ChronicleEvidenceSession,
+  ChronicleRepository,
+} from "@scry/chronicle";
 import { SupervisedBrowser } from "../../../packages/praxis/src/supervised-browser.js";
 import { composePraxisExecutionPort } from "../src/browser-execution/browser-boundary-composition.js";
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
@@ -100,9 +104,12 @@ live("honest unavailable stopped evidence closure", () => {
     expect(
       await new ChronicleRepository(database).missionEvidenceCoverage(scope.missionId),
     ).toMatchObject({ incomplete: 1, unavailable: 1, complete: 0 });
-    await expect(
-      new ChronicleRepository(database).missionEvidenceDigest(scope.missionId),
-    ).rejects.toThrow("MISSION_EVIDENCE_INCOMPLETE");
+    // A limited report may be anchored to a sealed admitted prefix. Its digest
+    // identifies that incomplete history; it is not successful run/evidence proof.
+    const repository = new ChronicleRepository(database);
+    const digest = await repository.missionEvidenceDigest(scope.missionId);
+    expect(digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(await repository.missionEvidenceDigest(scope.missionId)).toBe(digest);
     expect(launched).toHaveBeenCalledTimes(1);
     return after;
   }
@@ -202,6 +209,72 @@ live("honest unavailable stopped evidence closure", () => {
     const filename = path.join(root, id, "evidence", object.object_key as string);
     await rename(filename, `${filename}.fixture-held`);
   }
+  it.each(["missing", "tampered"] as const)(
+    "closes %s evidence that becomes unavailable before the stopped-capture receipt",
+    async (mode) => {
+      const id = await seedSession(database, effects, origin);
+      await praxis.executeCommand(id, { kind: "navigate", url: origin });
+      let before!: Record<string, unknown>;
+      const original = ChronicleEvidenceSession.prototype.stopCapture;
+      vi.spyOn(ChronicleEvidenceSession.prototype, "stopCapture").mockImplementationOnce(
+        async function (this: ChronicleEvidenceSession, receipt) {
+          before = await facts(id);
+          expect(before.capture_stopped_at).toBeNull();
+          expect(before.chunk_count).toBeGreaterThan(0);
+          if (mode === "missing") await holdFirstObject(id);
+          else {
+            const object = (
+              await database.query(
+                "SELECT c.object_key FROM browser_evidence_chunks c JOIN browser_evidence_streams s ON s.id=c.stream_id WHERE s.session_id=$1 ORDER BY c.chunk_index LIMIT 1",
+                [id],
+              )
+            ).rows[0]!;
+            const filename = path.join(root, id, "evidence", object.object_key as string);
+            await writeFile(filename, Buffer.concat([await readFile(filename), Buffer.from(" ")]));
+          }
+          return original.call(this, receipt);
+        },
+      );
+      const issue = mode === "missing" ? "object_unavailable" : "integrity_mismatch";
+      expect(await praxis.executeCommand(id, { kind: "close_for_failure" })).toMatchObject({
+        closed: true,
+        evidenceState: "incomplete",
+        evidenceIssue: issue,
+      });
+      expect(await facts(id)).toMatchObject({
+        capture_stopped_at: expect.any(Date),
+        capture_complete: false,
+      });
+      await assertFailedClosure(id, before, issue);
+    },
+    30000,
+  );
+  it("recovers a lost stop acknowledgment after unavailable active capture without reopening the browser", async () => {
+    const id = await seedSession(database, effects, origin);
+    await praxis.executeCommand(id, { kind: "navigate", url: origin });
+    const stop = effects.stopEvidenceCapture.bind(effects);
+    vi.spyOn(effects, "stopEvidenceCapture").mockImplementationOnce(async (...args) => {
+      await stop(...args);
+      throw new Error("fixture_stop_ack_lost");
+    });
+    const original = ChronicleEvidenceSession.prototype.stopCapture;
+    vi.spyOn(ChronicleEvidenceSession.prototype, "stopCapture").mockImplementationOnce(
+      async function (this: ChronicleEvidenceSession, receipt) {
+        await holdFirstObject(id);
+        return original.call(this, receipt);
+      },
+    );
+    await expect(praxis.executeCommand(id, { kind: "close_for_failure" })).rejects.toThrow(
+      "fixture_stop_ack_lost",
+    );
+    const before = await facts(id);
+    expect(before).toMatchObject({
+      state: "open",
+      capture_stopped_at: expect.any(Date),
+      capture_complete: false,
+    });
+    await assertFailedClosure(id, before, "object_unavailable");
+  }, 30000);
   it("normal close does not downgrade missing content into a failed evidence seal", async () => {
     const { id } = await stoppedJourney();
     await holdFirstObject(id);

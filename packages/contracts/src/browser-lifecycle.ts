@@ -102,24 +102,53 @@ export const missionReportPresentationSchema = z.strictObject({
     .default([]),
   limitations: z.array(z.string().min(1).max(4000)).max(100).default([]),
 });
+const reportEvidenceReferenceSchema = z.strictObject({
+  runId: uuid,
+  artifactId: z.string().regex(/^[a-f0-9]{64}$/),
+});
+/** Application expectations, never browser-tool or infrastructure verdicts. */
+export const applicationTestCheckSchema = z
+  .strictObject({
+    title: z.string().min(1).max(200),
+    expected: z.string().min(1).max(4000).optional(),
+    actual: z.string().min(1).max(4000),
+    status: z.enum([
+      "matched_expectation",
+      "different_from_expectation",
+      "inconclusive",
+      "not_tested",
+    ]),
+    evidence: z.array(reportEvidenceReferenceSchema).max(50).default([]),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      ["matched_expectation", "different_from_expectation"].includes(value.status) &&
+      !value.expected
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["expected"],
+        message: "An application expectation is required for this comparison",
+      });
+  });
+export const applicationReportPresentationSchema = missionReportPresentationSchema.extend({
+  subject: z.literal("application"),
+  scope: z.array(z.string().min(1).max(4000)).max(100).default([]),
+  checks: z.array(applicationTestCheckSchema).min(1).max(200),
+});
+export type ApplicationReportPresentation = z.infer<typeof applicationReportPresentationSchema>;
 export const publishBrowserMissionReportSchema = z.object({
   agentSessionId: uuid,
   summary: z.string().min(1).max(10_000),
   safeReport: z
-    .record(z.string(), z.unknown())
-    .superRefine((value, ctx) => {
-      if (value.presentation !== undefined) {
-        const result = missionReportPresentationSchema.safeParse(value.presentation);
-        if (!result.success)
-          ctx.addIssue({
-            code: "custom",
-            message: "Invalid report presentation",
-            path: ["presentation"],
-          });
-      }
+    .object({
+      presentation: z
+        .union([applicationReportPresentationSchema, missionReportPresentationSchema])
+        .optional(),
     })
+    .catchall(z.unknown())
     .describe(
-      "For a readable report include presentation: {verified: string[], observations: [{title, detail, suggestion?, evidence?: [{runId,artifactId}]}], limitations: string[]}. Keep recovered failures visible. Additional domain details remain available for diagnostics.",
+      "Customer reports describe the tested application. Include presentation: {subject: 'application', scope: string[], checks: [{title, expected?, actual, status: 'matched_expectation'|'different_from_expectation'|'inconclusive'|'not_tested', evidence?: [{runId,artifactId}]}], observations: [{title,detail,suggestion?,evidence?}], limitations: string[]}. Comparisons require an explicit application expectation. Report actual verified outcomes after recovery; never grade browser-tool success, Scry capabilities or infrastructure as application findings. Describe unreached checks as not_tested/inconclusive without internal error details. Historical formats are retained for operator review, not automatically promoted to customer findings.",
     ),
 });
 
@@ -131,4 +160,4 @@ export type StartBrowserRunInput = z.infer<typeof startBrowserRunSchema>;
 export type CreateBrowserProtectedInputInput = z.infer<typeof createBrowserProtectedInputSchema>;
 export type BindBrowserProtectedInputsInput = z.infer<typeof bindBrowserProtectedInputsSchema>;
 export type FinalizeBrowserRunInput = z.infer<typeof finalizeBrowserRunSchema>;
-export type PublishBrowserMissionReportInput = z.infer<typeof publishBrowserMissionReportSchema>;
+export type PublishBrowserMissionReportInput = z.input<typeof publishBrowserMissionReportSchema>;

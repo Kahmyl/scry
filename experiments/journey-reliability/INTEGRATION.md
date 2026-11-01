@@ -7,27 +7,32 @@ historical evidence of that isolated checkpoint, not a claim about this change.
 
 ## Current acceptance summary
 
-Nine product journeys have accepted business outcomes. Penpot completed with a
-failed visual outcome and a separately reproduced plain-text-paste finding; its
-failure is not converted into a pass because the recording is valid.
+Nine product journeys have accepted business outcomes from their earlier
+assessments. Penpot subsequently completed a controlled recovery: the existing
+card's readable revised text and both shapes were visually verified after a
+fresh document load, then sign-out settled. Its earlier failed blind attempt
+and independently reproduced empty-editor paste finding remain unchanged. This
+is ten completed product objectives across the retained assessments, not ten
+clean first-attempt passes or ten fresh blind tests on one final binary.
 
-| Product     | Latest assessed outcome       | Important qualification                                                                                                              |
-| ----------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Nextcloud   | Accepted                      | Earlier integration checkpoint; autosave limits retained.                                                                            |
-| Grafana     | Accepted recovery             | Earlier interrupted attempt and partial video remain.                                                                                |
-| Odoo        | Accepted                      | Saved opportunity revisions, discard, search and logout.                                                                             |
-| Mattermost  | Accepted                      | Private channel, post revisions, reply/reaction, discard and logout.                                                                 |
-| OpenProject | Accepted recovery             | Capacity-interrupted attempt and partial video remain.                                                                               |
-| Discourse   | Accepted recovery             | Capacity-interrupted attempt and partial video remain.                                                                               |
-| ERPNext     | Accepted                      | Project/task revisions, discard, search and settled logout.                                                                          |
-| Metabase    | Accepted fresh rerun          | Earlier failed logout retained; external documentation error-tab exception recorded.                                                 |
-| GitLab      | Accepted                      | Private project, issue/label, branch edit/diff, unmerged draft request and logout.                                                   |
-| Penpot      | Failed visible-design outcome | Text persists but pasted glyphs are invisible; native comparison reproduces the symptom without the browser adapter or mask overlay. |
+| Product     | Latest assessed outcome       | Important qualification                                                                                                                                |
+| ----------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Nextcloud   | Accepted                      | Earlier integration checkpoint; autosave limits retained.                                                                                              |
+| Grafana     | Accepted recovery             | Earlier interrupted attempt and partial video remain.                                                                                                  |
+| Odoo        | Accepted                      | Saved opportunity revisions, discard, search and logout.                                                                                               |
+| Mattermost  | Accepted                      | Private channel, post revisions, reply/reaction, discard and logout.                                                                                   |
+| OpenProject | Accepted recovery             | Capacity-interrupted attempt and partial video remain.                                                                                                 |
+| Discourse   | Accepted recovery             | Capacity-interrupted attempt and partial video remain.                                                                                                 |
+| ERPNext     | Accepted                      | Project/task revisions, discard, search and settled logout.                                                                                            |
+| Metabase    | Accepted fresh rerun          | Earlier failed logout retained; external documentation error-tab exception recorded.                                                                   |
+| GitLab      | Accepted                      | Private project, issue/label, branch edit/diff, unmerged draft request and logout.                                                                     |
+| Penpot      | Completed controlled recovery | Revised visible text and both shapes persist after fresh document load; earlier blind failure and independently reproduced paste observation retained. |
 
 All ten completed journeys have published reports and authenticated native media
 audits. Successful attempts have complete recordings; interrupted attempts keep
-their actual gaps. Penpot's audit intentionally remains non-passing because it
-has no successful business attempt. Some earlier journeys predate the final
+their actual gaps. Penpot's original audit remains non-passing for its failed
+attempt; the separate controlled recovery passes its own authenticated media
+audit and actual visual objective. Some earlier journeys predate the final
 generic corrections: this is not a claim that all ten ran on one identical final
 binary. Final focused regressions, fresh ERPNext/Metabase/GitLab acceptance and
 the actual rebuilt production-image complete-path/recovery gates supplement them.
@@ -39,7 +44,66 @@ TLS/edge deployment, universal app compatibility and perfect masking are not
 established. The desktop dashboard was reviewed against actual admitted media;
 this is not mobile-browser qualification.
 
+Penpot's follow-up report is `b56ec053-6950-4916-a8a7-7ab5692684f1` (Mission
+`f0c2487b-b9fc-4020-981f-bc749f8d7fba`). Its complete 574.75-second native video
+passed authenticated retrieval, digest matching and full decode; the saved design
+was visually inspected in both a screenshot and an actual recording frame.
+The customer report says completed with observations and retains the invisible
+saved-text finding. A separate later missing-fill transition during recovery is
+not fully attributed: isolated comparisons on ordinary and recovered pasted
+layers did not reproduce it with either the current helper or a no-clear variant.
+No speculative runtime patch was applied. Thus this is proven objective recovery,
+not an assertion that all Scry input paths are defect-free. Operator findings and
+audit are in `artifacts/assurance/journey-recovery-20261101` of the main workspace;
+the original failed attempt/report remain immutable.
+
 ## Selected boundary
+
+### Application-focused reporting
+
+The MCP now delivers one shared reporting guide through initialization and the
+report tool description for both native and retained profiles. `tools/list`
+exposes the nested application-report fields, outcomes and evidence references
+as schema, not only an opaque record description. Its valid format example
+contains an untested check, never invented completed work or artifact IDs.
+Recovery, uncertain-write handling, customer/operator separation and explicit
+testing gaps are explained without requiring context from this chat.
+
+Two fresh real customer HTTP connections passed discovery, authenticated project
+reads and invalid tool-verdict refusal. Both profile variants passed SDK
+initialization tests; the focused MCP/contracts/customer-reporting matrix passed
+43 cases. The coherent `91f2d2ab6303` image also published the app-focused report
+`ad473d4f-5438-4f26-95e3-676b530efa98` through the full public path, with a complete
+4.05-second native recording. Artifacts are in the main workspace's
+`artifacts/assurance/mcp-report-guidance-20261101`. This is fresh protocol discovery
+and controlled integration proof, not a fresh blind-agent behavioral trial.
+
+The reporting direction now follows the tested app rather than Scry's execution
+qualification. Structured app checks record expectation, actual observation,
+evidence and matched/different/inconclusive/not-tested outcomes. The customer
+dashboard does not show tool/custody diagnostics, raw report JSON or execution
+conclusions as app findings. Progress remains distinct from an app verdict.
+Private operator Run/report reads require the existing internal service
+principal; customer workspace roles and MCP credentials do not grant access.
+Legacy report payloads remain unchanged and operator-readable. Unclassified
+historical narratives are not automatically promoted into app checks.
+
+The coherent local image `a97ce31d7c8c` passed the complete public path with report
+`04832c62-6989-4374-b56b-df190a4485ed` and a complete 4.3-second native video.
+This is a controlled reporting fixture, not a fresh blind app journey or proof
+of backend persistence. Final authenticated media and historical/access-boundary
+audits are retained in the main workspace's
+`artifacts/assurance/reporting-direction-20261101`. Actual desktop review
+confirmed application checks, explicit untested scope, exact evidence selection
+and a readable Back to mission control. The report preview is explicitly an
+example and no longer grades internal policy or browser-tool success.
+
+All eight defined package test commands passed (568 tests, 160 explicitly
+environment-dependent skips); workspace typechecks, format, ownership and closure
+checks passed. Final focused reporting/status regressions passed 36 cases.
+No schema migration, browser-runtime change, historical rewrite, merge, push,
+baseline activation or remote deployment is included. Coordinated API/web/MCP
+rollout and historical-presentation review remain required before activation.
 
 Keep the pinned official Playwright MCP and Scry's existing durable command
 ordinal, claim, owner lease, physical custodian and Chronicle admission. Integrate

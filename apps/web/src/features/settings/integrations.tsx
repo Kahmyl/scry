@@ -91,7 +91,7 @@ export function Integrations() {
           </p>
         </div>
         <span className="integration-ready">
-          <i /> Remote endpoint ready
+          <i /> Streamable HTTP
         </span>
       </section>
 
@@ -162,8 +162,8 @@ export function Integrations() {
                 <>
                   <CheckCircle2 size={15} />
                   <span>
-                    <strong>Ready for this setup</strong>This client can connect to the local
-                    Streamable HTTP endpoint.
+                    <strong>Supported connection method</strong>Use these details to configure your
+                    client. This page has not verified its connection.
                   </span>
                 </>
               )}

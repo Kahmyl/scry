@@ -9,6 +9,8 @@
     "dev:api": "pnpm --filter @scry/api dev",
     "dev:mcp": "pnpm --filter @scry/mcp start:http",
     "dev:web": "pnpm --filter @scry/web dev",
+    "auth:activity": "node scripts/operations/supabase-activity.mjs",
+    "test:auth-activity": "node --test scripts/operations/supabase-activity.test.mjs",
     "docker:up": "node scripts/docker-up.mjs",
     "docker:dev": "docker compose up --build --watch",
     "docker:watch": "docker compose watch --no-up",
