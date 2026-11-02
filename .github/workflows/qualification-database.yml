@@ -124,6 +124,7 @@ jobs:
           test/browser-command-lifetime.integration.test.ts --maxWorkers=1 --reporter=verbose
 
       - name: Qualify live owner replacement and evidence admission
+        id: owner_qualification
         env:
           DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_owner
           SCRY_BROWSER_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_owner
@@ -133,6 +134,18 @@ jobs:
         run: |
           pnpm db:migrate
           pnpm qualify owner
+
+      - name: Diagnose a failed owner-fencing fixture
+        if: failure() && steps.owner_qualification.outcome == 'failure'
+        env:
+          DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_owner
+          SCRY_BROWSER_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_owner
+          SCRY_BROWSER_E2E: "1"
+          SCRY_BROWSER_MAX_LIVE_SESSIONS: "1000"
+          SCRY_BROWSER_ADAPTER: legacy
+        run: >-
+          pnpm --filter @scry/api exec vitest run
+          test/browser-owner-fencing.integration.test.ts --maxWorkers=1 --reporter=verbose
 
       - name: Retain safe qualification outcomes
         if: always()

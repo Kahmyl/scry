@@ -40,3 +40,50 @@ jobs:
             pnpm --filter @scry/assurance exec vitest run test/browser-recording.test.ts test/native-mask-rendering.test.ts --maxWorkers=1 --reporter=verbose || outcome=1
           done
           exit "$outcome"
+
+  owner-diagnose:
+    name: Fictional owner-fencing diagnostics only (not a release gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: scry_owner_diagnostic
+          POSTGRES_USER: scry
+          POSTGRES_PASSWORD: fictional-owner-diagnostic
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scry -d scry_owner_diagnostic"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      SCRY_BROWSER_CHANNEL: chromium
+      SCRY_BROWSER_E2E: "1"
+      SCRY_BROWSER_ADAPTER: legacy
+      SCRY_BROWSER_MAX_LIVE_SESSIONS: "1000"
+      SCRY_BROWSER_DATABASE_URL: postgres://scry:fictional-owner-diagnostic@127.0.0.1:5432/scry_owner_diagnostic
+      SCRY_BROWSER_TEST_DATABASE_URL: postgres://scry:fictional-owner-diagnostic@127.0.0.1:5432/scry_owner_diagnostic
+      SCRY_BROWSER_EXPECTED_DATABASE: scry_owner_diagnostic
+      SCRY_BROWSER_SCHEMA_CONFIRM: CREATE_EMPTY_BASELINE
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node packages/praxis/node_modules/playwright/cli.js install --with-deps chromium
+      - run: pnpm db:migrate
+      - name: Inspect known fictional owner-fencing cases
+        shell: bash
+        run: |
+          outcome=0
+          for attempt in 1 2 3; do
+            echo "Fictional owner-fencing diagnostic attempt $attempt"
+            pnpm --filter @scry/api exec vitest run test/browser-owner-fencing.integration.test.ts --maxWorkers=1 --reporter=verbose || outcome=1
+          done
+          exit "$outcome"
