@@ -97,6 +97,7 @@ jobs:
           'import pg from "pg"; const client = new pg.Client({ connectionString: process.env.DATABASE_URL }); await client.connect(); try { await client.query("CREATE DATABASE scry_ci_worker"); await client.query("CREATE DATABASE scry_ci_owner"); } finally { await client.end(); }'
 
       - name: Qualify the durable worker and protected observations
+        id: worker_qualification
         env:
           DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_worker
           SCRY_BROWSER_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_worker
@@ -107,6 +108,20 @@ jobs:
         run: |
           pnpm db:migrate
           pnpm qualify worker
+
+      # Fictional local browser + this job's disposable Postgres/Redis only.
+      # Preserve the failed gate while exposing the exact deadline fixture cause.
+      - name: Diagnose a failed command-lifetime fixture
+        if: failure() && steps.worker_qualification.outcome == 'failure'
+        env:
+          DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_worker
+          SCRY_BROWSER_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/scry_ci_worker
+          SCRY_BROWSER_E2E: "1"
+          SCRY_BROWSER_MAX_LIVE_SESSIONS: "1000"
+          SCRY_BROWSER_ADAPTER: legacy
+        run: >-
+          pnpm --filter @scry/api exec vitest run
+          test/browser-command-lifetime.integration.test.ts --maxWorkers=1 --reporter=verbose
 
       - name: Qualify live owner replacement and evidence admission
         env:
