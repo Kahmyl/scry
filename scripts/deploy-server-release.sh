@@ -275,12 +275,19 @@ health_check() {
     [[ "$actual_release" == "$selected_release" ]] ||
       { fail "$service is running release $actual_release instead of $selected_release"; return 1; }
   done
+  if [[ "${5:-false}" == true ]]; then
+    for service in api worker mcp; do
+      run_compose "$compose_file" "$selected_image" "$selected_release" \
+        exec -T "$service" node --eval \
+        'if (process.env.SCRY_BROWSER_ADAPTER !== "playwright_mcp" || process.env.SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED !== "true") process.exit(1)' || return 1
+    done
+  fi
 }
 
 if [[ "$previous_available" == true &&
   "$previous_release" == "$release_id" &&
   "$previous_image" == "$image_ref" ]]; then
-  if health_check "$previous_compose" "$previous_image" "$previous_release"; then
+  if health_check "$previous_compose" "$previous_image" "$previous_release" /api/health true; then
     write_current_state "$release_id" "$image_ref" "$candidate_compose"
     log "Release $release_id is already healthy; deployment replay completed without interruption."
     exit 0
@@ -385,7 +392,7 @@ run_candidate up -d --no-deps --force-recreate --wait --wait-timeout "$health_ti
 run_candidate up -d --no-deps --force-recreate --wait --wait-timeout "$health_timeout" mcp web
 
 phase=health_verification
-health_check "$candidate_compose" "$image_ref" "$release_id"
+health_check "$candidate_compose" "$image_ref" "$release_id" /api/health true
 run_candidate run --rm --no-deps --entrypoint caddy caddy validate --config /etc/caddy/Caddyfile
 
 phase=activation

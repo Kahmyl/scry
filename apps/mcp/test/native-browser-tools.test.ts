@@ -9,6 +9,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("controlled native MCP profile", () => {
+  it("refuses a hosted legacy tool surface instead of quietly registering it", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SCRY_BROWSER_ADAPTER", undefined);
+    vi.stubEnv("SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED", undefined);
+    expect(() => createBrowserMcpServer()).toThrow("ADAPTER_DISABLED");
+    vi.stubEnv("SCRY_BROWSER_ADAPTER", "legacy");
+    expect(() => createBrowserMcpServer()).toThrow("ADAPTER_DISABLED");
+  });
   it.each(["queued", "running", "completed", "failed"])(
     "returns schema-valid durable %s receipts through get_command",
     async (state) => {

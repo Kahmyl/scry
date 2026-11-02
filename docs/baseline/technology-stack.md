@@ -74,6 +74,14 @@ fingerprint match.
 
 ## Browser execution
 
+The hosted candidate uses the pinned official Playwright MCP adapter, wrapped
+by Scry's existing durable admission, worker ownership, targeted masking and
+Chronicle custody. Runtime selection is shared by API admission and MCP tool
+discovery; the worker executes each session's immutable adapter assignment.
+The retained command adapter is not a hosted fallback. See
+[production promotion](production-promotion.md#browser-runtime-selection) for
+the packaged login and compatibility gate required before activation.
+
 Playwright controls a headless or visible Chromium browser. The worker uses the
 Chrome DevTools Protocol where lower-level network or browser lifecycle control
 is required.

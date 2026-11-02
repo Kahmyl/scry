@@ -4,6 +4,8 @@ import { mkdirSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { handleLoginFixture, startLoginFixture } from "./browser-login-fixture.mjs";
+import { exerciseNativeBrowser, reproduceRetainedLogin } from "./deployed-native-browser.mjs";
 
 // API-owned production-shaped fixture: database fault setup stays outside
 // Assurance analysis. This file is mounted only into the disposable test stack.
@@ -14,6 +16,7 @@ if (process.argv[2] === "serve") {
   const key = { ...publicKey.export({ format: "jwk" }), kid: "fixture", alg: "ES256", use: "sig" };
   const users = [randomUUID(), randomUUID()];
   const credential = `fixture-only-secret-${randomUUID()}`;
+  startLoginFixture(credential);
   const token = (index) => {
     const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
     const payload = `${encode({ alg: "ES256", kid: key.kid, typ: "JWT" })}.${encode({ sub: users[index], email: `fixture-${index}@example.invalid`, iss: "http://fixture:8080/auth/v1", aud: "authenticated", iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 900 })}`;
@@ -30,6 +33,7 @@ if (process.argv[2] === "serve") {
     created_at: new Date().toISOString(),
   };
   createServer(async (request, response) => {
+    if (handleLoginFixture(request, response)) return;
     const url = new URL(request.url, "http://fixture:8080");
     response.setHeader("content-type", "application/json");
     response.setHeader("access-control-allow-origin", "http://web:3000");
@@ -218,6 +222,24 @@ async function exercise() {
   });
   assert.ok(sessionId, "MCP_SESSION_NOT_RETAINED");
   const tools = await rpc("tools/list", {});
+  if (
+    tools.tools.some((tool) => tool.name === "browser_navigate") ||
+    process.env.SCRY_FIXTURE_LOGIN_COMPARISON === "legacy"
+  ) {
+    const call = async (name, args) => {
+      const result = await rpc("tools/call", { name, arguments: args });
+      assert.ok(!result.isError, `MCP fixture tool refused: ${name}`);
+      assert.ok(result.structuredContent, `MCP fixture tool omitted facts: ${name}`);
+      assert.ok(!JSON.stringify(result).includes(credential), "PROTECTED_VALUE_ESCAPED");
+      return result.structuredContent;
+    };
+    const exercise =
+      process.env.SCRY_FIXTURE_LOGIN_COMPARISON === "legacy"
+        ? reproduceRetainedLogin
+        : exerciseNativeBrowser;
+    await exercise({ api, operator, rpc, call, project, credential, token, otherToken });
+    return;
+  }
   assert.deepEqual(
     tools.tools.map((tool) => tool.name).sort(),
     [

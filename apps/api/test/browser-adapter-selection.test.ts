@@ -18,4 +18,10 @@ describe("controlled browser adapter selection", () => {
     vi.stubEnv("SCRY_BROWSER_ADAPTER", "unknown");
     expect(() => selectedBrowserAdapter()).toThrow("ADAPTER_DISABLED");
   });
+  it.each([undefined, "legacy"])("refuses a hosted legacy fallback (%s)", (adapter) => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SCRY_BROWSER_ADAPTER", adapter);
+    vi.stubEnv("SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED", undefined);
+    expect(() => selectedBrowserAdapter()).toThrow("ADAPTER_DISABLED");
+  });
 });

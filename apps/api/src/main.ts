@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { selectedBrowserAdapter } from "./browser-execution/browser-adapter-selection.js";
 
 import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
@@ -6,6 +7,7 @@ import { AppModule } from "./app.module.js";
 import { BrowserExecutionRepository } from "./browser-execution/repositories/browser-execution.repository.js";
 
 if (process.env.SCRY_BROWSER_ENABLED !== "true") throw new Error("SCRY_BROWSER_DISABLED");
+selectedBrowserAdapter();
 const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
 await app.get(BrowserExecutionRepository).assertCompatibleBaseline();
 app.enableCors({
