@@ -15,21 +15,75 @@ async function refresh(cdp: CDPSession, contextId: number) {
   });
 }
 
-async function pixels(page: Page, png: Buffer) {
-  return page.evaluate(async (encoded) => {
-    const image = new Image();
-    image.src = `data:image/png;base64,${encoded}`;
-    await image.decode();
-    const canvas = document.createElement("canvas");
-    canvas.width = image.width;
-    canvas.height = image.height;
-    const context = canvas.getContext("2d")!;
-    context.drawImage(image, 0, 0);
-    return {
-      width: image.width,
-      data: Array.from(context.getImageData(0, 0, image.width, image.height).data),
-    };
-  }, png.toString("base64"));
+async function comparePixels(
+  page: Page,
+  before: Buffer,
+  after: Buffer,
+  box: { x: number; y: number; width: number; height: number },
+  scale: number,
+) {
+  // Keep full-resolution typed arrays in the browser. Returning them as JSON
+  // and allocating a slice per pixel made the test itself CPU/GC bound in CI.
+  return page.evaluate(
+    async ({ before, after, box, scale }) => {
+      const decode = async (encoded: string) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${encoded}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d")!;
+        context.drawImage(image, 0, 0);
+        return {
+          width: image.width,
+          data: context.getImageData(0, 0, image.width, image.height).data,
+        };
+      };
+      const [uncovered, covered] = await Promise.all([decode(before), decode(after)]);
+      let changedOutside = 0;
+      let changedInside = 0;
+      for (let offset = 0; offset < covered.data.length; offset += 4) {
+        if (
+          covered.data[offset] === uncovered.data[offset] &&
+          covered.data[offset + 1] === uncovered.data[offset + 1] &&
+          covered.data[offset + 2] === uncovered.data[offset + 2] &&
+          covered.data[offset + 3] === uncovered.data[offset + 3]
+        )
+          continue;
+        const x = (offset / 4) % covered.width;
+        const y = Math.floor(offset / 4 / covered.width);
+        // Preserve the exact one-device-pixel rasterization fringe used by the
+        // original comparison, never a larger privacy/layout tolerance.
+        const inside =
+          x >= Math.floor(box.x * scale) - 1 &&
+          x < Math.ceil((box.x + box.width) * scale) + 1 &&
+          y >= Math.floor(box.y * scale) - 1 &&
+          y < Math.ceil((box.y + box.height) * scale) + 1;
+        if (inside) changedInside++;
+        else changedOutside++;
+      }
+      return { changedInside, changedOutside };
+    },
+    { before: before.toString("base64"), after: after.toString("base64"), box, scale },
+  );
+}
+
+async function pixelAt(page: Page, png: Buffer, x: number, y: number) {
+  return page.evaluate(
+    async ({ encoded, x, y }) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${encoded}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      return Array.from(context.getImageData(x, y, 1, 1).data);
+    },
+    { encoded: png.toString("base64"), x, y },
+  );
 }
 
 describe("native frosted rendering", () => {
@@ -72,32 +126,13 @@ describe("native frosted rendering", () => {
             await refresh(cdp, executionContextId);
             const protectedImage = await page.screenshot();
             const box = (await field.boundingBox())!;
-            const [uncovered, covered] = await Promise.all([
-              pixels(page, baseline),
-              pixels(page, protectedImage),
-            ]);
-            let changedOutside = 0;
-            let changedInside = 0;
-            for (let offset = 0; offset < covered.data.length; offset += 4) {
-              const x = (offset / 4) % covered.width;
-              const y = Math.floor(offset / 4 / covered.width);
-              const inside =
-                // Chromium's composited overflow clip can rasterize one extra
-                // device pixel beyond its exact layout bound. Allow only that
-                // paint fringe; source independence below stays byte-exact.
-                x >= Math.floor(box.x * scale) - 1 &&
-                x < Math.ceil((box.x + box.width) * scale) + 1 &&
-                y >= Math.floor(box.y * scale) - 1 &&
-                y < Math.ceil((box.y + box.height) * scale) + 1;
-              if (
-                covered.data
-                  .slice(offset, offset + 4)
-                  .some((value, channel) => value !== uncovered.data[offset + channel])
-              ) {
-                if (inside) changedInside++;
-                else changedOutside++;
-              }
-            }
+            const { changedInside, changedOutside } = await comparePixels(
+              page,
+              baseline,
+              protectedImage,
+              box,
+              scale,
+            );
             expect(changedInside).toBeGreaterThan(0);
             expect(changedOutside).toBe(0);
 
@@ -112,6 +147,12 @@ describe("native frosted rendering", () => {
             await assertIndependent();
             await page.getByRole("button", { name: "Save", exact: true }).click();
             await expect.poll(() => page.getByRole("button").textContent()).toBe("Saved");
+            // Negative control: the optimized comparator must still detect an
+            // ordinary UI change outside the protected rectangle.
+            expect(
+              (await comparePixels(page, protectedImage, await page.screenshot(), box, scale))
+                .changedOutside,
+            ).toBeGreaterThan(0);
             await field.evaluate((element) => {
               element.style.top = "260.3px";
               element.style.left = "-10.1px";
@@ -122,17 +163,15 @@ describe("native frosted rendering", () => {
             await assertIndependent();
             await field.fill("");
             await refresh(cdp, executionContextId);
-            const empty = await pixels(page, await page.screenshot());
             const emptyBox = (await field.boundingBox())!;
-            const sample =
-              (Math.floor((emptyBox.y + emptyBox.height / 2) * scale) * empty.width +
-                Math.floor((emptyBox.x + emptyBox.width / 2) * scale)) *
-              4;
-            expect(empty.data.slice(sample, sample + 4)).toEqual([255, 255, 255, 255]);
+            const x = Math.floor((emptyBox.x + emptyBox.width / 2) * scale);
+            const y = Math.floor((emptyBox.y + emptyBox.height / 2) * scale);
+            expect(await pixelAt(page, await page.screenshot(), x, y)).toEqual([
+              255, 255, 255, 255,
+            ]);
             await field.evaluate((element) => element.remove());
             await refresh(cdp, executionContextId);
-            const retired = await pixels(page, await page.screenshot());
-            expect(retired.data.slice(sample, sample + 4)).toEqual([22, 55, 84, 255]);
+            expect(await pixelAt(page, await page.screenshot(), x, y)).toEqual([22, 55, 84, 255]);
           } finally {
             await browser.close();
           }
