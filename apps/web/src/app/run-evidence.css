@@ -1,0 +1,218 @@
+/* One viewer and explicit media types; no nested media sidebar. */
+.ne-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.native-evidence.ne-player,
+.tw-page .native-evidence.ne-player.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  padding: 20px;
+  min-width: 0;
+  border: 1px solid var(--tw-line, #2d353c);
+  border-radius: 10px;
+  background: var(--tw-surface, #101417);
+}
+.ne-player .ne-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ne-player .ne-header .ne-kind-picker {
+  border: 0;
+  padding: 0;
+}
+.ne-player .ne-header {
+  flex-wrap: wrap;
+}
+.ne-player .ne-header > button {
+  margin-left: auto;
+}
+.tw-page .ne-player .native-evidence-warning {
+  border: 0;
+  padding: 0;
+  background: none;
+  line-height: 1.5;
+  font-size: 11px;
+}
+.ne-player .ne-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+.ne-player .ne-header button,
+.ne-player .ne-item-navigation button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.ne-player .ne-header button {
+  font-size: 12px;
+  padding: 6px 10px;
+  background: transparent;
+}
+.ne-player .native-evidence-warning {
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  color: var(--tw-muted, #a0aab3);
+}
+.ne-kind-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--tw-line, #2d353c);
+  padding-bottom: 12px;
+}
+.ne-player .ne-kind-picker button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+  font-size: 13px;
+}
+.ne-kind-picker button span {
+  font-size: 11px;
+  opacity: 0.8;
+}
+.ne-player button[aria-pressed="true"] {
+  border-color: var(--tw-lime, #c7f36b);
+  background: rgba(199, 243, 107, 0.06);
+}
+.ne-player .ne-viewer {
+  min-width: 0;
+}
+.ne-player .ne-item-heading {
+  margin-bottom: 16px;
+}
+.ne-player .ne-item-heading > p {
+  color: var(--tw-muted, #a0aab3);
+  font-size: 12px;
+  margin: 0 0 7px;
+}
+.ne-player .ne-item-heading h4 {
+  margin: 0 0 5px;
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.ne-player .ne-viewer video,
+.ne-player .ne-viewer figure {
+  width: 100%;
+  margin: 0;
+  border: 1px solid var(--tw-line, #2d353c);
+  border-radius: 7px;
+  overflow: hidden;
+  background: #050607;
+}
+.ne-player .ne-viewer video {
+  display: block;
+  max-height: 64vh;
+}
+.ne-player .ne-viewer img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  max-height: 70vh;
+}
+.ne-player figcaption {
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.ne-player figcaption a {
+  color: var(--tw-lime, #c7f36b);
+}
+.ne-playback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--tw-muted, #a0aab3);
+}
+.ne-playback label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.ne-item-navigation {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ne-player .ne-item-navigation button {
+  min-height: 38px;
+  font-size: 12px;
+}
+.ne-item-browser {
+  border-top: 1px solid var(--tw-line, #2d353c);
+  padding-top: 16px;
+}
+.ne-item-browser h4 {
+  font-size: 12px;
+  margin: 0 0 12px;
+  color: var(--tw-muted, #a0aab3);
+}
+.ne-items {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.ne-player .ne-items button {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  text-align: left;
+  min-width: 0;
+}
+.ne-item-number {
+  font-size: 11px;
+  min-width: 22px;
+  padding-top: 3px;
+  color: var(--tw-muted, #a0aab3);
+}
+.ne-items strong,
+.ne-items small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.ne-items strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+.ne-items small {
+  margin-top: 4px;
+  color: var(--tw-muted, #a0aab3);
+  font-size: 11px;
+}
+@media (max-width: 650px) {
+  .native-evidence.ne-player,
+  .tw-page .native-evidence.ne-player.panel {
+    padding: 12px;
+  }
+  .ne-items {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ne-playback {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .ne-player .ne-item-navigation button {
+    padding: 8px;
+  }
+}

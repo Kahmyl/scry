@@ -32,6 +32,28 @@ describe("self-contained external-agent reporting guidance", () => {
         expect(instructions).toContain("inconclusive");
         expect(instructions).toContain("No automatic retry");
         expect(instructions).toContain("operator diagnostics");
+        expect(instructions).toContain("Before asking a question, review the current conversation");
+        expect(instructions).toContain("do not make them repeat an answer");
+        expect(instructions).toContain(
+          "does not override the client's approval or safety requirements",
+        );
+        expect(instructions).toContain("State the exact action/account, why it is needed");
+        expect(instructions).toContain(
+          "Never accept agreements or consequential actions from silence",
+        );
+        expect(instructions).toContain("Continue independent checks while waiting");
+        expect(instructions).toContain("Do not ask customers for internal IDs");
+        expect(instructions).toContain(
+          "Separate operations exercised from successful business journeys",
+        );
+        expect(instructions).toContain("Put the most consequential recorded limitations first");
+        expect(instructions).toContain(
+          "not exhaustive requested-scenario coverage or unique defects",
+        );
+        expect(instructions).toContain("Distinguish a deliberately excluded check");
+        expect(instructions).toContain("why the test was not carried out");
+        expect(instructions).toContain("If the reason is unknown, say so instead of inventing one");
+        expect(instructions).toContain("not automatically confirmed defects");
         expect(instructions).toContain("Example report payload");
         const example = JSON.parse(
           /Example report payload[^\n]*?: (\{[^\n]+\})$/.exec(instructions)![1]!,
@@ -45,6 +67,9 @@ describe("self-contained external-agent reporting guidance", () => {
         const report = (await client.listTools()).tools.find(
           (t) => t.name === "publish_mission_report",
         )!;
+        const mission = (await client.listTools()).tools.find((t) => t.name === "get_mission")!;
+        expect(mission.description).toContain("review their earlier answers and available tools");
+        expect(mission.description).toContain("Never infer new approval");
         const safe = report.inputSchema.properties?.safeReport as Record<string, unknown>;
         const properties = safe.properties as Record<string, unknown>;
         expect(properties.presentation).toBeTruthy();

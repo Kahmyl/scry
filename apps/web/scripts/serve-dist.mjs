@@ -17,6 +17,7 @@ const contentTypes = new Map([
   [".svg", "image/svg+xml"],
   [".webp", "image/webp"],
   [".webmanifest", "application/manifest+json"],
+  [".zip", "application/zip"],
 ]);
 
 async function sendFile(filePath, response, cacheControl = "no-cache") {

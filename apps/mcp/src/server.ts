@@ -1,3 +1,4 @@
+import { toolAuthMetadata } from "./oauth-discovery.js";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
@@ -17,6 +18,7 @@ import { z } from "zod";
 
 import { BrowserApiClient } from "./api-client.js";
 import { reportingInstructions } from "./reporting-guidance.js";
+import { customerWorkflowInstructions } from "./customer-workflow.js";
 import { registerTestResourceTools, testResourceInstructions } from "./test-resource-tools.js";
 import {
   nativeBrowserInstructions,
@@ -41,7 +43,7 @@ export function createBrowserMcpServer(client = new BrowserApiClient()) {
   const server = new McpServer(
     { name: "scry-browser", version: "baseline" },
     {
-      instructions: `${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${testResourceInstructions}\n\n${reportingInstructions}`,
+      instructions: `${customerWorkflowInstructions}\n\n${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${testResourceInstructions}\n\n${reportingInstructions}`,
     },
   );
   registerLifecycleTools(server, client, native);
@@ -71,6 +73,7 @@ function registerBrowserCommandTools(
           state: z.string(),
           command: z.record(z.string(), z.unknown()).optional(),
         },
+        _meta: toolAuthMetadata(),
         annotations: idempotentDurableWrite,
       },
       async ({ browserSessionId, command }) => {
@@ -104,6 +107,7 @@ function registerBrowserCommandTools(
         : "Read one durable browser command result. A completed observe or navigation returns current-document opaque control references. A failed command remains factual history; do not invent a successful action.",
       inputSchema: { commandId: uuid },
       outputSchema: { message, command: z.record(z.string(), z.unknown()) },
+      _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
     async ({ commandId }) =>
@@ -139,6 +143,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         "List Projects visible to the current MCP identity before choosing Mission scope.",
       inputSchema: {},
       outputSchema: { message, projects: z.array(z.record(z.string(), z.unknown())) },
+      _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
     async () =>
@@ -156,6 +161,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         "List current and completed Missions for one Project so a fresh or resumed agent can continue the same user objective instead of creating a duplicate Mission.",
       inputSchema: { projectId: uuid },
       outputSchema: { message, missions: z.array(z.record(z.string(), z.unknown())) },
+      _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
     async ({ projectId }) =>
@@ -177,6 +183,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         "List the Environments visible in one Project, including origin scope, disclosure mode, and active or disabled state. Use an active matching Environment when starting a Run. If none matches the application assigned by the user, create one with create_environment.",
       inputSchema: { projectId: uuid },
       outputSchema: { message, environments: z.array(z.record(z.string(), z.unknown())) },
+      _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
     async ({ projectId }) =>
@@ -202,6 +209,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         "Create or idempotently reuse an Environment from the application origins explicitly assigned by the user for the current Mission. This is routine execution setup: do not ask the user to configure it manually. Include only the browser origin and service origins needed by that assignment. Do not infer a live origin from a test origin, add unrelated origins, or use this to broaden an active Run; every Run keeps its immutable scope snapshot.",
       inputSchema: { projectId: uuid, ...createEnvironmentInput.shape },
       outputSchema: { message, environmentId: uuid, replay: z.boolean() },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async ({ projectId, ...input }) =>
@@ -222,6 +230,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         "List safe metadata for reusable Project credentials without returning values. Results are candidates only: never infer first-use permission from a unique, similar, or obvious name. Ask the current user to choose a candidate or create a new credential before binding it to a Run.",
       inputSchema: { projectId: uuid },
       outputSchema: { message, credentials: z.array(z.record(z.string(), z.unknown())) },
+      _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
     async ({ projectId }) =>
@@ -247,6 +256,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         "Create one encrypted Project credential only when the current user explicitly chooses to provide its plaintext in this agent interaction. Prefer Project settings when the user does not want the model or conversation host to receive the value. The value is never returned by Scry.",
       inputSchema: { projectId: uuid, ...createCredentialInput.shape },
       outputSchema: { message, protectedValueId: uuid, replay: z.boolean() },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async ({ projectId, ...input }) =>
@@ -273,6 +283,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         added: z.number().int().nonnegative(),
         replay: z.boolean(),
       },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async ({ runId, ...input }) =>
@@ -296,6 +307,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         agentSessionId: uuid,
         replay: z.boolean(),
       },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async (input) =>
@@ -316,6 +328,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
       description: "Add an independently assessable completion objective to the current Mission.",
       inputSchema: { missionId: uuid, ...objectiveInput.shape },
       outputSchema: { message, objectiveId: uuid, replay: z.boolean() },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async ({ missionId, ...input }) =>
@@ -337,6 +350,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         "Create a Flow at the agent's discretion inside the same Mission. A Flow can represent any useful work stream, retry, resumption, investigation, or approach; it does not need to be an alternative to another Flow.",
       inputSchema: { missionId: uuid, ...flowInput.shape },
       outputSchema: { message, flowId: uuid, flowRevisionId: uuid, replay: z.boolean() },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async ({ missionId, ...input }) =>
@@ -367,6 +381,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         "Start one browser Run under exactly one current Flow revision. Include protected input IDs only after the current user has explicitly selected them; credentials discovered later can be bound to this active Run after user choice. This queues a browser owner but does not itself dispatch an external application mutation. Browser capacity is reserved until finalization; if capacity is full, no browser is launched by this request. Wait for availability or finish a Run you own, then retry this exact start identity. Existing browser commands and finalization remain available.",
       inputSchema: startRunInput.shape,
       outputSchema: { message, runId: uuid, browserSessionId: uuid, replay: z.boolean() },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async (input) => {
@@ -386,9 +401,10 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
     {
       title: "Observe browser Mission",
       description:
-        "Read the Mission, Objectives, all agent-created Flows, Runs, browser session ownership, and durable outcomes before choosing the next action.",
+        "Read the Mission, Objectives, all agent-created Flows, Runs, browser session ownership, and durable outcomes before choosing the next action. Before asking the customer, review their earlier answers and available tools; reuse applicable inputs and continue independent checks. Own routine Scry setup. Ask only for genuinely missing decisions or required human actions, in plain English with the exact action, why it is needed and what can continue. Never infer new approval or ask the customer to debug Scry.",
       inputSchema: { missionId: uuid },
       outputSchema: { message, mission: z.record(z.string(), z.unknown()) },
+      _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
     async ({ missionId }) =>
@@ -404,6 +420,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
         : "Finalize a Run after every protected capture is settled. Passing finalization requires every commit outcome to be resolved. Non-passing finalization automatically proves pre-dispatch work not-applied, preserves post-dispatch uncertainty as UNKNOWN, closes the browser, and completes authenticated evidence so the terminal failure can be reported without redispatch.",
       inputSchema: { runId: uuid, ...finalizeBrowserRunSchema.shape },
       outputSchema: { message, replay: z.boolean() },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async ({ runId, ...input }) =>
@@ -417,6 +434,7 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
       description: `Publish the tested application's report after terminal work. ${reportingInstructions}`,
       inputSchema: { missionId: uuid, ...publishBrowserMissionReportSchema.shape },
       outputSchema: { message, reportId: uuid, replay: z.boolean() },
+      _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
     async ({ missionId, ...input }) =>

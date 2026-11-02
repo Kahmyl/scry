@@ -8,6 +8,8 @@ export type UserPrincipal = {
   email: string;
   workspaceId: string;
   role: WorkspaceRole;
+  oauthConnectionId?: string;
+  mcpTokenId?: string;
 };
 
 export type ServicePrincipal = {

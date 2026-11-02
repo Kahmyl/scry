@@ -55,6 +55,13 @@ The API uses NestJS with the Fastify HTTP adapter. It owns:
 Zod schemas define request, response, and shared domain contracts. The API uses
 the PostgreSQL driver directly for explicit transaction and locking behavior.
 
+The optional customer account-linking layer uses pinned `oidc-provider`, not
+custom OAuth cryptography or a new identity database. Supabase remains the
+dashboard identity authority; Scry's application database owns workspace grants.
+Provider state uses Veil's existing encrypted-storage capability. The layer is
+inactive until explicitly configured. Portable plugin packages contain public
+MCP configuration and short workflow skills; no client carries service secrets.
+
 ## Durable data and asynchronous transport
 
 PostgreSQL is the durable system of record. It stores identity scope, product
@@ -91,7 +98,7 @@ references, origin policy, read-only interaction, controlled mutations,
 protected capture handling, checkpointing, and evidence collection.
 
 New sessions use Playwright's native screencast and action screenshots. Veil's
-isolated-world policy places targeted black masks without reconstructing the
+isolated-world policy places targeted opaque, frosted-style masks without reconstructing the
 page. Chronicle admits exact media receipts through the existing owner-fenced
 evidence stream. Masking is best effort; ordinary UI remains visible. rrweb is
 retained only for historical DOM recordings. See the

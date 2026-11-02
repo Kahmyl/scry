@@ -11,7 +11,10 @@ Status: canonical baseline security model
 
 Browser testing and faithful evidence are the delivery priority. Automatic visual
 redaction targets recognizable access secrets and financial details with local
-solid-black masks. Detection can miss sensitive content. Uncertain regions remain
+fully opaque, frosted-style masks. The appearance uses a solid base and a
+source-independent decorative texture, not a blur or translucent copy of the
+secret. This removes source pixels only inside successfully covered regions;
+it is not a guarantee of complete detection or coverage. Detection can miss sensitive content. Uncertain regions remain
 visible rather than being reconstructed, blanked or speculatively over-masked.
 A missed mask alone does not fail a test, invalidate a complete recording, or
 prevent its normal authorized display. A masking processing failure must be
@@ -126,14 +129,25 @@ References: [Google provider setup](https://supabase.com/docs/guides/auth/social
 
 ### Agent principal
 
-An AI agent uses a Scry agent access token. Tokens carry a distinctive prefix
-for safe identification, but the database stores only a cryptographic digest
-and a non-secret display prefix.
+The locally implemented guided connection uses OAuth authorization code with
+S256 PKCE. A signed-in person approves one workspace. Opaque testing access
+tokens last five minutes; rotated refresh tokens and the grant last at most
+30 days. Current membership is checked on every authenticated request. The
+maintained provider owns protocol validation; Veil encrypts durable provider
+state. This feature remains inactive until explicitly configured and qualified
+in supported clients. See [customer plugin connections](plugin-connections.md).
+
+Manual Scry agent access tokens remain an advanced compatibility option. They
+carry a distinctive prefix for safe identification, but the database stores
+only a cryptographic digest and a non-secret display prefix.
 
 The plaintext token is returned only when it is created. Authentication checks
 that the token exists, is not revoked, has not expired, and belongs to the
-required user and workspace. Protocol sessions are bound to the token digest
-that opened them.
+required user and workspace. Protocol sessions bind the authorized user,
+workspace and credential identity, rather than current token bytes. Renewal
+does not change that binding; another grant cannot take over a session. Each
+request revalidates access and forwards its current credential. Plugin and
+manual agent credentials cannot approve connections or manage access tokens.
 
 ### Internal service principal
 
@@ -143,8 +157,11 @@ service-to-service work and must not be distributed to users or agents.
 
 ## Authentication boundary
 
-Every product route requires a valid bearer credential except the minimal
-health route. The authentication guard establishes:
+Every domain operation requires a valid bearer credential. Health, protocol
+discovery, OAuth protocol endpoints and the browser interaction redirect are
+public entry points, not public workspace access. Approving a connection still
+requires dashboard authentication, the initiating browser cookie and the exact
+Scry Origin. The authentication guard establishes:
 
 - principal type;
 - user identity where applicable;

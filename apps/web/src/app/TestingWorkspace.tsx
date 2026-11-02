@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
-  Check,
   CheckCircle2,
   ChevronDown,
   Circle,
@@ -24,12 +23,25 @@ import type {
   EvidenceRef,
   ReportContentDesignProps,
   ReportDetailDesignProps,
+  ReportEvidenceContext,
 } from "./testing-design-types.js";
 export {
   MissionCollectionSurface as MissionCollectionDesign,
   ReportCollectionSurface as ReportCollectionDesign,
 } from "./product-design/ProductSurfaces.js";
 import "./testing-workspace.css";
+import "./report-review.css";
+import {
+  EvidenceButton,
+  ReportCheckBrowser,
+  ReportOverview,
+  checkGroup,
+  checkSection,
+  resultCategories,
+  sectionFilter,
+  reportSentences,
+  type CheckFilter,
+} from "./ReportReview.js";
 
 function displayDate(value: string) {
   const date = new Date(value);
@@ -118,142 +130,137 @@ function BackButton({ onClick, children = "Back" }: { onClick: () => void; child
 
 export { MissionDetailDesign, JourneyEvidenceDesign } from "./MissionWorkspace.js";
 
-function checkTone(label: string) {
-  const normalized = label.toLowerCase();
-  if (normalized.includes("different")) return "different";
-  if (normalized.includes("not tested") || normalized.includes("confirmation")) return "unknown";
-  return "expected";
-}
-
-function EvidenceButton({
-  refs,
-  onEvidence,
-  children = "View evidence",
-}: {
-  refs: { runId: string; artifactId: string }[];
-  onEvidence: (ref: EvidenceRef) => void;
-  children?: ReactNode;
-}) {
-  if (refs.length === 0) return null;
-  return (
-    <div className="tw-evidence-links">
-      {refs.map((ref, index) => (
-        <button
-          key={`${ref.runId}-${ref.artifactId}-${index}`}
-          className="tw-evidence-link"
-          onClick={() => onEvidence(ref)}
-        >
-          <MonitorPlay size={15} />
-          {children}
-          {refs.length > 1 ? ` ${index + 1}` : ""}
-          <ArrowUpRight size={14} />
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ReportChecks({ content, onEvidence }: ReportContentDesignProps) {
-  return (
-    <div className="tw-checks">
-      {content.checks.map((check, index) => {
-        const tone = checkTone(check.label);
-        return (
-          <article className={`tw-check tw-check--${tone}`} key={`${check.title}-${index}`}>
-            <div className="tw-check-symbol">
-              {tone === "expected" ? (
-                <Check size={18} />
-              ) : tone === "different" ? (
-                <XCircle size={18} />
-              ) : (
-                <CircleDashed size={18} />
-              )}
-            </div>
-            <div className="tw-check-body">
-              <div className="tw-check-title">
-                <h3>{check.title}</h3>
-                <span className="tw-check-label">{check.label}</span>
-              </div>
-              <dl className="tw-comparison">
-                {check.expected && (
-                  <div>
-                    <dt>Expected</dt>
-                    <dd>{check.expected}</dd>
-                  </div>
-                )}
-                <div>
-                  <dt>Observed</dt>
-                  <dd>{check.actual}</dd>
-                </div>
-              </dl>
-              <EvidenceButton refs={check.evidence} onEvidence={onEvidence}>
-                Review check evidence
-              </EvidenceButton>
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
 function ReportObservations({ content, onEvidence }: ReportContentDesignProps) {
+  const [page, setPage] = useState(0);
+  const listId = useId();
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(content.observations.length / 8) - 1));
   if (content.observations.length === 0) return null;
   return (
-    <div className="tw-observations">
-      {content.observations.map((observation, index) => (
-        <article className="tw-observation" key={`${observation.title}-${index}`}>
-          <div className="tw-observation-mark">
-            <span>{String(index + 1).padStart(2, "0")}</span>
-            <Info size={17} />
-          </div>
-          <div>
-            <h3>{observation.title}</h3>
-            <p>{observation.detail}</p>
-            {observation.suggestion && (
-              <div className="tw-suggestion">
-                <ArrowRight size={15} />
-                <p>
-                  <strong>Worth considering</strong>
-                  {observation.suggestion}
-                </p>
+    <>
+      <div className="tw-observations">
+        {content.observations
+          .slice(currentPage * 8, currentPage * 8 + 8)
+          .map((observation, index) => (
+            <details
+              className="rr-observation"
+              id={`${listId}-observation-${currentPage * 8 + index}`}
+              key={`${currentPage}-${observation.title}-${index}`}
+              open={index === 0}
+            >
+              <summary>
+                <Info size={17} aria-hidden="true" />
+                <h3>{observation.title}</h3>
+                <ChevronDown size={15} aria-hidden="true" />
+              </summary>
+              <div>
+                <p>{observation.detail}</p>
+                {observation.suggestion && (
+                  <div className="tw-suggestion">
+                    <ArrowRight size={15} />
+                    <p>
+                      <strong>Worth considering</strong>
+                      {observation.suggestion}
+                    </p>
+                  </div>
+                )}
+                <EvidenceButton
+                  refs={observation.evidence}
+                  onEvidence={onEvidence}
+                  context={{
+                    title: observation.title,
+                    section: "observations",
+                    elementId: `${listId}-observation-${currentPage * 8 + index}`,
+                  }}
+                >
+                  View recordings & screenshots
+                </EvidenceButton>
               </div>
-            )}
-            <EvidenceButton refs={observation.evidence} onEvidence={onEvidence}>
-              Review supporting evidence
-            </EvidenceButton>
-          </div>
-        </article>
-      ))}
-    </div>
+            </details>
+          ))}
+      </div>
+      {content.observations.length > 8 && (
+        <nav className="rr-pagination" aria-label="Possible issue pages">
+          <button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>
+            Previous possible issues
+          </button>
+          <span>
+            Page {currentPage + 1} of {Math.ceil(content.observations.length / 8)}
+          </span>
+          <button
+            disabled={(currentPage + 1) * 8 >= content.observations.length}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            Next possible issues
+          </button>
+        </nav>
+      )}
+    </>
   );
 }
 
-export function ReportContentDesign({ content, onEvidence }: ReportContentDesignProps) {
+export function ReportContentDesign({
+  content,
+  onEvidence,
+  section,
+  checkFilter = "all",
+  checkQuery = "",
+  reviewKey = 0,
+  onCheckFilterChange,
+}: ReportContentDesignProps & {
+  section?: string;
+  checkFilter?: CheckFilter;
+  checkQuery?: string;
+  reviewKey?: number;
+  onCheckFilterChange?: (filter: CheckFilter) => void;
+}) {
   const hasLegacyVerification = content.verified.length > 0;
+  const category = resultCategories.find((item) => item.value === checkFilter);
+  const showingChecks = !section || sectionFilter(section) !== undefined;
   return (
     <div className="tw-report-content">
-      <section id="checks" className="tw-report-section tw-check-section">
+      <section
+        id={showingChecks && section ? section : "checks"}
+        hidden={!showingChecks}
+        className="tw-report-section tw-check-section"
+      >
         <div className="tw-report-section-heading">
           <div className="tw-section-icon">
             <ListChecks size={19} />
           </div>
           <div>
             <p className="tw-kicker">Expected versus observed</p>
-            <h2>Application checks</h2>
-            <p>Direct comparisons against the intended application behaviour.</p>
+            <h2>{category?.label ?? "All test results"}</h2>
+            <p>
+              {category?.description ??
+                "Review what each test established. A result describes the stated expectation, not the whole application."}
+            </p>
           </div>
           {content.checks.length > 0 && (
-            <span className="tw-section-count">{content.checks.length}</span>
+            <span className="tw-section-count">
+              {
+                content.checks.filter(
+                  (check) => checkFilter === "all" || checkGroup(check.label) === checkFilter,
+                ).length
+              }
+            </span>
           )}
         </div>
         {content.checks.length > 0 ? (
-          <ReportChecks content={content} onEvidence={onEvidence} />
+          <ReportCheckBrowser
+            key={reviewKey}
+            content={content}
+            onEvidence={onEvidence}
+            initialFilter={checkFilter}
+            {...(onCheckFilterChange
+              ? { filter: checkFilter, onFilterChange: onCheckFilterChange }
+              : {})}
+            initialQuery={checkQuery}
+          />
         ) : (
           <div className="tw-report-empty">
             <CircleDashed size={20} />
             <div>
-              <h3>No structured checks in this report</h3>
+              <h3>No individual test results in this report</h3>
               <p>
                 Review the summary and individual attempts; do not infer unrecorded coverage. Any
                 recorded verification, scope and limitations appear below.
@@ -264,14 +271,18 @@ export function ReportContentDesign({ content, onEvidence }: ReportContentDesign
       </section>
 
       {hasLegacyVerification && (
-        <section id="verification" className="tw-report-section">
+        <section
+          id="verification"
+          hidden={!!section && section !== "verification"}
+          className="tw-report-section"
+        >
           <div className="tw-report-section-heading">
             <div className="tw-section-icon tw-section-icon--neutral">
               <ListChecks size={19} />
             </div>
             <div>
               <p className="tw-kicker">From the recorded report</p>
-              <h2>Recorded verification</h2>
+              <h2>Earlier test notes</h2>
               <p>Earlier reports may describe checks without structured comparisons.</p>
             </div>
           </div>
@@ -279,37 +290,51 @@ export function ReportContentDesign({ content, onEvidence }: ReportContentDesign
         </section>
       )}
       {content.observations.length > 0 && (
-        <section id="observations" className="tw-report-section">
+        <section
+          id="observations"
+          hidden={!!section && section !== "observations"}
+          className="tw-report-section"
+        >
           <div className="tw-report-section-heading">
             <div className="tw-section-icon tw-section-icon--amber">
               <Info size={19} />
             </div>
             <div>
               <p className="tw-kicker">Details worth a closer look</p>
-              <h2>Observations</h2>
-              <p>Things seen in the application that may need product or design judgement.</p>
+              <h2>Possible issues</h2>
+              <p>
+                These may be problems, or they may be intentional. Review them against how you want
+                your application to behave; they are not confirmed defects.
+              </p>
             </div>
           </div>
           <ReportObservations content={content} onEvidence={onEvidence} />
         </section>
       )}
 
-      <section id="context" className="tw-report-section tw-context-section">
+      <section
+        id="context"
+        hidden={!!section && section !== "context"}
+        className="tw-report-section tw-context-section"
+      >
         <div className="tw-report-section-heading">
           <div className="tw-section-icon tw-section-icon--neutral">
             <ShieldAlert size={19} />
           </div>
           <div>
             <p className="tw-kicker">Read results in context</p>
-            <h2>Scope & limitations</h2>
-            <p>The boundaries of this report, including what remains unknown.</p>
+            <h2>Testing coverage & gaps</h2>
+            <p>
+              What this assessment included, what it could not establish, and what still needs
+              testing.
+            </p>
           </div>
         </div>
         <div className="tw-context-grid">
           <div className="tw-context-block">
             <h3>
               <Target size={16} />
-              Testing scope
+              What testing covered
             </h3>
             {content.scope.length ? (
               <BulletList items={content.scope} />
@@ -322,7 +347,7 @@ export function ReportContentDesign({ content, onEvidence }: ReportContentDesign
           <div className="tw-context-block tw-context-block--limits">
             <h3>
               <ShieldAlert size={16} />
-              Not verified
+              What remains unverified—and why
             </h3>
             {content.limitations.length ? (
               <BulletList items={content.limitations} />
@@ -362,34 +387,70 @@ export function ReportDetailDesign({
   evidenceRequested,
 }: ReportDetailDesignProps) {
   const [contentsOpen, setContentsOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState("checks");
   const reportRoot = useRef<HTMLElement>(null);
+  const [evidenceOrigin, setEvidenceOrigin] = useState<{
+    reportId: string;
+    context: ReportEvidenceContext;
+    scrollY: number;
+  }>();
+  const [returnRequest, setReturnRequest] = useState<typeof evidenceOrigin>();
+  const [activeSection, setActiveSection] = useState("overview");
+  const [checkReview, setCheckReview] = useState<{
+    filter: CheckFilter;
+    query: string;
+    key: number;
+  }>({ filter: "all", query: "", key: 0 });
   const navigationId = useId();
   const currentLabelId = useId();
   const sections = useMemo(
     () => [
-      { id: "checks", label: "Application checks", Icon: ListChecks, count: content.checks.length },
-      ...(content.verified.length
-        ? [{ id: "verification", label: "Recorded verification", Icon: ListChecks, count: 0 }]
-        : []),
+      { id: "overview", label: "Summary", Icon: FileCheck2, count: undefined },
+      ...resultCategories.map((category) => ({
+        id: checkSection(category.value),
+        label: category.label,
+        Icon:
+          category.value === "expected"
+            ? CheckCircle2
+            : category.value === "different"
+              ? XCircle
+              : category.value === "uncertain"
+                ? CircleDashed
+                : PauseCircle,
+        count: content.checks.filter((check) => checkGroup(check.label) === category.value).length,
+      })),
+      {
+        id: "supporting-evidence",
+        label: "Recordings & screenshots",
+        Icon: MonitorPlay,
+        count: undefined,
+      },
       ...(content.observations.length
         ? [
             {
               id: "observations",
-              label: "Observations",
+              label: "Possible issues",
               Icon: Info,
               count: content.observations.length,
             },
           ]
         : []),
-      { id: "context", label: "Scope & limitations", Icon: ShieldAlert, count: 0 },
-      { id: "supporting-evidence", label: "Recordings & screenshots", Icon: MonitorPlay, count: 0 },
+      { id: "context", label: "Testing coverage & gaps", Icon: ShieldAlert, count: undefined },
+      ...(content.verified.length
+        ? [{ id: "verification", label: "Earlier test notes", Icon: ListChecks, count: undefined }]
+        : []),
       ...(report.originalInstruction
-        ? [{ id: "original-request", label: "Original request", Icon: MessageSquareText, count: 0 }]
+        ? [
+            {
+              id: "original-request",
+              label: "Original request",
+              Icon: MessageSquareText,
+              count: undefined,
+            },
+          ]
         : []),
     ],
     [
-      content.checks.length,
+      content.checks,
       content.verified.length,
       content.observations.length,
       report.originalInstruction,
@@ -397,55 +458,86 @@ export function ReportDetailDesign({
   );
 
   useEffect(() => {
-    const root = reportRoot.current;
-    if (!root) return;
-    let frame: number | undefined;
-    const update = () => {
-      const offset =
-        Number.parseFloat(getComputedStyle(root).getPropertyValue("--report-anchor-offset")) || 104;
-      const targets = sections
-        .map((section) => root.querySelector<HTMLElement>(`#${section.id}`))
-        .filter((target): target is HTMLElement => target !== null);
-      let current = targets[0]?.id ?? "checks";
-      for (const target of targets) {
-        if (target.getBoundingClientRect().top <= offset + 1) current = target.id;
-      }
-      const scroller = document.scrollingElement ?? document.documentElement;
-      // A short final section may never reach the activation line before scroll ends.
-      if (
-        scroller.scrollTop > 0 &&
-        scroller.scrollHeight - window.innerHeight - scroller.scrollTop <= 2
-      ) {
-        current = targets.at(-1)?.id ?? current;
-      }
-      setActiveSection(current);
+    setCheckReview({ filter: "all", query: "", key: 0 });
+    setContentsOpen(false);
+    setEvidenceOrigin(undefined);
+    setReturnRequest(undefined);
+  }, [report.id]);
+
+  useEffect(() => {
+    const readLocation = () => {
+      const id = window.location.hash.slice(1);
+      const next =
+        sections.some((section) => section.id === id) || id === "checks" ? id : "overview";
+      setActiveSection(next);
+      const filter = sectionFilter(next);
+      if (filter !== undefined)
+        setCheckReview((current) => (current.filter === filter ? current : { ...current, filter }));
     };
-    const schedule = () => {
-      if (frame !== undefined) return;
-      if (typeof window.requestAnimationFrame !== "function") {
-        update();
-        return;
-      }
-      frame = window.requestAnimationFrame(() => {
-        frame = undefined;
-        update();
-      });
-    };
-    update();
-    window.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", schedule);
-    window.addEventListener("hashchange", schedule);
-    const observer =
-      typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(schedule);
-    observer?.observe(root);
-    return () => {
-      window.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", schedule);
-      window.removeEventListener("hashchange", schedule);
-      observer?.disconnect();
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-    };
+    readLocation();
+    window.addEventListener("hashchange", readLocation);
+    return () => window.removeEventListener("hashchange", readLocation);
   }, [report.id, sections]);
+  const showSection = (id: string) => {
+    setActiveSection(id);
+    const filter = sectionFilter(id);
+    if (filter !== undefined) setCheckReview((current) => ({ ...current, filter }));
+    setContentsOpen(false);
+    window.location.hash = id;
+  };
+  useEffect(() => {
+    if (evidenceRequested) setActiveSection("supporting-evidence");
+  }, [report.id, evidenceRequested]);
+  const reviewEvidence = (ref: EvidenceRef, context?: ReportEvidenceContext) => {
+    setEvidenceOrigin(
+      context ? { reportId: report.id, context, scrollY: window.scrollY } : undefined,
+    );
+    showSection("supporting-evidence");
+    onEvidence(ref);
+  };
+  useEffect(() => {
+    if (
+      !returnRequest ||
+      returnRequest.reportId !== report.id ||
+      activeSection !== returnRequest.context.section
+    )
+      return;
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.getElementById(returnRequest.context.elementId);
+      if (element && reportRoot.current?.contains(element)) {
+        window.scrollTo({ top: returnRequest.scrollY, behavior: "instant" });
+        element.querySelector("summary")?.focus({ preventScroll: true });
+      }
+      setReturnRequest(undefined);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSection, report.id, returnRequest]);
+  const origin = evidenceOrigin?.reportId === report.id ? evidenceOrigin : undefined;
+  const summarySentences = reportSentences(report.summary);
+  const summaryPreview = summarySentences.slice(0, 3).join(" ");
+  const summaryRest = summarySentences.slice(3).join(" ");
+  const findingContext = origin ? (
+    <aside className="rr-evidence-context" aria-label="Evidence finding context">
+      <div>
+        <p>
+          Opened from {origin.context.section === "observations" ? "possible issue" : "test result"}
+        </p>
+        <strong>{origin.context.title}</strong>
+      </div>
+      <button
+        className="tw-evidence-link"
+        onClick={() => {
+          showSection(origin.context.section);
+          setReturnRequest(origin);
+        }}
+      >
+        <ArrowLeft size={15} aria-hidden="true" />
+        {origin.context.section === "observations"
+          ? "Back to possible issue"
+          : "Back to test result"}
+      </button>
+    </aside>
+  ) : null;
   const activeLabel =
     sections.find((section) => section.id === activeSection)?.label ?? sections[0]!.label;
   return (
@@ -467,14 +559,19 @@ export function ReportDetailDesign({
           <StateBadge state={report.state} subtle />
         </div>
         <h1>{report.missionTitle}</h1>
-        <p className="tw-report-summary">{report.summary}</p>
+        <p className="tw-report-summary">{summaryPreview}</p>
+        {summaryRest && (
+          <details className="rr-full-summary">
+            <summary>More report detail</summary>
+            <p>{summaryRest}</p>
+          </details>
+        )}
         <div className="tw-report-byline">
           <span>
             {report.finalizedAt
               ? `Finalized ${displayDate(report.finalizedAt) ?? "date unavailable"}`
               : `Created ${displayDate(report.createdAt) ?? "date unavailable"}`}
           </span>
-          <span>Results about your application, with supporting evidence where available.</span>
         </div>
       </header>
 
@@ -488,7 +585,7 @@ export function ReportDetailDesign({
             aria-label="On this page"
             aria-describedby={currentLabelId}
           >
-            <span>On this page</span>
+            <span>Report sections</span>
             <span className="tw-toc-current" id={currentLabelId}>
               {activeLabel}
             </span>
@@ -499,7 +596,7 @@ export function ReportDetailDesign({
             className={contentsOpen ? "is-open" : ""}
             aria-label="Report sections"
           >
-            <p>On this page</p>
+            <p>Review your results</p>
             {sections.map(({ id, label, Icon, count }) => (
               <a
                 key={id}
@@ -513,38 +610,59 @@ export function ReportDetailDesign({
                     !event.shiftKey &&
                     !event.altKey
                   ) {
-                    setActiveSection(id);
-                    setContentsOpen(false);
+                    event.preventDefault();
+                    showSection(id);
                   }
                 }}
               >
                 <Icon size={15} aria-hidden="true" />
                 {label}
-                {count > 0 && <span>{count}</span>}
+                {count !== undefined && <span>{count}</span>}
               </a>
             ))}
           </nav>
           <div className="tw-toc-note">
             <Info size={15} />
-            <p>
-              Checks describe the tested application. Mission and attempt states only describe
-              testing progress.
-            </p>
+            <p>Choose a section to review the results without losing your place.</p>
           </div>
         </aside>
         <div className="tw-report-main">
-          <ReportContentDesign content={content} onEvidence={onEvidence} />
+          <div hidden={activeSection !== "overview"}>
+            <ReportOverview
+              content={content}
+              onSection={showSection}
+              onChecks={(filter, query = "") => {
+                setCheckReview((current) => ({ filter, query, key: current.key + 1 }));
+                showSection(checkSection(filter));
+              }}
+            />
+          </div>
+          <ReportContentDesign
+            key={report.id}
+            content={content}
+            onEvidence={reviewEvidence}
+            section={activeSection}
+            checkFilter={checkReview.filter}
+            checkQuery={checkReview.query}
+            reviewKey={checkReview.key}
+            onCheckFilterChange={(filter) => showSection(checkSection(filter))}
+          />
           <section
             id="supporting-evidence"
+            hidden={activeSection !== "supporting-evidence"}
             className="tw-report-evidence"
             aria-label="Report evidence"
           >
             <div className="tw-evidence-stage-heading">
               <div>
-                <p className="tw-kicker">
-                  {evidenceRequested ? "Referenced in this report" : "Review the source material"}
-                </p>
-                <h2>Supporting evidence</h2>
+                <p className="tw-kicker">Review test evidence</p>
+                <h2>Recordings & screenshots</h2>
+                {!evidenceRequested && (
+                  <p className="rr-evidence-intro">
+                    Choose what was tested, then watch a recording or open a screenshot. Links from
+                    a test result take you straight to its supporting evidence.
+                  </p>
+                )}
               </div>
               <MonitorPlay size={20} />
             </div>
@@ -556,10 +674,21 @@ export function ReportDetailDesign({
                   " Some footage is missing or incomplete. Review the available evidence alongside the stated testing gaps."}
               </p>
             )}
-            {evidence}
+            {typeof evidence === "function" ? (
+              evidence(findingContext)
+            ) : (
+              <>
+                {findingContext}
+                {evidence}
+              </>
+            )}
           </section>
           {report.originalInstruction && (
-            <section id="original-request" className="tw-original-request">
+            <section
+              id="original-request"
+              hidden={activeSection !== "original-request"}
+              className="tw-original-request"
+            >
               <p className="tw-kicker">The brief behind this report</p>
               <h2>Original request</h2>
               <p>{report.originalInstruction}</p>

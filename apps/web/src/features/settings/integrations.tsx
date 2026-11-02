@@ -13,7 +13,7 @@ import { api, post, remove, type McpAccessToken } from "../../infrastructure/api
 import { EmptyBlock, PageTitle } from "../../shared/components/dashboard-primitives.js";
 import { publicConfig } from "../../infrastructure/config/runtime-config.js";
 
-export function Integrations() {
+export function AdvancedIntegrations() {
   const [tokens, setTokens] = useState<McpAccessToken[]>([]);
   const [revealedToken, setRevealedToken] = useState("");
   const [client, setClient] = useState<"codex" | "claude" | "generic">("codex");
@@ -154,8 +154,9 @@ export function Integrations() {
                 <>
                   <AlertTriangle size={15} />
                   <span>
-                    <strong>Claude / Desktop connection coming soon</strong>This connection method
-                    will be enabled when Scry’s managed OAuth support is ready.
+                    <strong>Claude / Desktop needs guided sign-in</strong>Manual access tokens are
+                    not supported by this connector. Check guided sign-in availability in
+                    Connections.
                   </span>
                 </>
               ) : (
@@ -332,9 +333,9 @@ export function Integrations() {
         <div>
           <strong>What “compatible” means</strong>
           <span>
-            Any client that supports MCP Streamable HTTP and bearer headers can connect using a Scry
-            access token. Clients that require OAuth will become available through Scry’s managed
-            sign-in connection. Legacy SSE-only clients are not supported.
+            Clients that support MCP Streamable HTTP and bearer headers can use a manual Scry access
+            token. For clients that require OAuth, check guided sign-in availability above. Legacy
+            SSE-only clients are not supported.
           </span>
         </div>
       </section>

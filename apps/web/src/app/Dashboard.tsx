@@ -5,10 +5,10 @@ import {
   RunDetailSurface,
   AccountSurface,
 } from "./product-design/ProductSurfaces.js";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { matchPath, useLocation, useNavigate } from "react-router-dom";
 
-import { Integrations } from "../features/settings/integrations.js";
+import { Connections as Integrations } from "../features/settings/connections.js";
 import { api, type Project } from "../infrastructure/api/index.js";
 import { PageSkeleton } from "../shared/components/index.js";
 import { reconcileProjectSelection } from "../shared/state/index.js";
@@ -23,6 +23,8 @@ import { ProjectSettings } from "./ProjectSettings.js";
 import { RunEvidence } from "./RunEvidence.js";
 import { reportNarrative, type EvidenceSelection } from "./ReportNarrative.js";
 import { MissionCollection } from "./MissionCollection.js";
+import { ReportEvidenceBrowser } from "./ReportEvidenceBrowser.js";
+import { EvidenceLoading } from "./EvidenceLoading.js";
 import { MissionTestResources } from "./MissionTestResources.js";
 import {
   MissionDetailDesign,
@@ -377,10 +379,14 @@ function MissionJourneys({
   mission,
   selection,
   onSelect,
+  findingContext,
+  reportView = false,
 }: {
   mission: MissionDetail;
   selection?: EvidenceSelection;
   onSelect?: (selection: EvidenceSelection) => void;
+  findingContext?: ReactNode;
+  reportView?: boolean;
 }) {
   const [local, setLocal] = useState<EvidenceSelection>();
   const evidenceDestination = useRef<HTMLElement>(null);
@@ -396,14 +402,16 @@ function MissionJourneys({
   }, [selection, local]);
   const request = selection ?? local;
   const selected =
-    request ?? (mission.runs.at(-1) ? { runId: mission.runs.at(-1)!.id } : undefined);
+    request ??
+    (!reportView && mission.runs.at(-1) ? { runId: mission.runs.at(-1)!.id } : undefined);
   const run = mission.runs.find((r) => r.id === selected?.runId);
   const choose = (value: EvidenceSelection) => {
     setLocal(value);
     onSelect?.(value);
   };
+  const Workspace = reportView ? ReportEvidenceBrowser : JourneyEvidenceDesign;
   return (
-    <JourneyEvidenceDesign
+    <Workspace
       key={mission.id}
       journeys={mission.flows.map((flow) => ({
         id: flow.id,
@@ -416,6 +424,7 @@ function MissionJourneys({
       {...(selected ? { selectedRunId: selected.runId } : {})}
       {...(request ? { selectionRequest: request } : {})}
       onSelect={(runId) => choose({ runId })}
+      findingContext={findingContext}
       evidence={
         (run || selected) && (
           <section aria-label="Selected attempt evidence" ref={evidenceDestination} tabIndex={-1}>
@@ -504,16 +513,17 @@ function ReportDetail({
       onMission={() => navigate(`/dashboard/missions/${report.missionId}`)}
       onEvidence={setSelection}
       evidenceRequested={!!selection}
-      evidence={
+      evidence={(findingContext) => (
         <>
           <ReportMissionEvidence
             missionId={report.missionId}
+            findingContext={findingContext}
             {...(selection ? { selection } : {})}
             onSelect={setSelection}
           />
           <MissionTestResources missionId={report.missionId} readOnly />
         </>
-      }
+      )}
     />
   );
 }
@@ -521,19 +531,39 @@ function ReportMissionEvidence({
   missionId,
   selection,
   onSelect,
+  findingContext,
 }: {
   missionId: string;
   selection?: EvidenceSelection;
   onSelect: (selection: EvidenceSelection) => void;
+  findingContext?: ReactNode;
 }) {
   const state = useResource<MissionDetail>(`/dashboard/missions/${missionId}`);
-  if (state.error) return <LoadFailure value={state.error} />;
-  if (!state.data) return <p role="status">Loading mission attempts and evidence…</p>;
+  if (state.error)
+    return (
+      <>
+        {findingContext}
+        <LoadFailure value={state.error} />
+      </>
+    );
+  if (!state.data)
+    return (
+      <>
+        {findingContext}
+        <EvidenceLoading
+          layout="library"
+          label="Loading evidence library…"
+          detail="Finding the test activities and their recordings."
+        />
+      </>
+    );
   return (
     <MissionJourneys
       mission={state.data}
+      reportView
       {...(selection ? { selection } : {})}
       onSelect={onSelect}
+      findingContext={findingContext}
     />
   );
 }

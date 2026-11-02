@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, post, remove } from "../../infrastructure/api/client.js";
-import { Integrations } from "./integrations.js";
+import { AdvancedIntegrations as Integrations } from "./integrations.js";
 
 vi.mock("../../infrastructure/api/client.js", () => ({
   api: vi.fn(),
@@ -37,7 +37,7 @@ describe("connection setup presentation", () => {
     await screen.findByText("Testing client");
     fireEvent.click(screen.getByRole("button", { name: "Claude" }));
     fireEvent.click(screen.getByRole("button", { name: "Claude / Desktop" }));
-    expect(screen.getByText("Claude / Desktop connection coming soon")).toBeTruthy();
+    expect(screen.getByText("Claude / Desktop needs guided sign-in")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Create access token" })).toBeNull();
     expect(post).not.toHaveBeenCalled();
     fireEvent.click(

@@ -5,10 +5,12 @@ import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { AppModule } from "./app.module.js";
 import { BrowserExecutionRepository } from "./browser-execution/repositories/browser-execution.repository.js";
+import { mountOAuth } from "./auth/oauth/mount.js";
 
 if (process.env.SCRY_BROWSER_ENABLED !== "true") throw new Error("SCRY_BROWSER_DISABLED");
 selectedBrowserAdapter();
 const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter());
+await mountOAuth(app);
 await app.get(BrowserExecutionRepository).assertCompatibleBaseline();
 app.enableCors({
   origin: (process.env.API_CORS_ORIGINS ?? "http://127.0.0.1:5173,http://localhost:5173")

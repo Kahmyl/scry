@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MissionCollectionDesign,
@@ -13,6 +13,7 @@ import { ReportNarrative, reportNarrative } from "./ReportNarrative.js";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  window.history.replaceState(null, "", window.location.pathname);
 });
 const emptyContent = reportNarrative({});
 const report = {
@@ -24,22 +25,8 @@ const report = {
   createdAt: "2026-11-01T10:00:00Z",
 };
 
-describe("report reading position", () => {
+describe("report section navigation", () => {
   function setupSections() {
-    const tops: Record<string, number> = {
-      checks: 100,
-      verification: 400,
-      observations: 700,
-      context: 1000,
-      "supporting-evidence": 1400,
-      "original-request": 1900,
-    };
-    const originalRect = Element.prototype.getBoundingClientRect;
-    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
-      this: Element,
-    ) {
-      return this.id in tops ? new DOMRect(0, tops[this.id], 600, 300) : originalRect.call(this);
-    });
     const view = render(
       <ReportDetailDesign
         report={{ ...report, originalInstruction: "Review checkout" }}
@@ -55,43 +42,23 @@ describe("report reading position", () => {
         evidenceRequested={false}
       />,
     );
-    return { tops, ...view };
+    return view;
   }
-  it("tracks manual scrolling in document order and marks exactly one current location", async () => {
-    const { tops } = setupSections();
-    await waitFor(() =>
-      expect(
-        screen.getByRole("link", { name: /Application checks/ }).getAttribute("aria-current"),
-      ).toBe("location"),
-    );
-    tops.checks = -600;
-    tops.verification = -300;
-    tops.observations = 100;
-    fireEvent.scroll(window);
-    await waitFor(() =>
-      expect(screen.getByRole("link", { name: /Observations/ }).getAttribute("aria-current")).toBe(
-        "location",
-      ),
-    );
+  it("starts with an overview and shows only the chosen section", () => {
+    setupSections();
+    expect(screen.getByRole("heading", { name: "Test results" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Possible issues" })).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: /Possible issues/ }));
+    expect(screen.getByRole("heading", { name: "Possible issues" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Test results" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "All test results" })).toBeNull();
     expect(document.querySelectorAll('.tw-report-toc [aria-current="location"]').length).toBe(1);
-    tops.context = -300;
-    tops["supporting-evidence"] = 100;
-    fireEvent.scroll(window);
-    await waitFor(() =>
-      expect(
-        screen.getByRole("link", { name: "Recordings & screenshots" }).getAttribute("aria-current"),
-      ).toBe("location"),
+    expect(screen.getByRole("link", { name: /Possible issues/ }).getAttribute("aria-current")).toBe(
+      "location",
     );
-    tops.checks = 100;
-    tops.verification = 400;
-    tops.observations = 700;
-    tops.context = 1000;
-    tops["supporting-evidence"] = 1400;
     fireEvent.scroll(window);
-    await waitFor(() =>
-      expect(
-        screen.getByRole("link", { name: /Application checks/ }).getAttribute("aria-current"),
-      ).toBe("location"),
+    expect(screen.getByRole("link", { name: /Possible issues/ }).getAttribute("aria-current")).toBe(
+      "location",
     );
   });
   it("keeps native section links, closes the phone menu and does not remount evidence", () => {
@@ -107,33 +74,26 @@ describe("report reading position", () => {
     );
     expect(screen.getByTestId("retained-video")).toBe(video);
   });
-  it("uses the responsive activation offset after a viewport change", async () => {
-    const { tops, container } = setupSections();
-    container
-      .querySelector<HTMLElement>(".tw-report-detail")!
-      .style.setProperty("--report-anchor-offset", "144px");
-    tops.checks = -600;
-    tops.verification = -300;
-    tops.observations = 135;
-    fireEvent.resize(window);
-    await waitFor(() =>
-      expect(screen.getByRole("link", { name: /Observations/ }).getAttribute("aria-current")).toBe(
-        "location",
-      ),
-    );
-  });
-  it("marks a short final section at the bottom of the document", async () => {
+  it("restores a direct section link and follows hash navigation", async () => {
+    window.history.replaceState(null, "", "#observations");
     setupSections();
-    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(
-      window.innerHeight + 100,
-    );
-    vi.spyOn(document.documentElement, "scrollTop", "get").mockReturnValue(100);
-    fireEvent.scroll(window);
+    expect(screen.getByRole("heading", { name: "Possible issues" })).toBeTruthy();
+    window.history.replaceState(null, "", "#supporting-evidence");
+    fireEvent(window, new HashChangeEvent("hashchange"));
     await waitFor(() =>
       expect(
-        screen.getByRole("link", { name: "Original request" }).getAttribute("aria-current"),
+        screen.getByRole("link", { name: "Recordings & screenshots" }).getAttribute("aria-current"),
       ).toBe("location"),
     );
+    expect(screen.getByTestId("retained-video").closest("section[hidden]")).toBeNull();
+  });
+  it("falls back to overview for an unknown section without exposing hidden panels", async () => {
+    window.history.replaceState(null, "", "#not-a-section");
+    setupSections();
+    expect(screen.getByRole("link", { name: "Summary" }).getAttribute("aria-current")).toBe(
+      "location",
+    );
+    expect(screen.queryByRole("heading", { name: "Original request" })).toBeNull();
   });
 });
 
@@ -480,9 +440,9 @@ describe("testing workspace design contracts", () => {
         onEvidence={() => {}}
       />,
     );
-    expect(screen.getByRole("heading", { name: "Recorded verification" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Earlier test notes" })).toBeTruthy();
     expect(screen.getByText("The order was reopened")).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Observations" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Possible issues" })).toBeNull();
   });
   it("rejects inherited property names as report statuses", () => {
     for (const status of ["__proto__", "constructor", "toString", "unknown"]) {
@@ -521,10 +481,27 @@ describe("testing workspace design contracts", () => {
         }}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Review check evidence 1" }));
-    fireEvent.click(screen.getByRole("button", { name: "Review check evidence 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Review supporting evidence 2" }));
-    expect(onEvidence.mock.calls).toEqual([[refs[0]], [refs[1]], [refs[1]]]);
+    fireEvent.click(
+      within(document.getElementById("checks")!).getByRole("button", {
+        name: "View recordings & screenshots 1",
+      }),
+    );
+    fireEvent.click(
+      within(document.getElementById("checks")!).getByRole("button", {
+        name: "View recordings & screenshots 2",
+      }),
+    );
+    fireEvent.click(
+      within(document.getElementById("observations")!).getByRole("button", {
+        name: "View recordings & screenshots 2",
+      }),
+    );
+    expect(onEvidence.mock.calls.map(([ref]) => ref)).toEqual([refs[0], refs[1], refs[1]]);
+    expect(onEvidence.mock.calls.map(([, context]) => context.section)).toEqual([
+      "checks",
+      "checks",
+      "observations",
+    ]);
   });
   it("keeps source evidence mounted before and after an exact reference is requested", () => {
     const props = {
@@ -536,7 +513,7 @@ describe("testing workspace design contracts", () => {
       evidence: <button>Available recording</button>,
     };
     const view = render(<ReportDetailDesign {...props} evidenceRequested={false} />);
-    const media = screen.getByRole("button", { name: "Available recording" });
+    const media = screen.getByRole("button", { name: "Available recording", hidden: true });
     expect(
       screen.getByRole("link", { name: "Recordings & screenshots" }).getAttribute("href"),
     ).toBe("#supporting-evidence");
@@ -566,6 +543,7 @@ describe("testing workspace design contracts", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     fireEvent.click(screen.getByRole("link", { name: "Original request" }));
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(screen.getByRole("link", { name: "Recordings & screenshots" }));
     expect(screen.getByRole("status").textContent).toContain(
       "Some footage is missing or incomplete",
     );

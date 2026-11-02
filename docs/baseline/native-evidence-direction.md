@@ -32,7 +32,10 @@ is labeled as an evidence gap, not a defect in the tested application.
 
 Do not reconstruct HTML, CSS, images or application layout for new evidence.
 Ordinary text, images, icons and business content remain visible. A mask is a
-localized solid-black rectangle. There is no blanket image/input policy,
+localized, fully opaque rectangle with a frosted-style texture. The solid base
+replaces covered pixels; the blurred texture is synthetic and independent of the
+secret, never a blur of the page underneath. Bounds round outward to device
+pixels and decoration stays clipped inside the cover. There is no blanket image/input policy,
 whole-page replacement, disclosure-pending screen or speculative over-blocking.
 
 Historical evidence is not rewritten. The historical reader and offline renderer
@@ -131,7 +134,7 @@ blob URLs are revoked when selection changes or the viewer unmounts.
 
 ## Required baseline proof
 
-Verify real commands and business journeys, complete native capture, black masks
+Verify real commands and business journeys, complete native capture, opaque frosted masks
 on obvious secret/financial controls, faithful ordinary UI, authorized dashboard
 playback and cross-workspace refusal. Keep deadline, cancellation, owner recovery,
 evidence availability, migration and authentication tests. Masking completeness

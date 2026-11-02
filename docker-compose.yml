@@ -102,6 +102,11 @@ services:
         required: false
     environment:
       <<: [*app-environment, *release-environment]
+      SCRY_OAUTH_ENABLED: ${SCRY_OAUTH_ENABLED:-false}
+      SCRY_OAUTH_ISSUER: ${SCRY_OAUTH_ISSUER:-}
+      SCRY_OAUTH_RESOURCE: ${SCRY_OAUTH_RESOURCE:-}
+      SCRY_OAUTH_COOKIE_KEYS_JSON: ${SCRY_OAUTH_COOKIE_KEYS_JSON:-}
+      SCRY_OAUTH_JWKS_JSON: ${SCRY_OAUTH_JWKS_JSON:-}
       SCRY_TEST_MAIL_ENABLED: "${SCRY_TEST_MAIL_ENABLED:-false}"
       HOOKDECK_API_KEY: "${HOOKDECK_API_KEY:-}"
       API_HOST: 0.0.0.0
@@ -209,6 +214,10 @@ services:
     build: *node-build
     environment:
       <<: *release-environment
+      SCRY_OAUTH_ENABLED: ${SCRY_OAUTH_ENABLED:-false}
+      SCRY_OAUTH_ISSUER: ${SCRY_OAUTH_ISSUER:-}
+      SCRY_OAUTH_RESOURCE: ${SCRY_OAUTH_RESOURCE:-}
+      MCP_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
       SCRY_SERVICE_TOKEN: "${SCRY_SERVICE_TOKEN:-local-only-scry-service-token-change-me}"
       SCRY_API_BASE_URL: http://api:4000/api
       SCRY_PUBLIC_API_BASE_URL: "${SCRY_PUBLIC_API_BASE_URL:-http://127.0.0.1:4000/api}"
@@ -247,7 +256,8 @@ services:
     environment:
       VITE_API_BASE_URL: /api
       VITE_API_PROXY_TARGET: http://api:4000
-      VITE_MCP_SERVER_URL: http://127.0.0.1:${SCRY_MCP_PORT:-4100}/mcp
+      VITE_MCP_PROXY_TARGET: http://mcp:4100
+      VITE_MCP_SERVER_URL: /mcp
     command: ["pnpm", "--filter", "@scry/web", "dev:docker"]
     ports:
       - "${SCRY_WEB_PORT:-5173}:5173"

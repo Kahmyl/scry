@@ -29,7 +29,7 @@ export function reportNarrative(value: Record<string, unknown> = {}) {
     const labels: Record<string, string> = {
       matched_expectation: "As expected",
       different_from_expectation: "Different from expected",
-      inconclusive: "Needs confirmation",
+      inconclusive: "Could not verify",
       not_tested: "Not tested",
     };
     if (

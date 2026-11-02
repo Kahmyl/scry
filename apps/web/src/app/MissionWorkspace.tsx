@@ -13,8 +13,8 @@ const MISSION_STATUS: Record<string, string> = {
   pending: "Testing pending",
   running: "Testing in progress",
   in_progress: "Testing in progress",
-  completed: "Testing completed",
-  complete: "Testing completed",
+  completed: "Testing ended",
+  complete: "Testing ended",
   aborted: "Testing aborted · work ended",
   cancelled: "Testing cancelled · work ended",
   canceled: "Testing cancelled · work ended",
@@ -151,6 +151,7 @@ export function JourneyEvidenceDesign({
   selectedRunId,
   selectionRequest,
   onSelect,
+  findingContext,
   evidence,
 }: JourneyEvidenceDesignProps) {
   const selectedAttempt = useMemo(() => {
@@ -269,6 +270,9 @@ export function JourneyEvidenceDesign({
             <h2 className="mw-eyebrow">Journey index</h2>
             <span>{journeys.length}</span>
           </div>
+          <p className="mw-index-guide">
+            Choose what was tested. Expand a journey to compare its attempts.
+          </p>
           {journeys.length > 6 && (
             <label className="mw-filter">
               <Search aria-hidden="true" size={14} strokeWidth={1.8} />
@@ -367,6 +371,7 @@ export function JourneyEvidenceDesign({
         aria-label="Selected journey evidence"
         tabIndex={-1}
       >
+        {findingContext}
         <header className="mw-evidence-heading">
           <div>
             <p className="mw-eyebrow">
@@ -385,6 +390,12 @@ export function JourneyEvidenceDesign({
               )}
             </h2>
             {currentJourney?.purpose && <p>{currentJourney.purpose}</p>}
+            {currentAttemptIndex >= 0 && (
+              <p className="mw-viewing-status">
+                Viewing {attemptLabel(currentAttemptIndex).toLowerCase()} ·{" "}
+                {attemptProgress(currentJourney!.attempts[currentAttemptIndex]!.progress)}
+              </p>
+            )}
           </div>
         </header>
         <section className="mw-evidence-stage">

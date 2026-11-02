@@ -11,3 +11,5 @@ coverage/
 test-results/
 playwright-report/
 /eng.traineddata
+/apps/web/public/plugins/*.zip
+/.env.oauth.local

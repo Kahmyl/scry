@@ -1,6 +1,7 @@
 import {
   Inject,
   Injectable,
+  Optional,
   ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -9,6 +10,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 import type { Principal } from "./auth.types.js";
 import { IdentityRepository } from "./repositories/identity.repository.js";
+import { OAuthService } from "./oauth/oauth.service.js";
 
 @Injectable()
 export class AuthService {
@@ -18,7 +20,10 @@ export class AuthService {
     ? createRemoteJWKSet(new URL(`${this.issuer}/.well-known/jwks.json`))
     : undefined;
 
-  constructor(@Inject(IdentityRepository) private readonly identities: IdentityRepository) {}
+  constructor(
+    @Inject(IdentityRepository) private readonly identities: IdentityRepository,
+    @Optional() @Inject(OAuthService) private readonly oauth?: OAuthService,
+  ) {}
 
   async authenticate(authorization: string | undefined): Promise<Principal> {
     const token = bearerToken(authorization);
@@ -37,6 +42,11 @@ export class AuthService {
       throw new UnauthorizedException("The MCP access token is invalid, expired, or revoked");
     }
 
+    if (this.oauth?.provider && !token.includes(".")) {
+      const principal = await this.oauth.authenticate(token);
+      if (principal) return principal;
+      throw new UnauthorizedException("Reconnect Scry to continue.");
+    }
     if (!this.jwks || !this.issuer) {
       throw new ServiceUnavailableException("Supabase authentication is not configured on the API");
     }
@@ -46,7 +56,7 @@ export class AuthService {
         issuer: this.issuer,
         audience: "authenticated",
       });
-      if (!payload.sub || typeof payload.email !== "string") {
+      if (!payload.sub || typeof payload.email !== "string" || payload.client_id !== undefined) {
         throw new UnauthorizedException("The access token is missing required identity claims");
       }
       return {

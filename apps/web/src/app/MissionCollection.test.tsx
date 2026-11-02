@@ -50,6 +50,20 @@ function chooseStatus(label: string) {
 }
 
 describe("missions list experience", () => {
+  it("clamps the preview without shortening the stored request or its search coverage", () => {
+    const instruction =
+      "Review checkout and confirm delivery. ".repeat(60) + "Final special requirement";
+    const { onOpen } = setup([{ ...missions[0]!, originalInstruction: instruction }]);
+    const preview = document.querySelector(".sp-mission-preview")!;
+    expect(preview.textContent!.length).toBeLessThanOrEqual(241);
+    expect(preview.textContent).toMatch(/…$/);
+    expect(preview.textContent).not.toContain("Final special requirement");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search missions" }), {
+      target: { value: "Final special requirement" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Checkout and payment/ }));
+    expect(onOpen).toHaveBeenCalledWith(missions[0]!.id);
+  });
   it("groups the update date with the request and keeps progress free of arrows and dates", () => {
     setup();
     const row = screen.getByRole("button", { name: /Checkout and payment/ }).closest("article")!;
@@ -132,7 +146,7 @@ describe("missions list experience", () => {
     ["running", "In progress"],
     ["blocked", "On hold"],
     ["awaiting_user", "Needs your input"],
-    ["completed", "Completed"],
+    ["completed", "Testing ended"],
     ["failed", "Ended"],
     ["ended", "Ended"],
     ["cancelled", "Cancelled"],

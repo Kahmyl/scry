@@ -92,8 +92,24 @@ function installNativeMasks(initial) {
               rect.left < innerWidth,
           )
           .map((rect) => {
+            // Round outward to capture pixels; a fractional edge must not blend
+            // the source text back into an otherwise opaque cover.
+            const ratio =
+              Number.isFinite(host.devicePixelRatio) && host.devicePixelRatio > 0
+                ? host.devicePixelRatio
+                : 1;
+            const left = Math.floor(Math.max(0, rect.left) * ratio) / ratio;
+            const top = Math.floor(Math.max(0, rect.top) * ratio) / ratio;
+            const right = Math.ceil(Math.min(innerWidth, rect.right) * ratio) / ratio;
+            const bottom = Math.ceil(Math.min(innerHeight, rect.bottom) * ratio) / ratio;
             const block = document.createElement("div");
-            block.style.cssText = `position:absolute;left:${Math.max(0, rect.left)}px;top:${Math.max(0, rect.top)}px;width:${Math.min(innerWidth, rect.right) - Math.max(0, rect.left)}px;height:${Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top)}px;background:#000;pointer-events:none;`;
+            // The base removes the original pixels. Only the synthetic stripe
+            // decoration is blurred: never sample the page with backdrop-filter.
+            block.style.cssText = `position:absolute;left:${left}px;top:${top}px;width:${right - left}px;height:${bottom - top}px;background:#e5e9ed;opacity:1;mix-blend-mode:normal;isolation:isolate;overflow:hidden;pointer-events:none;`;
+            const texture = document.createElement("div");
+            texture.style.cssText =
+              "position:absolute;left:0;right:0;top:50%;height:9px;transform:translateY(-50%);background:repeating-linear-gradient(90deg,transparent 0px,transparent 20px,#9ba6b0 20px,#9ba6b0 76px,transparent 76px,transparent 108px);filter:blur(7px);pointer-events:none;";
+            block.append(texture);
             return block;
           }),
       );

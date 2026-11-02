@@ -37,6 +37,9 @@ jobs:
       - name: Verify Supabase activity checks
         run: pnpm test:auth-activity
 
+      - name: Verify private OAuth key generation
+        run: node --test scripts/operations/generate-oauth-keys.test.mjs
+
       - name: Retain safe qualification outcomes
         if: always()
         uses: actions/upload-artifact@v4
