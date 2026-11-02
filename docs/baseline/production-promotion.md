@@ -1,5 +1,29 @@
 # Production promotion
 
+## Browser runtime selection
+
+The release candidate selects the existing Playwright MCP browser adapter for
+new sessions in the production image and both default Compose topologies. The
+API, worker and MCP use one shared selection contract. A hosted process refuses
+an absent, disabled or retained-runtime selection rather than silently exposing
+the older command surface. MCP readiness also requires its API to report the
+same adapter. The deployment controller checks the exact adapter settings on all
+three services before opening traffic; a mismatch restores the previous release.
+Historical data and immutable session adapter assignments remain unchanged.
+
+The packaged release gate must discover the native tools and exercise a
+fictional split-origin login through MCP, API, durable queues and the worker.
+It checks rejected credentials without browser loss, an approved API request
+and subsequent POST profile read, session continuity after reload, exact-action
+deduplication, logout persistence and refusal of an excluded service. It also
+retrieves and decodes the continuous MP4 and reviews the authorized report and
+evidence on desktop and narrow layouts. A healthy HTTP endpoint or a successful
+mailbox check cannot substitute for this gate.
+
+This selection is a candidate until its exact image passes qualification and
+the explicit deployment controller completes. It does not retroactively repair
+old failed attempts or turn controlled fixtures into a completed Vitract journey.
+
 ## Staging compatibility
 
 Before interrupting an installed release, the deployment controller binds its

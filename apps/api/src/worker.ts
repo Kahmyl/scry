@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { selectedBrowserAdapter } from "./browser-execution/browser-adapter-selection.js";
 
 import { NestFactory } from "@nestjs/core";
 import { Worker } from "bullmq";
@@ -23,6 +24,8 @@ import {
 if (process.env.SCRY_BROWSER_ENABLED !== "true") throw new Error("SCRY_BROWSER_DISABLED");
 if (process.env.SCRY_BROWSER_RENDER_VIDEO !== "true")
   throw new Error("SCRY_BROWSER_VIDEO_RENDERING_REQUIRED");
+// Refuse an invalid hosted selection before either queue can claim work.
+selectedBrowserAdapter();
 const app = await NestFactory.createApplicationContext(AppModule);
 const redis = app.get(RedisConnection);
 const commands = app.get(BrowserCommandRepository);

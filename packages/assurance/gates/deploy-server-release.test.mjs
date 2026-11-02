@@ -60,6 +60,11 @@ assert.match(
 assert.match(bootstrap.log, /legacy-compose\.yaml/);
 assert.match(bootstrap.state, new RegExp(`CURRENT_RELEASE_ID=${candidateRelease}`));
 
+const wrongRuntime = runScenario("wrong-runtime", { WRONG_CANDIDATE_RUNTIME: "true" });
+assert.notEqual(wrongRuntime.status, 0);
+assert.match(wrongRuntime.stderr, /Previous release restored/);
+assert.match(wrongRuntime.state, new RegExp(`CURRENT_RELEASE_ID=${previousRelease}`));
+
 const multiFileBootstrap = runScenario("multi-file-running-release-bootstrap", {
   BOOTSTRAP: "true",
   MULTIPLE_CONFIGS: "true",
@@ -301,6 +306,7 @@ if [[ "$args" == *"printenv SCRY_RELEASE_ID"* ]]; then
   else printf '%s\\n' "$SCRY_RELEASE_ID"; fi
   exit 0
 fi
+if [[ "$args" == *"exec -T worker node --eval"* && "$SCRY_RELEASE_ID" == "$CANDIDATE_RELEASE" && "\${WRONG_CANDIDATE_RUNTIME:-false}" == true ]]; then exit 78; fi
 if [[ "$args" == *"run --rm --no-deps migrate"* && "\${FAIL_MIGRATE:-false}" == true ]]; then exit 55; fi
 if [[ "$args" == *"pg_restore"* && "\${FAIL_RESTORE:-false}" == true ]]; then exit 66; fi
 if [[ "$args" == *"run --rm --no-deps --entrypoint caddy caddy validate"* && "\${FAIL_CADDY_VALIDATE:-false}" == true ]]; then exit 77; fi

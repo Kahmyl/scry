@@ -43,6 +43,7 @@ import { BrowserLifecycleRepository } from "../repositories/browser-lifecycle.re
 import { BrowserCommandRepository } from "../repositories/browser-command.repository.js";
 import { BrowserExecutionQueueService } from "../browser-execution-queue.service.js";
 import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
+import { selectedBrowserAdapter } from "../browser-adapter-selection.js";
 
 @Controller("api")
 export class BrowserLifecycleController {
@@ -58,7 +59,11 @@ export class BrowserLifecycleController {
   async health() {
     this.enabled();
     await this.execution.assertCompatibleBaseline();
-    return { ready: true, capabilityId: BROWSER_RUNTIME_CAPABILITY_ID };
+    return {
+      ready: true,
+      capabilityId: BROWSER_RUNTIME_CAPABILITY_ID,
+      runtimeAdapter: selectedBrowserAdapter(),
+    };
   }
 
   @Post("missions")

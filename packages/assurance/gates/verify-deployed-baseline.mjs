@@ -27,9 +27,20 @@ writeFileSync(
       web: { environment: { SCRY_PUBLIC_API_BASE_URL: "http://api:4000/api" } },
       fixture: {
         image,
-        command: ["node", "/tmp/deployed-browser.mjs", "serve"],
+        command: ["node", "/tmp/deployed-browser-fixture.mjs", "serve"],
         volumes: [
-          { type: "bind", source: fixture, target: "/tmp/deployed-browser.mjs", read_only: true },
+          {
+            type: "bind",
+            source: fixture,
+            target: "/tmp/deployed-browser-fixture.mjs",
+            read_only: true,
+          },
+          ...["browser-login-fixture.mjs", "deployed-native-browser.mjs"].map((filename) => ({
+            type: "bind",
+            source: path.join(root, "apps/api/test", filename),
+            target: "/tmp/" + filename,
+            read_only: true,
+          })),
           // This fresh, fictional fixture may hold one exact admitted object to
           // qualify public failure closure. Never mount customer evidence here.
           "artifacts:/evidence",
@@ -124,18 +135,59 @@ try {
     "web",
     "fixture",
   ]);
+  // Official Chrome supplies codecs absent from bundled Chromium. Install it
+  // in the disposable UI test controller only, never in the production worker.
+  const architecture = run([...compose, "exec", "-T", "fixture", "node", "-p", "process.arch"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+  }).trim();
+  const officialChrome = architecture === "x64";
+  if (officialChrome)
+    run(
+      [
+        ...compose,
+        "exec",
+        "-T",
+        "fixture",
+        "node",
+        "packages/praxis/node_modules/playwright/cli.js",
+        "install",
+        "chrome",
+      ],
+      { timeout: 180000 },
+    );
   const output = run(
-    [...compose, "exec", "-T", "fixture", "node", "/tmp/deployed-browser.mjs", "exercise"],
+    [
+      ...compose,
+      "exec",
+      "-T",
+      ...(officialChrome ? ["-e", "SCRY_FIXTURE_BROWSER_CHANNEL=chrome"] : []),
+      "fixture",
+      "node",
+      "/tmp/deployed-browser-fixture.mjs",
+      "exercise",
+    ],
     { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" },
   );
-  if (!output.includes("DEPLOYED_BASELINE_BROWSER_PASS"))
+  if (!output.includes("DEPLOYED_NATIVE_AUTHENTICATION_PASS"))
     throw new Error("SCRY_DEPLOYED_BROWSER_NOT_EXERCISED");
   if (!output.includes("DEPLOYED_AUTHENTICATED_DASHBOARD_PASS"))
     throw new Error("SCRY_DEPLOYED_DASHBOARD_NOT_EXERCISED");
+  if (officialChrome && !output.includes("DEPLOYED_SUPPORTED_BROWSER_PLAYBACK_PASS"))
+    throw new Error("SCRY_DEPLOYED_CHROME_PLAYBACK_NOT_EXERCISED");
+  if (output.includes("DEPLOYED_DASHBOARD_CODEC_UNAVAILABLE"))
+    process.stdout.write(
+      "Local bundled Chromium lacks H.264: video fully decoded by FFmpeg; official-Chrome playback remains unverified in this local gate.\n",
+    );
   const visualProof = path.join(root, "artifacts", "assurance", `dashboard-${suffix}`);
   mkdirSync(visualProof, { recursive: true, mode: 0o700 });
   run([...compose, "cp", "fixture:/evidence/qualification-ui/.", visualProof]);
-  for (const filename of ["unavailable-desktop.png", "unavailable-mobile.png"])
+  for (const filename of [
+    "native-login-desktop.png",
+    "native-login-mobile.png",
+    "unavailable-desktop.png",
+    "unavailable-mobile.png",
+  ])
     if (
       !readFileSync(path.join(visualProof, filename))
         .subarray(0, 8)
@@ -171,7 +223,7 @@ try {
     "const fs=require('node:fs'); for(const p of ['packages/assurance','packages/executor','packages/policy','packages/observability','apps/agent-lab','apps/api/migrations','node_modules/typescript']) if(fs.existsSync(p)) process.exit(1); if(!fs.existsSync('scripts/operations/supabase-activity.mjs')) process.exit(1)",
   ]);
   process.stdout.write(
-    "Isolated deployed baseline passed: authenticated API/MCP, real Chromium, protected fill, unavailable evidence closure, success refusal with limited application report, workspace/session refusal, and signed-in desktop/mobile dashboard; no production Assurance dependency.\n",
+    "Isolated deployed native baseline passed: current MCP tools, rejected and successful split-origin authentication, POST profile read, session reload/logout, exact-action replay exclusion, unapproved-origin refusal, protected input, decoded continuous MP4, scoped media/report and signed-in desktop/mobile dashboard; no production Assurance dependency.\n",
   );
 } finally {
   let cleanupFailed = false;

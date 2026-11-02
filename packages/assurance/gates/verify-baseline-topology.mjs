@@ -186,8 +186,7 @@ const activationOwners = new Set([
   "apps/api/src/browser-execution/browser-execution-queue.service.ts",
   "apps/api/src/browser-execution/controllers/browser-lifecycle.controller.ts",
 ]);
-// Controlled integration is an explicit, inactive adapter selection, not a
-// second application bootstrap or permission to revive retired runtimes.
+// Browser selection is shared across admission, worker and MCP discovery.
 const nativeAdapterOwners = new Set([
   "apps/api/src/browser-execution/browser-adapter-selection.ts",
   "apps/api/src/browser-execution/repositories/browser-command.repository.ts",
@@ -211,8 +210,16 @@ for (const sourcePath of activeSourcePaths) {
     fail(`browser activation is checked outside an admitted owner: ${sourcePath}`);
   }
 }
-if (/SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED\s*:\s*["']?true/u.test(deployment + development))
-  fail("controlled browser adapter is activated in a default deployment manifest");
+for (const [name, manifest] of [
+  ["deployment", deployment],
+  ["development", development],
+]) {
+  if (
+    !manifest.includes("SCRY_BROWSER_ADAPTER: playwright_mcp") ||
+    !manifest.includes('SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED: "true"')
+  )
+    fail(`${name} does not explicitly select the qualified native browser runtime`);
+}
 
 process.stdout.write(
   `${JSON.stringify({

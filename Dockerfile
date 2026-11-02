@@ -25,6 +25,8 @@ RUN pnpm --filter @scry/web build
 
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble AS runner
 ENV NODE_ENV=production
+ENV SCRY_BROWSER_ADAPTER=playwright_mcp
+ENV SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED=true
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /workspace
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg xvfb xclip \

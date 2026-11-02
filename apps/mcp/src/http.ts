@@ -5,11 +5,13 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import { BrowserApiClient } from "./api-client.js";
+import { assertBrowserRuntimeAgreement, resolveBrowserRuntime } from "@scry/contracts";
 import { createBrowserMcpServer } from "./server.js";
 
 const host = process.env.MCP_HOST ?? "127.0.0.1";
 const port = Number(process.env.MCP_PORT ?? 4100);
 const apiBaseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/api";
+const runtimeAdapter = resolveBrowserRuntime(process.env);
 
 type Session = Readonly<{
   server: ReturnType<typeof createBrowserMcpServer>;
@@ -27,8 +29,17 @@ const httpServer = createServer(async (request, response) => {
       const token = bearerToken(request.headers.authorization) ?? process.env.SCRY_SERVICE_TOKEN;
       if (!token) return json(response, 503, { ready: false, code: "MCP_SERVICE_TOKEN_REQUIRED" });
       const api = new BrowserApiClient(apiBaseUrl, token);
-      const health = await api.get<{ ready: boolean; capabilityId: string }>("/health");
-      return json(response, health.ready ? 200 : 503, { api: health, profile: "browser" });
+      const health = await api.get<{
+        ready: boolean;
+        capabilityId: string;
+        runtimeAdapter: string;
+      }>("/health");
+      assertBrowserRuntimeAgreement(health.runtimeAdapter, runtimeAdapter);
+      return json(response, health.ready ? 200 : 503, {
+        api: health,
+        profile: "browser",
+        runtimeAdapter,
+      });
     } catch {
       return json(response, 503, { ready: false, code: "SCRY_BROWSER_API_UNAVAILABLE" });
     }
