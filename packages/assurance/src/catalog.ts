@@ -181,8 +181,8 @@ export const checks: readonly CheckDefinition[] = [
     "browser-recording",
     "Protected recording and zero-network replay through public boundaries",
     "@scry/assurance",
-    ["test/browser-recording.test.ts"],
-    { integrated: true, minimum: 2 },
+    ["test/browser-recording.test.ts", "test/native-mask-rendering.test.ts"],
+    { integrated: true, minimum: 8 },
   ),
   tests(
     "schema-upgrades",
