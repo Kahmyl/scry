@@ -449,6 +449,12 @@ export async function exerciseNativeBrowser({
     await page
       .getByRole("heading", { name: "Authenticated session survives reload", exact: true })
       .waitFor();
+    // A check-linked report correctly selects its exact screenshot first.
+    // Select the recording explicitly before asserting video playback.
+    await page
+      .getByRole("group", { name: "Select evidence" })
+      .getByRole("button", { name: /Recording/ })
+      .click();
     await page.waitForFunction(
       () => document.querySelector(".native-evidence video")?.readyState >= 2,
     );
