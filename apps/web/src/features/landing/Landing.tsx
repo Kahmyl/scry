@@ -11,8 +11,16 @@ import {
 type AuthMode = "signin" | "signup";
 
 /** Presentation delegates account actions to the existing authentication lifecycle. */
-export function Landing({ authError = "" }: { authError?: string }) {
-  const [authMode, setAuthMode] = useState<AuthMode | undefined>(authError ? "signin" : undefined);
+export function Landing({
+  authError = "",
+  initialSignIn = false,
+}: {
+  authError?: string;
+  initialSignIn?: boolean;
+}) {
+  const [authMode, setAuthMode] = useState<AuthMode | undefined>(
+    authError || initialSignIn ? "signin" : undefined,
+  );
   useEffect(() => {
     if (authError) setAuthMode("signin");
   }, [authError]);

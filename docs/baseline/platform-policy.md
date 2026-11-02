@@ -197,7 +197,7 @@ creates no reusable output handles.
 ## Evidence policy
 
 The browser session is natively recorded. Confidently identified access secrets
-and financial details receive targeted black masks; ordinary content and media
+and financial details receive targeted opaque, frosted-style masks; ordinary content and media
 remain visible. Masking is best effort, not a full-protection gate. Media receipts
 are written to the existing encrypted, ordered evidence chain.
 

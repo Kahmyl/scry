@@ -75,7 +75,7 @@ export class IdentityRepository {
          AND user_account.id = token.user_id
          AND membership.user_id = token.user_id
          AND membership.workspace_id = token.workspace_id
-       RETURNING user_account.supabase_user_id, user_account.id AS user_id,
+       RETURNING token.id AS token_id, user_account.supabase_user_id, user_account.id AS user_id,
          user_account.email, token.workspace_id, membership.role`,
       [tokenHash],
     );
@@ -88,6 +88,7 @@ export class IdentityRepository {
       email: row.email,
       workspaceId: row.workspace_id,
       role: row.role,
+      mcpTokenId: row.token_id,
     };
   }
 }

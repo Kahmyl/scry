@@ -1,6 +1,18 @@
 import type { ReactNode } from "react";
 
 export type EvidenceRef = { runId: string; artifactId?: string };
+/** Presentation context only; never changes the exact evidence reference. */
+export type ReportEvidenceContext = {
+  title: string;
+  section:
+    | "checks"
+    | "checks-expected"
+    | "checks-different"
+    | "checks-uncertain"
+    | "checks-not-tested"
+    | "observations";
+  elementId: string;
+};
 export type EvidenceLink = { runId: string; artifactId: string };
 export type MissionCard = {
   id: string;
@@ -84,6 +96,7 @@ export type JourneyEvidenceDesignProps = {
   /** Stable across polling; a new explicit request must restore its exact evidence view. */
   selectionRequest?: EvidenceRef;
   onSelect: (id: string) => void;
+  findingContext?: ReactNode;
   evidence: ReactNode;
 };
 export type ReportCollectionDesignProps = {
@@ -99,24 +112,14 @@ export type ReportDetailDesignProps = {
   onBack: () => void;
   onMission: () => void;
   onEvidence: (ref: EvidenceRef) => void;
-  evidence: ReactNode;
+  evidence: ReactNode | ((findingContext: ReactNode) => ReactNode);
   evidenceRequested: boolean;
 };
 export type ReportContentDesignProps = {
   content: ReportContent;
-  onEvidence: (ref: EvidenceRef) => void;
+  onEvidence: (ref: EvidenceRef, context?: ReportEvidenceContext) => void;
 };
 
-/* Existing media DOM that your page can style under its own namespace:
- section.panel.native-evidence[aria-label="Run recordings and screenshots"]
- h3 "Recordings and screenshots", refresh button,
- p.native-evidence-warning (MUST remain visible), optional p[role=alert/status],
- label.native-evidence-mobile > select[aria-label="Choose evidence"],
- div.native-evidence-layout >
-   div.native-evidence-selector[role=group][aria-label="Select evidence"] >
-     button[aria-pressed] with title and small kind/time,
-   div.native-evidence-viewer[aria-live=polite] > h4, description,
-     video[controls][playsinline] OR figure > img,
-     label > select[aria-label="Playback speed"] and timing/partial-coverage note.
- The onEvidence(ref) callback selects an exact item; never substitute another one.
- */
+/* Evidence renders the original protected media, never a reconstructed page.
+ * Its warning remains visible. Only the selected authorized item is fetched.
+ * onEvidence(ref) selects an exact item; never silently substitute another one. */

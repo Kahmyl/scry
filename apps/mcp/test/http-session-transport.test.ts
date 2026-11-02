@@ -16,7 +16,8 @@ describe("MCP Streamable HTTP session authority", () => {
 
     expect(source).toContain("sessions.set");
 
-    expect(source).toContain("tokenDigest");
+    expect(source).toContain("authorityDigest");
+    expect(source).toContain("requestCredential.run");
 
     expect(source).toContain('["POST", "GET", "DELETE"]');
 

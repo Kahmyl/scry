@@ -19,7 +19,8 @@ export class BrowserApiError extends Error {
 export class BrowserApiClient {
   constructor(
     readonly baseUrl = process.env.SCRY_API_BASE_URL ?? "http://127.0.0.1:4000/api",
-    readonly token = process.env.SCRY_SERVICE_TOKEN,
+    readonly token: string | (() => string | undefined) | undefined = process.env
+      .SCRY_SERVICE_TOKEN,
     readonly identity: BrowserAgentIdentity = {
       provider: process.env.SCRY_EXTERNAL_AGENT_PROVIDER ?? "unknown",
       ...(process.env.SCRY_EXTERNAL_AGENT_MODEL
@@ -78,14 +79,19 @@ export class BrowserApiClient {
     if (!path.startsWith("/") || path.startsWith("//"))
       throw new Error("SCRY_BROWSER_API_PATH_INVALID");
     const headers = new Headers(init?.headers);
-    if (this.token) headers.set("authorization", `Bearer ${this.token}`);
+    const token = typeof this.token === "function" ? this.token() : this.token;
+    if (token) headers.set("authorization", `Bearer ${token}`);
     headers.set("x-scry-agent-provider", bounded(this.identity.provider));
     if (this.identity.model) headers.set("x-scry-agent-model", bounded(this.identity.model));
     if (this.identity.externalRunId)
       headers.set("x-scry-external-run-id", bounded(this.identity.externalRunId));
     if (this.identity.experimentId)
       headers.set("x-scry-experiment-id", bounded(this.identity.experimentId));
-    const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      signal: AbortSignal.timeout(35000),
+      ...init,
+      headers,
+    });
     if (!response.ok) {
       const body = await response.json().catch(() => undefined);
       const envelope = record(body);

@@ -3,6 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { Database } from "../../infrastructure/database.js";
 import type { Principal, UserPrincipal } from "../auth.types.js";
+import { requireDashboardUser } from "../oauth/connections.repository.js";
 
 @Injectable()
 export class McpTokenRepository {
@@ -54,10 +55,7 @@ export class McpTokenRepository {
 }
 
 function requireUser(principal: Principal): UserPrincipal {
-  if (principal.kind !== "user") {
-    throw new ForbiddenException("MCP access tokens require a signed-in user");
-  }
-  return principal;
+  return requireDashboardUser(principal);
 }
 
 function serialize(row: Record<string, unknown>) {

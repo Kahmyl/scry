@@ -451,14 +451,29 @@ export async function exerciseNativeBrowser({
     await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.getByRole("heading", { name: "Dashboard", exact: true }).waitFor();
     await page.goto(`http://web:3000/dashboard/reports/${report.reportId}`);
+    await page.getByRole("heading", { name: "Test results", exact: true }).waitFor();
+    await page
+      .getByRole("navigation", { name: "Report sections" })
+      .getByRole("link", { name: /^Worked as expected/ })
+      .click();
     await page
       .getByRole("heading", { name: "Authenticated session survives reload", exact: true })
       .waitFor();
+    await page.getByRole("button", { name: "View recordings & screenshots", exact: true }).click();
     // A check-linked report correctly selects its exact screenshot first.
-    // Select the recording explicitly before asserting video playback.
+    await page.locator(".native-evidence img").waitFor();
+    assert.equal(
+      await page
+        .getByRole("group", { name: "Evidence type" })
+        .getByRole("button", { name: /^Screenshots/ })
+        .getAttribute("aria-pressed"),
+      "true",
+      "CHECK_LINK_DID_NOT_SELECT_ITS_SCREENSHOT",
+    );
+    // Recording is a separate evidence type, not another screenshot-list item.
     await page
-      .getByRole("group", { name: "Select evidence" })
-      .getByRole("button", { name: /Recording/ })
+      .getByRole("group", { name: "Evidence type" })
+      .getByRole("button", { name: /^Recordings/ })
       .click();
     await page.locator(".native-evidence video").waitFor();
     const codec = await page

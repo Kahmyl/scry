@@ -1,17 +1,24 @@
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { Landing } from "../features/landing/index.js";
 import { LegalPage } from "../features/legal/LegalPage.js";
+import { SupportPage } from "../features/legal/SupportPage.js";
 import { privacyPolicy, termsOfService } from "../features/legal/policies.js";
 import { isSupabaseConfigured, supabase } from "../infrastructure/auth/index.js";
 import { Dashboard } from "./Dashboard.js";
+import { OAuthConsent } from "../features/settings/OAuthConsent.js";
+import {
+  rememberConnectionReturn,
+  takeConnectionReturn,
+} from "../features/settings/connection-return.js";
 
 export function ProductApp() {
   return (
     <Routes>
       <Route path="/privacy" element={<LegalPage policy={privacyPolicy} />} />
+      <Route path="/support" element={<SupportPage />} />
       <Route path="/terms" element={<LegalPage policy={termsOfService} />} />
       <Route path="*" element={<AccountApp />} />
     </Routes>
@@ -63,7 +70,8 @@ function AccountApp() {
   if (session) {
     return (
       <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<SignInReturn />} />
+        <Route path="/connect/authorize/:uid" element={<OAuthConsent />} />
         <Route
           path="/dashboard/*"
           element={
@@ -82,8 +90,21 @@ function AccountApp() {
 
   return (
     <Routes>
+      <Route path="/connect/authorize/:uid" element={<ConnectionSignIn authError={authError} />} />
       <Route path="/" element={<Landing authError={authError} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
+}
+
+function ConnectionSignIn({ authError }: { authError: string }) {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    rememberConnectionReturn(pathname);
+  }, [pathname]);
+  return <Landing authError={authError} initialSignIn />;
+}
+function SignInReturn() {
+  const [target] = useState(takeConnectionReturn);
+  return <Navigate to={target} replace />;
 }

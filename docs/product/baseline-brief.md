@@ -19,7 +19,7 @@ keeps the resulting evidence.
 
 The delivery priority is testing with faithful evidence, not exhaustive data
 protection. New visual evidence must preserve the application's actual appearance
-and use localized, best-effort black masks for recognizable secrets and financial
+and use localized, best-effort opaque, frosted-style covers for recognizable secrets and financial
 details. Some sensitive content may remain visible; missed masks must not be
 confused with failed tests or incomplete recordings. The
 [native evidence direction](../baseline/native-evidence-direction.md) defines this

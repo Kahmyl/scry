@@ -101,7 +101,7 @@ const missionStates: Record<string, string> = {
   running: "In progress",
   awaiting_user: "Needs your input",
   blocked: "On hold",
-  completed: "Completed",
+  completed: "Testing ended",
   failed: "Ended",
   cancelled: "Cancelled",
 };
@@ -248,7 +248,7 @@ function SearchField({
 }
 function StatusMark({ label }: { label: string }) {
   const appearance =
-    label === "Completed"
+    label === "Testing ended"
       ? { tone: "complete", Icon: CheckCircle2 }
       : label === "In progress"
         ? { tone: "active", Icon: LoaderCircle }
@@ -274,6 +274,12 @@ function StatusMark({ label }: { label: string }) {
 function WorkState({ state }: { state: string }) {
   return <StatusMark label={workLabel(state)} />;
 }
+function missionPreview(instruction: string) {
+  const text = instruction.replace(/\s+/g, " ").trim();
+  if (text.length <= 240) return text;
+  const start = text.slice(0, 240);
+  return `${start.replace(/\s+\S*$/, "") || start}…`;
+}
 function MissionRow({ mission, onOpen }: { mission: MissionCard; onOpen: (id: string) => void }) {
   const p = objectiveProgress(mission);
   return (
@@ -286,7 +292,7 @@ function MissionRow({ mission, onOpen }: { mission: MissionCard; onOpen: (id: st
       />
       <div className="sp-row-copy">
         <h2>{mission.title}</h2>
-        <p>{mission.originalInstruction}</p>
+        <p className="sp-mission-preview">{missionPreview(mission.originalInstruction)}</p>
         <div className="sp-row-date">
           {dateValue(mission.updatedAt) ? (
             <>

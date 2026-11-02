@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "scry",
+  "version": "0.1.0",
+  "description": "Test web applications and review reports, recordings and screenshots in your Scry workspace.",
+  "author": { "name": "Scry", "url": "https://scry.giize.com" },
+  "homepage": "https://scry.giize.com",
+  "keywords": ["testing", "browser", "reports"],
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/scry-setup/SKILL.md",
+      "interface": {
+        "displayName": "Scry",
+        "shortDescription": "Browser tests with evidence",
+        "longDescription": "Test an authorized web application using your connected Scry workspace. Review application findings, recordings and screenshots. Testing may require approved test accounts and customer decisions. Automatic visual masking is best effort.",
+        "developerName": "Scry",
+        "category": "Developer Tools",
+        "websiteURL": "https://scry.giize.com",
+        "supportURL": "https://scry.giize.com/support",
+        "privacyPolicyURL": "https://scry.giize.com/privacy",
+        "termsOfServiceURL": "https://scry.giize.com/terms",
+        "composerIcon": "./assets/scry.png",
+        "logo": "./assets/scry.png",
+        "defaultPrompt": [
+          "Check my web application's main customer journey and show me the evidence."
+        ]
+      }
+    }
+  }
+}

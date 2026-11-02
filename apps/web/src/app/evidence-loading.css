@@ -1,0 +1,102 @@
+.ev-loading {
+  min-width: 0;
+  color: var(--tw-text, #edf1f4);
+  border: 1px solid var(--tw-line, #303940);
+  border-radius: 9px;
+  background: var(--tw-surface, #111619);
+}
+.ev-loading-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  padding: 30px 20px;
+}
+.ev-loading-spinner {
+  flex-shrink: 0;
+  color: var(--tw-lime, #c7f36b);
+  animation: ev-loading-spin 1s linear infinite;
+}
+.ev-loading-status strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ev-loading-status p {
+  margin: 6px 0 0 !important;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--tw-muted, #a0aab3);
+}
+.ev-loading--media {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+}
+.ev-loading-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 20px 20px;
+}
+.ev-loading-cards > div {
+  padding: 19px;
+  border: 1px solid var(--tw-line, #303940);
+  border-radius: 7px;
+}
+.ev-loading-cards span {
+  display: block;
+  height: 9px;
+  background: var(--tw-line, #303940);
+  border-radius: 3px;
+  margin: 8px 0;
+}
+.ev-loading-cards span:first-child {
+  width: 38%;
+}
+.ev-loading-cards span:last-child {
+  width: 66%;
+}
+.ne-media-frame {
+  position: relative;
+  min-width: 0;
+}
+.ne-media-frame.is-loading {
+  aspect-ratio: 16 / 9;
+  min-height: 220px;
+}
+.ne-media-frame.is-loading > video,
+.ne-media-frame.is-loading > img {
+  opacity: 0;
+}
+.ne-media-frame > .ev-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  min-height: 100%;
+}
+@keyframes ev-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ev-loading-spinner {
+    animation: none;
+  }
+}
+@media (max-width: 650px) {
+  .ev-loading--media,
+  .ne-media-frame.is-loading {
+    min-height: 180px;
+  }
+  .ev-loading-status {
+    padding: 24px 16px;
+    gap: 12px;
+  }
+  .ev-loading-cards {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 16px 16px;
+  }
+}

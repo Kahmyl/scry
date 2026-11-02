@@ -10,7 +10,7 @@ baseline path.
 
 The [native evidence baseline](native-evidence-direction.md) defines the candidate
 producer for new visual evidence. New sessions capture native pixels with
-best-effort local black masks. Historical DOM recording/rendering descriptions
+best-effort local opaque, frosted-style masks. Historical DOM recording/rendering descriptions
 below apply only to retained historical evidence, not new browser sessions.
 
 ```text

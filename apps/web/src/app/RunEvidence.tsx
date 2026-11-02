@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Film, Image, RefreshCw } from "lucide-react";
 import { api, apiBlob } from "../infrastructure/api/client.js";
-import { CustomSelect } from "../shared/components/CustomSelect.js";
+import "./run-evidence.css";
+import { EvidenceLoading } from "./EvidenceLoading.js";
 
 type Media = {
   index: number;
@@ -16,8 +18,7 @@ type Media = {
 };
 type Publication = { warning: string; playbackRate: 1; items: Media[] };
 
-/** Media is fetched with the same bearer/workspace authorization as the Run.
- * Blob URLs are local to this view and revoked on selection change/unmount. */
+/** Only the selected item is fetched. Authorization, exact references and native timing are unchanged. */
 export function RunEvidence({
   runId,
   initialArtifactId,
@@ -27,7 +28,15 @@ export function RunEvidence({
 }) {
   const [publication, setPublication] = useState<Publication>();
   const [selected, setSelected] = useState<Media>();
-  const [source, setSource] = useState("");
+  const [kind, setKind] = useState<Media["kind"]>("video");
+  const [page, setPage] = useState(0);
+  const [mediaSource, setMediaSource] = useState<{ runId: string; item: Media; url: string }>();
+  const source =
+    mediaSource?.runId === runId && mediaSource.item === selected ? mediaSource.url : "";
+  const [readyFor, setReadyFor] = useState<{ source: string; item: Media }>();
+  const [bufferingFor, setBufferingFor] = useState<{ source: string; item: Media }>();
+  const ready = !!source && readyFor?.source === source && readyFor.item === selected;
+  const buffering = !!source && bufferingFor?.source === source && bufferingFor.item === selected;
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   const [speed, setSpeed] = useState(1);
@@ -39,39 +48,49 @@ export function RunEvidence({
     let cancelled = false;
     setPublication(undefined);
     setSelected(undefined);
-    setSource("");
+    setMediaSource(undefined);
     setError("");
+    setPage(0);
     void api<Publication>(`/runs/${runId}/media`)
       .then((data) => {
-        if (!cancelled) {
-          setPublication(data);
-          const choice = initialArtifactId
-            ? data.items.find((item) => item.artifactId === initialArtifactId)
-            : (data.items.find((item) => item.kind === "video") ?? data.items[0]);
-          setSelected(choice);
-          if (initialArtifactId && !choice)
-            setError(
-              "The report’s evidence reference is not available in this attempt. Choose another item to review; it is not a substitute for the missing reference.",
-            );
-        }
+        if (cancelled) return;
+        setPublication(data);
+        const choice = initialArtifactId
+          ? data.items.find((item) => item.artifactId === initialArtifactId)
+          : (data.items.find((item) => item.kind === "video") ?? data.items[0]);
+        setSelected(choice);
+        const nextKind =
+          choice?.kind ??
+          (data.items.some((item) => item.kind === "video") ? "video" : "screenshot");
+        setKind(nextKind);
+        if (choice)
+          setPage(
+            Math.floor(data.items.filter((item) => item.kind === nextKind).indexOf(choice) / 8),
+          );
+        if (initialArtifactId && !choice)
+          setError(
+            "The report’s evidence reference is not available in this attempt. Choose another item to review; it is not a substitute for the missing reference.",
+          );
       })
       .catch(() => {
-        if (!cancelled) setError("Evidence could not be loaded. Reopen this view to retry.");
+        if (!cancelled)
+          setError("Evidence could not be loaded. Refresh the evidence list to retry.");
       });
     return () => {
       cancelled = true;
     };
   }, [runId, refresh, initialArtifactId]);
   useEffect(() => {
-    setSource("");
+    setMediaSource(undefined);
     if (!selected) return;
+    setError("");
     const controller = new AbortController();
     let url = "";
     void apiBlob(`/runs/${runId}/media/${selected.index}`, controller.signal)
       .then((blob) => {
         if (controller.signal.aborted) return;
         url = URL.createObjectURL(blob);
-        setSource(url);
+        setMediaSource({ runId, item: selected, url });
         setError("");
       })
       .catch(() => {
@@ -83,17 +102,65 @@ export function RunEvidence({
       if (url) URL.revokeObjectURL(url);
     };
   }, [runId, selected]);
+  const items = publication?.items.filter((item) => item.kind === kind) ?? [];
+  const currentIndex = selected ? items.findIndex((item) => item.index === selected.index) : -1;
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(items.length / 8) - 1));
+  const choose = (item: Media) => {
+    setSelected({ ...item });
+    setKind(item.kind);
+    setPage(Math.floor(items.indexOf(item) / 8));
+  };
+  const kindPicker = publication?.items.length ? (
+    <div className="ne-kind-picker" role="group" aria-label="Evidence type">
+      {(["video", "screenshot"] as const).map((value) => {
+        const count = publication.items.filter((item) => item.kind === value).length;
+        const Icon = value === "video" ? Film : Image;
+        return (
+          <button
+            key={value}
+            aria-pressed={kind === value}
+            disabled={!count}
+            onClick={() => {
+              setKind(value);
+              setPage(0);
+              const first = publication.items.find((item) => item.kind === value);
+              if (first) setSelected({ ...first });
+            }}
+          >
+            <Icon size={16} aria-hidden="true" />
+            {value === "video" ? "Recordings" : "Screenshots"}
+            <span>{count}</span>
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
   return (
-    <section className="panel native-evidence" aria-label="Run recordings and screenshots">
-      <h3>Recordings and screenshots</h3>
-      <button onClick={() => setRefresh((value) => value + 1)}>Refresh evidence</button>
+    <section
+      className="panel native-evidence ne-player"
+      aria-label="Run recordings and screenshots"
+    >
+      <div className="ne-header">
+        <h3 className={publication?.items.length ? "ne-sr-only" : undefined}>
+          Recordings &amp; screenshots
+        </h3>
+        {kindPicker}
+        <button onClick={() => setRefresh((value) => value + 1)}>
+          <RefreshCw size={14} aria-hidden="true" />
+          Refresh evidence
+        </button>
+      </div>
       <p className="native-evidence-warning">
         {publication?.warning ??
           "Automatic redaction is best effort. Sensitive information may remain. Review before sharing."}
       </p>
       {error && <p role="alert">{error}</p>}
       {!publication && !error ? (
-        <p role="status">Loading evidence…</p>
+        <EvidenceLoading
+          layout="library"
+          label="Loading recordings & screenshots…"
+          detail="Fetching the available evidence for this attempt."
+        />
       ) : !publication ? null : !publication.items.length ? (
         <p>
           No recordings or screenshots are available for this attempt yet. Refresh to check again.
@@ -101,54 +168,30 @@ export function RunEvidence({
         </p>
       ) : (
         <>
-          {(publication.items.length > 1 || !selected) && (
-            <div className="native-evidence-mobile">
-              <CustomSelect
-                label="Choose evidence"
-                value={selected ? String(selected.index) : "choose-item"}
-                options={[
-                  ...(!selected
-                    ? [{ value: "choose-item", label: "Choose an available item", disabled: true }]
-                    : []),
-                  ...publication.items.map((item) => ({
-                    value: String(item.index),
-                    label: `${title(item)} · ${item.kind === "video" ? "Recording" : "Screenshot"}`,
-                  })),
-                ]}
-                onChange={(value) => {
-                  const item = publication.items.find((item) => item.index === Number(value));
-                  setSelected(item ? { ...item } : undefined);
-                }}
-              />
-            </div>
-          )}
-          <div className="native-evidence-layout">
-            <div className="native-evidence-selector" role="group" aria-label="Select evidence">
-              {publication.items.map((item) => (
-                <button
-                  key={item.index}
-                  aria-pressed={selected?.index === item.index}
-                  onClick={() => setSelected({ ...item })}
-                >
-                  {title(item)}
-                  <small>
-                    {item.kind === "video" ? "Recording" : "Screenshot"} ·{" "}
-                    {new Date(item.timestamp).toLocaleTimeString()}
-                  </small>
-                  {item.coverage === "partial" ? " · Partial recording" : ""}
-                </button>
-              ))}
-            </div>
-            <div className="native-evidence-viewer" aria-live="polite">
-              {selected && (
+          <div
+            className="native-evidence-viewer ne-viewer"
+            aria-live="polite"
+            aria-busy={!!selected && (!ready || buffering) && !error}
+          >
+            {selected && (
+              <header className="ne-item-heading">
+                <p>
+                  {selected.kind === "video" ? "Recording" : "Screenshot"} {currentIndex + 1} of{" "}
+                  {items.length}
+                  {selected.durationMs !== undefined && selected.kind === "video"
+                    ? ` · ${duration(selected.durationMs)}`
+                    : ""}
+                </p>
+                <h4>{title(selected)}</h4>
+                {selected.description && <p>{selected.description}</p>}
+              </header>
+            )}
+            {source && selected ? (
+              selected.kind === "video" ? (
                 <>
-                  <h4>{title(selected)}</h4>
-                  {selected.description && <p>{selected.description}</p>}
-                </>
-              )}
-              {source && selected ? (
-                selected.kind === "video" ? (
-                  <>
+                  <div
+                    className={`ne-media-frame${!error && (!ready || buffering) ? " is-loading" : ""}`}
+                  >
                     <video
                       ref={video}
                       key={source}
@@ -157,18 +200,42 @@ export function RunEvidence({
                       preload="metadata"
                       playsInline
                       aria-label="Browser recording"
+                      onLoadedData={() => {
+                        setReadyFor({ source, item: selected });
+                        setBufferingFor(undefined);
+                      }}
+                      onCanPlay={() => {
+                        setReadyFor({ source, item: selected });
+                        setBufferingFor(undefined);
+                      }}
+                      onPlaying={() => setBufferingFor(undefined)}
+                      onWaiting={() => setBufferingFor({ source, item: selected })}
+                      onSeeking={() => setBufferingFor({ source, item: selected })}
+                      onSeeked={() => setBufferingFor(undefined)}
                       onError={() =>
                         setError(
                           "This recording cannot be played. Choose another item or refresh the evidence list.",
                         )
                       }
                     />
+                    {!error && (!ready || buffering) && (
+                      <EvidenceLoading
+                        label={ready ? "Buffering recording…" : "Preparing recording…"}
+                        detail={
+                          ready
+                            ? "Waiting for the next frames."
+                            : "The recording is opening in your browser."
+                        }
+                      />
+                    )}
+                  </div>
+                  <div className="ne-playback">
                     <label>
                       Playback speed{" "}
                       <select
                         aria-label="Playback speed"
                         value={speed}
-                        onChange={(e) => setSpeed(Number(e.target.value))}
+                        onChange={(event) => setSpeed(Number(event.target.value))}
                       >
                         <option value={0.25}>0.25×</option>
                         <option value={0.5}>0.5×</option>
@@ -177,49 +244,134 @@ export function RunEvidence({
                         <option value={2}>2×</option>
                       </select>
                     </label>
-                    <p>
-                      Original capture timing. Pause, seek or slow playback to inspect each state.
-                      Separate recordings represent separate attempts or capture interruptions—not
-                      reconstructed continuity.
+                    <span>Recorded at the original pace. Pause or seek to inspect a moment.</span>
+                  </div>
+                  {selected.coverage === "partial" && (
+                    <p role="status">
+                      This recording covers only part of the attempt. Missing footage is an evidence
+                      gap, not a defect in the tested app.
                     </p>
-                    {selected.coverage === "partial" && (
-                      <p role="status">
-                        This recording covers only part of the attempt. Missing footage is an
-                        evidence gap, not a defect in the tested app.
-                      </p>
-                    )}
-                  </>
-                ) : (
-                  <figure>
+                  )}
+                </>
+              ) : (
+                <figure>
+                  <div className={`ne-media-frame${!ready && !error ? " is-loading" : ""}`}>
                     <img
                       src={source}
                       alt={title(selected)}
+                      onLoad={() => setReadyFor({ source, item: selected })}
                       onError={() =>
                         setError(
                           "This screenshot cannot be displayed. Select it again or refresh the evidence list.",
                         )
                       }
                     />
-                    <figcaption>
-                      <a href={source} target="_blank" rel="noopener noreferrer">
-                        Open full-size screenshot
-                      </a>
-                    </figcaption>
-                  </figure>
-                )
-              ) : !error ? (
-                <p role="status">Loading selected evidence…</p>
-              ) : null}
-            </div>
+                    {!ready && !error && (
+                      <EvidenceLoading
+                        label="Preparing screenshot…"
+                        detail="The image is opening in your browser."
+                      />
+                    )}
+                  </div>
+                  <figcaption>
+                    <a href={source} target="_blank" rel="noopener noreferrer">
+                      Open full-size screenshot
+                    </a>
+                  </figcaption>
+                </figure>
+              )
+            ) : !error ? (
+              <EvidenceLoading
+                label={
+                  selected?.kind === "screenshot" ? "Loading screenshot…" : "Loading recording…"
+                }
+                detail={
+                  selected?.kind === "video"
+                    ? "Larger recordings may take a little longer."
+                    : "Fetching the selected image."
+                }
+              />
+            ) : null}
           </div>
+          {selected && items.length > 1 && (
+            <div className="ne-item-navigation">
+              <button
+                disabled={currentIndex <= 0}
+                onClick={() => {
+                  const item = items[currentIndex - 1];
+                  if (item) choose(item);
+                }}
+              >
+                <ChevronLeft size={16} aria-hidden="true" />
+                Previous {kind === "video" ? "recording" : "screenshot"}
+              </button>
+              <button
+                disabled={currentIndex < 0 || currentIndex >= items.length - 1}
+                onClick={() => {
+                  const item = items[currentIndex + 1];
+                  if (item) choose(item);
+                }}
+              >
+                Next {kind === "video" ? "recording" : "screenshot"}
+                <ChevronRight size={16} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+          {items.length > 1 || !selected ? (
+            <div className="ne-item-browser">
+              <h4>{kind === "video" ? "Choose a recording" : "Choose a screenshot"}</h4>
+              <div className="ne-items" role="group" aria-label="Select evidence">
+                {items.slice(currentPage * 8, currentPage * 8 + 8).map((item, index) => (
+                  <button
+                    key={item.index}
+                    aria-pressed={selected?.index === item.index}
+                    onClick={() => choose(item)}
+                  >
+                    <span className="ne-item-number">{currentPage * 8 + index + 1}</span>
+                    <span>
+                      <strong>{title(item)}</strong>
+                      <small>
+                        {item.kind === "video" ? "Recording" : "Screenshot"}
+                        {item.durationMs !== undefined && item.kind === "video"
+                          ? ` · ${duration(item.durationMs)}`
+                          : ""}{" "}
+                        · {new Date(item.timestamp).toLocaleTimeString()}
+                        {item.coverage === "partial" ? " · Partial recording" : ""}
+                      </small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {items.length > 8 && (
+                <nav className="rr-pagination" aria-label="Evidence pages">
+                  <button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>
+                    Previous items
+                  </button>
+                  <span>
+                    Page {currentPage + 1} of {Math.ceil(items.length / 8)}
+                  </span>
+                  <button
+                    disabled={(currentPage + 1) * 8 >= items.length}
+                    onClick={() => setPage(currentPage + 1)}
+                  >
+                    Next items
+                  </button>
+                </nav>
+              )}
+            </div>
+          ) : null}
         </>
       )}
     </section>
   );
 }
+function duration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 function title(item: Media): string {
   return (
-    item.title ??
+    item.title?.trim() ||
     (item.kind === "video"
       ? "Browser recording"
       : `Screenshot at ${new Date(item.timestamp).toLocaleTimeString()}`)

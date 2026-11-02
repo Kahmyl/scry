@@ -75,7 +75,7 @@ describe("Product surfaces with real view models", () => {
     expect(screen.queryByRole("button", { name: "Open mission: Historical journey" })).toBeNull();
   });
   it.each([
-    ["completed", "Completed", "complete"],
+    ["completed", "Testing ended", "complete"],
     ["running", "In progress", "active"],
     ["failed", "Ended", "ended"],
     ["cancelled", "Cancelled", "ended"],

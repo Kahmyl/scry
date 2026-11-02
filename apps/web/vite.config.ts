@@ -23,9 +23,25 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      "/mcp": {
+        target: process.env.VITE_MCP_PROXY_TARGET ?? "http://127.0.0.1:4100",
+        changeOrigin: false,
+      },
+      "/.well-known/oauth-protected-resource": {
+        target: process.env.VITE_MCP_PROXY_TARGET ?? "http://127.0.0.1:4100",
+        changeOrigin: false,
+      },
+      "/oauth": {
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:4000",
+        changeOrigin: false,
+      },
+      "/.well-known": {
+        target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:4000",
+        changeOrigin: false,
+      },
       "/api": {
         target: process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:4000",
-        changeOrigin: true,
+        changeOrigin: false,
       },
     },
   },

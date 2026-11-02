@@ -21,6 +21,7 @@ RUN --mount=type=cache,id=scry-pnpm,target=/pnpm/store \
 
 FROM deps AS build
 COPY apps/web apps/web
+COPY plugins plugins
 RUN pnpm --filter @scry/web build
 
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble AS runner
@@ -46,6 +47,6 @@ RUN PLAYWRIGHT_SKIP_BROWSER_GC=1 node packages/praxis/node_modules/playwright-mc
 COPY scripts/verify-deployment-preflight.mjs ./scripts/
 COPY scripts/operations/supabase-activity.mjs ./scripts/operations/
 COPY --from=build /workspace/apps/web/dist ./apps/web/dist
-COPY apps/web/scripts ./apps/web/scripts
+COPY apps/web/scripts/serve-dist.mjs ./apps/web/scripts/serve-dist.mjs
 
 CMD ["apps/api/node_modules/.bin/tsx", "--tsconfig", "apps/api/tsconfig.json", "apps/api/src/main.ts"]

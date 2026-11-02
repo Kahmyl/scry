@@ -69,6 +69,11 @@ jobs:
       - name: Prove migration second-run idempotence
         run: pnpm run db:migrate
 
+      - name: Verify isolated OAuth upgrade and connection lifecycle
+        env:
+          SCRY_OAUTH_TEST_DATABASE_URL: postgres://scry:scry-ci@127.0.0.1:5432/postgres
+        run: pnpm --filter @scry/api test test/oauth-connections.integration.test.ts --reporter=verbose
+
       - name: Qualify database lifecycle and safe failure contracts
         id: database_qualification
         run: pnpm qualify database

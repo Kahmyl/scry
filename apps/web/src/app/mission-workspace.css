@@ -768,3 +768,17 @@
     transition-duration: 0.01ms !important;
   }
 }
+.mw-index-guide {
+  margin: 0 0 16px;
+  color: var(--tw-muted, #97a3ad);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.mw-evidence-heading .mw-viewing-status {
+  display: inline-flex;
+  padding: 5px 9px;
+  border: 1px solid var(--tw-line, #283137);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--tw-text, #e6ebef);
+}

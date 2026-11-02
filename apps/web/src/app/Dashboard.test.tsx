@@ -29,6 +29,7 @@ const browserLocalStorage = {
 } satisfies Storage;
 
 beforeEach(() => {
+  window.history.replaceState(null, "", window.location.pathname);
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
     value: vi.fn(),
@@ -45,6 +46,32 @@ afterEach(() => {
 });
 
 describe("browser baseline production dashboard", () => {
+  it("shows a spinner and activity placeholders while the report evidence library loads", async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === "/projects") return [{ id: "project", name: "Project" }];
+      if (path === "/reports/pending-report")
+        return {
+          id: "pending-report",
+          missionId: "pending-mission",
+          missionTitle: "Review checkout",
+          state: "final",
+          summary: "Review the recorded tests.",
+        };
+      if (path === "/dashboard/missions/pending-mission") return await new Promise(() => {});
+      return [];
+    });
+    render(
+      <MemoryRouter initialEntries={["/dashboard/reports/pending-report"]}>
+        <Dashboard userEmail="owner@example.test" />
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole("link", { name: "Recordings & screenshots" }));
+    const label = await screen.findByText("Loading evidence library…");
+    const loader = label.closest(".ev-loading")!;
+    expect(loader.querySelector(".ev-loading-spinner")).toBeTruthy();
+    expect(loader.querySelectorAll(".ev-loading-cards > div")).toHaveLength(4);
+    expect(loader.querySelector('[role="status"]')).toBeTruthy();
+  });
   it("keeps mission search scoped to its project when switching projects", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
       if (path === "/projects")
@@ -163,10 +190,15 @@ describe("browser baseline production dashboard", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText("Visible saved text")).toBeTruthy();
-    await screen.findByLabelText("Selected attempt evidence");
+    expect(
+      await screen.findByRole("heading", { name: "Browse by test activity", hidden: true }),
+    ).toBeTruthy();
     expect(screen.queryByText(/PRIVATE_WORKER_ERROR|PRIVATE_CUSTODIAN_ERROR/)).toBeNull();
     expect(screen.queryByText(/Technical details and original report data/)).toBeNull();
-    expect(screen.getByRole("button", { name: "Attempt 1 · Ended" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: "Recordings & screenshots" }));
+    fireEvent.click(screen.getByRole("button", { name: /Edit the card/ }));
+    expect(await screen.findByText("Media for attempt")).toBeTruthy();
+    expect(screen.queryByText(/PRIVATE_WORKER_ERROR|PRIVATE_CUSTODIAN_ERROR/)).toBeNull();
   });
   it("does not carry a selected artifact into another report", async () => {
     vi.mocked(api).mockImplementation(async (path) => {
@@ -215,9 +247,15 @@ describe("browser baseline production dashboard", () => {
         <Dashboard userEmail="owner@example.test" />
       </MemoryRouter>,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Review supporting evidence" }));
+    fireEvent.click(await screen.findByRole("link", { name: /Possible issues/ }));
+    fireEvent.click(screen.getByRole("button", { name: "View recordings & screenshots" }));
     expect(await screen.findByText("Media for first-attempt")).toBeTruthy();
     fireEvent.click(screen.getByRole("link", { name: "Open the second report" }));
+    // A different report starts at its library, never the preceding report's artifact.
+    fireEvent.click(await screen.findByRole("link", { name: "Recordings & screenshots" }));
+    expect(await screen.findByRole("heading", { name: "Browse by test activity" })).toBeTruthy();
+    expect(screen.queryByText("Media for first-attempt")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Review.*1 attempt to review/ }));
     expect(await screen.findByText("Media for second-attempt")).toBeTruthy();
     expect(screen.queryByText(/does not belong to an available attempt/)).toBeNull();
   });
@@ -314,9 +352,12 @@ describe("browser baseline production dashboard", () => {
         <Dashboard userEmail="owner@example.test" />
       </MemoryRouter>,
     );
-    const evidence = await screen.findByLabelText("Selected attempt evidence");
+    await screen.findByRole("link", { name: /Possible issues/ });
+    expect(screen.queryByLabelText("Selected attempt evidence")).toBeNull();
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Review supporting evidence" }));
+    fireEvent.click(screen.getByRole("link", { name: /Possible issues/ }));
+    fireEvent.click(screen.getByRole("button", { name: "View recordings & screenshots" }));
+    const evidence = await screen.findByLabelText("Selected attempt evidence");
     expect(document.activeElement).toBe(evidence);
     expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
       block: "start",
@@ -325,6 +366,53 @@ describe("browser baseline production dashboard", () => {
     expect(vi.mocked(HTMLElement.prototype.scrollIntoView).mock.contexts.at(-1)).toBe(
       screen.getByLabelText("Selected journey evidence"),
     );
+    const context = screen.getByRole("complementary", { name: "Evidence finding context" });
+    expect(context.closest("[data-evidence-stage]")).toBe(
+      screen.getByLabelText("Selected journey evidence"),
+    );
+    expect(context.textContent).toContain("Saved project");
+    expect(screen.getByRole("button", { name: "Back to possible issue" })).toBeTruthy();
+  });
+  it("keeps the finding return path available when mission evidence cannot load", async () => {
+    vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === "/projects") return [{ id: "project", name: "Project" }];
+      if (path === "/reports/report-one")
+        return {
+          id: "report-one",
+          missionId: "mission-one",
+          missionTitle: "Checkout",
+          state: "final",
+          summary: "Checkout needs review.",
+          safeReport: {
+            presentation: {
+              observations: [
+                {
+                  title: "Address validation",
+                  detail: "The address could not be validated.",
+                  evidence: [{ runId: "attempt-one", artifactId: "a".repeat(64) }],
+                },
+              ],
+            },
+          },
+        };
+      if (path === "/dashboard/missions/mission-one") throw new Error("Evidence unavailable");
+      return [];
+    });
+    render(
+      <MemoryRouter initialEntries={["/dashboard/reports/report-one"]}>
+        <Dashboard userEmail="owner@example.test" />
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole("link", { name: /Possible issues/ }));
+    // Let the native anchor navigation finish before the next user action.
+    await waitFor(() => expect(window.location.hash).toBe("#observations"));
+    fireEvent.click(screen.getByRole("button", { name: "View recordings & screenshots" }));
+    await screen.findByText("Evidence unavailable");
+    const back = await screen.findByRole("button", { name: "Back to possible issue" });
+    expect(back.closest("aside")?.textContent).toContain("Address validation");
+    fireEvent.click(screen.getByRole("button", { name: "Back to possible issue" }));
+    expect(screen.getByRole("heading", { name: "Address validation" })).toBeTruthy();
   });
   it("groups named journeys and retains every attempt without exposing execution conclusions", async () => {
     vi.mocked(api).mockImplementation(async (path) => {

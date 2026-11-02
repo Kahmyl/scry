@@ -34,7 +34,8 @@ code as permanent product language.
 
 ## Contract principles
 
-- All product operations except health checks require authentication.
+- All domain operations require authentication. Public discovery and OAuth
+  protocol entry points do not grant workspace access.
 - Every resource read or write is scoped to an authenticated workspace.
 - Caller-supplied idempotency keys identify retryable creation and command
   intent.
@@ -340,6 +341,21 @@ workspace.
 
 ## Agent access tokens
 
+Guided account linking is implemented as an inactive deployment option. The
+public `/mcp` resource advertises protected-resource metadata and the `/oauth`
+issuer when enabled. The standards provider owns authorization, registration,
+PKCE exchange, refresh and revocation routes. Customers approve a workspace
+through the existing signed-in dashboard; no dashboard token goes to the client.
+
+`GET /api/integrations/connections` lists only the signed-in person's connections.
+`DELETE /api/integrations/connections/{id}` disconnects an owned grant, including
+existing access and refresh tokens. Both reject agent credentials. The
+cookie-bound `/api/integrations/authorize/{uid}/details` and `/decision` endpoints
+expose safe request details and accept an explicit workspace approval or denial;
+decisions also require the exact Scry Origin. `GET /api/integrations/session`
+returns only authenticated identity/scope facts used to bind an MCP transport.
+See [connection setup and activation](plugin-connections.md).
+
 ### List, create, or revoke tokens
 
 `GET /api/mcp-tokens`
@@ -358,9 +374,11 @@ The Model Context Protocol endpoint is:
 
 `POST /mcp`
 
-It requires an agent access token. A protocol session is bound to the digest of
-the token that created it, so a different credential cannot take over an
-existing session.
+It requires an authorized Scry credential. A protocol session is bound to the
+authenticated user, workspace and credential identity. OAuth token renewal
+retains that identity, but a different grant cannot take over the session.
+Every request checks current authorization; disconnecting denies later requests
+even on a previously initialized session.
 
 The integration exposes these logical operations:
 
