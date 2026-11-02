@@ -435,7 +435,12 @@ export async function exerciseNativeBrowser({
     renameSync(held, filename);
   }
   const { chromium } = createRequire("/workspace/packages/praxis/package.json")("playwright");
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.SCRY_FIXTURE_BROWSER_CHANNEL
+      ? { channel: process.env.SCRY_FIXTURE_BROWSER_CHANNEL }
+      : {}),
+  });
   try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto("http://web:3000/");
@@ -455,9 +460,23 @@ export async function exerciseNativeBrowser({
       .getByRole("group", { name: "Select evidence" })
       .getByRole("button", { name: /Recording/ })
       .click();
-    await page.waitForFunction(
-      () => document.querySelector(".native-evidence video")?.readyState >= 2,
-    );
+    await page.locator(".native-evidence video").waitFor();
+    const codec = await page
+      .locator(".native-evidence video")
+      .evaluate((video) => video.canPlayType('video/mp4; codecs="avc1.42E01E"'));
+    if (codec) {
+      await page.locator(".native-evidence video").evaluate((video) => video.play());
+      await page.waitForFunction(
+        () => document.querySelector(".native-evidence video")?.currentTime > 0.1,
+      );
+      await page.locator(".native-evidence video").evaluate((video) => video.pause());
+      console.log("DEPLOYED_SUPPORTED_BROWSER_PLAYBACK_PASS");
+    } else {
+      assert.ok(!process.env.SCRY_FIXTURE_BROWSER_CHANNEL, "SUPPORTED_BROWSER_CODEC_MISSING");
+      console.log(
+        "DEPLOYED_DASHBOARD_CODEC_UNAVAILABLE: bundled Chromium lacks H.264; FFmpeg decode and delivery passed, actual Chrome playback remains a separate check.",
+      );
+    }
     assert.ok(!(await page.locator("body").innerText()).includes(credential));
     mkdirSync("/evidence/qualification-ui", { recursive: true, mode: 0o700 });
     await page.screenshot({

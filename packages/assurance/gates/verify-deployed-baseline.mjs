@@ -135,14 +135,50 @@ try {
     "web",
     "fixture",
   ]);
+  // Official Chrome supplies codecs absent from bundled Chromium. Install it
+  // in the disposable UI test controller only, never in the production worker.
+  const architecture = run([...compose, "exec", "-T", "fixture", "node", "-p", "process.arch"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+  }).trim();
+  const officialChrome = architecture === "x64";
+  if (officialChrome)
+    run(
+      [
+        ...compose,
+        "exec",
+        "-T",
+        "fixture",
+        "node",
+        "packages/praxis/node_modules/playwright/cli.js",
+        "install",
+        "chrome",
+      ],
+      { timeout: 180000 },
+    );
   const output = run(
-    [...compose, "exec", "-T", "fixture", "node", "/tmp/deployed-browser-fixture.mjs", "exercise"],
+    [
+      ...compose,
+      "exec",
+      "-T",
+      ...(officialChrome ? ["-e", "SCRY_FIXTURE_BROWSER_CHANNEL=chrome"] : []),
+      "fixture",
+      "node",
+      "/tmp/deployed-browser-fixture.mjs",
+      "exercise",
+    ],
     { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" },
   );
   if (!output.includes("DEPLOYED_NATIVE_AUTHENTICATION_PASS"))
     throw new Error("SCRY_DEPLOYED_BROWSER_NOT_EXERCISED");
   if (!output.includes("DEPLOYED_AUTHENTICATED_DASHBOARD_PASS"))
     throw new Error("SCRY_DEPLOYED_DASHBOARD_NOT_EXERCISED");
+  if (officialChrome && !output.includes("DEPLOYED_SUPPORTED_BROWSER_PLAYBACK_PASS"))
+    throw new Error("SCRY_DEPLOYED_CHROME_PLAYBACK_NOT_EXERCISED");
+  if (output.includes("DEPLOYED_DASHBOARD_CODEC_UNAVAILABLE"))
+    process.stdout.write(
+      "Local bundled Chromium lacks H.264: video fully decoded by FFmpeg; official-Chrome playback remains unverified in this local gate.\n",
+    );
   const visualProof = path.join(root, "artifacts", "assurance", `dashboard-${suffix}`);
   mkdirSync(visualProof, { recursive: true, mode: 0o700 });
   run([...compose, "cp", "fixture:/evidence/qualification-ui/.", visualProof]);
