@@ -145,7 +145,10 @@ export function createOAuthProvider(
       token_endpoint_auth_method: "none",
     },
     responseTypes: ["code"],
-    scopes: ["openid", "offline_access"],
+    // MCP clients repeat the resource scope during dynamic registration. It
+    // must be advertised here as well as in resourceIndicators; grants still
+    // bind it exclusively to the configured Scry resource and workspace.
+    scopes: ["openid", "offline_access", testingScope],
     claims: { openid: ["sub"] },
     pkce: { required: () => true },
     issueRefreshToken: (_ctx, client) => client.grantTypeAllowed("refresh_token"),

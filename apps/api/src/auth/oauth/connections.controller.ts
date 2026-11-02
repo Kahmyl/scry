@@ -154,10 +154,10 @@ export class ConnectionsController {
     const client = await provider.Client.find(clientId);
     const grant = new provider.Grant({ accountId: user.userId, clientId });
     grant.addResourceScope(config.resource, testingScope);
-    const identityScopes = String(details.params.scope)
-      .split(" ")
-      .filter((scope) => ["openid", "offline_access"].includes(scope));
-    if (identityScopes.length) grant.addOIDCScope(identityScopes.join(" "));
+    // The provider also tracks advertised scopes for consent bookkeeping.
+    // These exact scopes were allowlisted by interaction() above; the testing
+    // access token still requires the separate resource grant and workspace.
+    grant.addOIDCScope(String(details.params.scope));
     const grantId = await grant.save();
     try {
       await this.connections.approve(principal, {

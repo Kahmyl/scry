@@ -202,6 +202,8 @@ live("workspace-bound OAuth account linking", () => {
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",
+        // Standard MCP SDK clients include the discovered/requested scope in DCR.
+        scope: "scry:testing offline_access",
       }),
     });
     const client = (await registered.json()) as { client_id: string };
@@ -268,6 +270,24 @@ live("workspace-bound OAuth account linking", () => {
       code_verifier: verifier,
       resource: `${base}/mcp`,
     });
+
+  it("advertises the resource scope for standard registration and refuses unrelated scopes", async () => {
+    const discovery = await fetch(`${base}/.well-known/oauth-authorization-server/oauth`);
+    const metadata = await discovery.json();
+    expect(metadata.scopes_supported).toContain("scry:testing");
+    const refused = await fetch(metadata.registration_endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Fictional unsupported-scope client",
+        redirect_uris: ["http://127.0.0.1:49199/callback"],
+        token_endpoint_auth_method: "none",
+        scope: "scry:testing unrelated:admin",
+      }),
+    });
+    expect(refused.status).toBe(400);
+    expect((await refused.json()).error).toBe("invalid_client_metadata");
+  });
 
   it("approves only the chosen workspace, renews access and disconnects existing access and refresh tokens", async () => {
     const flow = await begin("scry:testing");
