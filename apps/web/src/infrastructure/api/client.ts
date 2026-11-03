@@ -5,6 +5,10 @@ export const API_BASE = publicConfig.apiBaseUrl;
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = await authenticatedHeaders(init?.headers);
+  // Content-Type describes the request body, not the expected response. In
+  // particular, Fastify rejects body-less DELETEs mislabeled as JSON.
+  if (typeof init?.body === "string" && init.body.length > 0 && !headers.has("content-type"))
+    headers.set("content-type", "application/json");
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers,
@@ -43,7 +47,6 @@ export async function apiBlob(path: string, signal?: AbortSignal): Promise<Blob>
 
 async function authenticatedHeaders(initial?: HeadersInit) {
   const headers = new Headers(initial);
-  if (!headers.has("content-type")) headers.set("content-type", "application/json");
   const { data } = (await supabase?.auth.getSession()) ?? { data: { session: null } };
   if (data.session?.access_token) {
     headers.set("authorization", `Bearer ${data.session.access_token}`);
