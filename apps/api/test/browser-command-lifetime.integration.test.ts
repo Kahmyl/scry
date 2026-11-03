@@ -22,6 +22,7 @@ const databaseUrl = process.env.SCRY_BROWSER_TEST_DATABASE_URL,
   redisUrl = process.env.REDIS_URL;
 const live =
   databaseUrl && redisUrl && process.env.SCRY_BROWSER_E2E === "1" ? describe : describe.skip;
+const nativeLaunch = SupervisedBrowser.launch.bind(SupervisedBrowser);
 live("actual queue carried command lifetime", () => {
   let database: Database, effects: BrowserExecutionRepository, origin: string;
   let requested: (() => void) | undefined;
@@ -139,8 +140,25 @@ live("actual queue carried command lifetime", () => {
   }, 30000);
   it("physically stops a busy native browser when its carried execution deadline expires", async () => {
     const f = await runtime();
+    // Controlled slow acquisition reproduces a loaded CI runner, without a
+    // fake clock or copied browser/deadline implementation.
+    f.launch.mockImplementationOnce(async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      return nativeLaunch(...args);
+    });
     try {
       const session = await seedSession(database, effects, origin);
+      // Establish the real native context before arming the short deadline.
+      // The property under test is stopping an executing busy page, not whether
+      // a fresh browser happens to start within two seconds on this machine.
+      const warm = await f.commands.submit(session, {
+        idempotencyKey: randomUUID(),
+        command: { kind: "observe" },
+      });
+      const warmJob = await f.queue.add("command", { commandId: warm.commandId }, { attempts: 1 });
+      await warmJob.waitUntilFinished(f.events, 15000);
+      expect((await f.commands.observe(warm.commandId)).state).toBe("completed");
+      expect(f.launch).toHaveBeenCalledTimes(1);
       const { commandId } = await f.commands.submit(session, {
         idempotencyKey: randomUUID(),
         command: { kind: "navigate", url: origin },
@@ -154,6 +172,7 @@ live("actual queue carried command lifetime", () => {
       });
       const job = await f.queue.add("command", { commandId }, { attempts: 1 });
       await requestSeen(seen);
+      expect(f.launch).toHaveBeenCalledTimes(1);
       const browser = await f.launch.mock.results.at(-1)!.value;
       expect(await job.waitUntilFinished(f.events, 15000)).toEqual({ failed: true });
       expect(browser.exitConfirmed).toBe(true);
