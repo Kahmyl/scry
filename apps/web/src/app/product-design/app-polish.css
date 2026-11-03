@@ -272,7 +272,7 @@
   gap: 8px;
   font-size: 13px;
 }
-.scry-product input:not([type="checkbox"]),
+.scry-product input:not([type="checkbox"]):not([type="radio"]),
 .scry-product textarea {
   border: 1px solid var(--sp-border);
   border-radius: 4px;

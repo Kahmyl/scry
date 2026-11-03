@@ -1,18 +1,22 @@
 import {
   CheckCircle2,
+  Check,
+  Clock3,
+  Code2,
   Copy,
   ExternalLink,
   LoaderCircle,
   PlugZap,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
+  MousePointer2,
 } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { api, remove } from "../../infrastructure/api/client.js";
 import { publicConfig } from "../../infrastructure/config/runtime-config.js";
 import { PageTitle } from "../../shared/components/dashboard-primitives.js";
-import { AdvancedIntegrations } from "./integrations.js";
 import "./connections.css";
 
 type Connection = {
@@ -33,12 +37,14 @@ export function Connections() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [advanced, setAdvanced] = useState(false);
   const [disconnecting, setDisconnecting] = useState<Connection>();
   const [checkMessage, setCheckMessage] = useState("");
   const disconnectTrigger = useRef<HTMLButtonElement | null>(null);
   const connectionsHeading = useRef<HTMLHeadingElement | null>(null);
   const endpoint = new URL(publicConfig.mcpServerUrl, window.location.origin).href;
+  const activeConnections = state?.connections.filter(
+    (connection) => !connection.revokedAt && !connection.expired,
+  );
   const load = async (explicitCheck = false) => {
     setBusy(true);
     setError("");
@@ -72,6 +78,15 @@ export function Connections() {
     setError("");
     try {
       await remove(`/integrations/connections/${disconnecting.id}`);
+      setState(
+        (current) =>
+          current && {
+            ...current,
+            connections: current.connections.filter(
+              (connection) => connection.id !== disconnecting.id,
+            ),
+          },
+      );
       setDisconnecting(undefined);
       await load();
     } catch {
@@ -83,208 +98,227 @@ export function Connections() {
   };
   const cursorConfig = btoa(JSON.stringify({ url: endpoint }));
   return (
-    <>
+    <div className="connections-page">
       <PageTitle
         eyebrow="CONNECTIONS"
-        title="Bring Scry to your AI assistant"
-        copy="Connect once. Ask for a test in your own words. Review the results here."
+        title="Connect your AI assistant"
+        copy="Start tests from your assistant. Keep the reports, recordings and results together in Scry."
       />
-      <section className="connection-setup panel" aria-labelledby="connection-heading">
-        <div className="connection-heading">
-          <span className="connection-icon">
-            <PlugZap size={24} />
-          </span>
-          <div>
-            <h2 id="connection-heading">Choose where you work</h2>
-            <p>One Scry account. Your existing workspace permissions.</p>
-          </div>
-        </div>
-        <div className="connection-clients" role="radiogroup" aria-label="AI client setup guides">
-          {(
-            [
-              ["codex", "Codex / ChatGPT"],
-              ["claude", "Claude"],
-              ["cursor", "Cursor"],
-            ] as const
-          ).map(([value, label]) => (
-            <label key={value} data-active={client === value}>
-              <input
-                type="radio"
-                name="scry-client-guide"
-                value={value}
-                checked={client === value}
-                onChange={() => {
-                  setClient(value);
-                  setCopied(false);
-                }}
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-        {!state && !error && (
-          <p className="connection-status" role="status">
-            <LoaderCircle className="connection-spin" size={18} /> Checking connection setup…
-          </p>
-        )}
-        {state?.available === false && (
-          <p className="connection-notice">
-            Guided sign-in is not enabled on this deployment yet. Existing connections still work;
-            manual setup is available below.
-          </p>
-        )}
-        {state?.available && (
-          <>
-            <ol className="connection-guide">
-              <li>
-                <span>1</span>
-                <div>
-                  <h3>
-                    Add Scry to{" "}
-                    {client === "codex"
-                      ? "Codex or ChatGPT"
-                      : client === "claude"
-                        ? "Claude"
-                        : "Cursor"}
-                  </h3>
-                  <p>
-                    {client === "codex"
-                      ? "In your client’s integration settings, add a custom remote MCP server using the address below."
-                      : client === "claude"
-                        ? "In Claude or Claude Desktop, open Settings → Connectors → Add custom connector. Name it Scry and paste the address below as the remote server URL. For a team account, your organization may need to enable custom connectors. In Claude Code, use the command below instead."
-                        : "Use Add to Cursor, then review the connection in Cursor."}
-                  </p>
-                  {client === "cursor" ? (
-                    <a
-                      className="connection-primary"
-                      href={`cursor://anysphere.cursor-deeplink/mcp/install?name=Scry&config=${encodeURIComponent(cursorConfig)}`}
-                    >
-                      Add to Cursor <ExternalLink size={15} />
-                    </a>
-                  ) : (
-                    <button
-                      type="button"
-                      className="connection-primary"
-                      onClick={() => void copy()}
-                    >
-                      <Copy size={15} />
-                      {copied ? "Address copied" : "Copy Scry address"}
-                    </button>
-                  )}
-                  <code className="connection-address">{endpoint}</code>
-                  {client === "claude" && (
-                    <code className="connection-command">
-                      claude mcp add --transport http scry {endpoint}
-                    </code>
-                  )}
-                </div>
-              </li>
-              <li>
-                <span>2</span>
-                <div>
-                  <h3>Sign in and choose a workspace</h3>
-                  <p>
-                    Your client opens Scry for approval. Check the requested access, choose your
-                    workspace and select Allow connection. No access-token copying is needed.
-                  </p>
-                </div>
-              </li>
-              <li>
-                <span>3</span>
-                <div>
-                  <h3>Confirm, then start your first test</h3>
-                  <p>
-                    Ask your assistant: <q>Can you see my Scry projects?</q> Then describe what you
-                    want tested and the application address. Use protected inputs for passwords, not
-                    chat messages.
-                  </p>
-                  <button
-                    type="button"
-                    className="connection-secondary"
-                    onClick={() => void load(true)}
-                    disabled={busy}
-                  >
-                    <RefreshCw size={15} className={busy ? "connection-spin" : ""} />
-                    Refresh connection list
-                  </button>
-                  {checkMessage && (
-                    <p role="status" className="connection-refresh-result">
-                      {checkMessage}
-                    </p>
-                  )}
-                </div>
-              </li>
-            </ol>
-            <p className="connection-footnote">
-              <ShieldCheck size={17} /> Each client still requires your approval. An installation
-              click alone does not verify access.
-            </p>
-            <details className="connection-package">
-              <summary>Optional: add Scry’s testing workflow skills</summary>
-              {endpoint !== "https://scry.giize.com/mcp" && (
-                <p>
-                  These downloads connect to hosted Scry at scry.giize.com, not this local or custom
-                  server. Use the connection address above to test this server.
-                </p>
-              )}
-              <p>
-                These packages add setup, testing and report-review guidance where your client
-                supports plugins. They do not contain credentials or replace sign-in.
-              </p>
-              <a href={`/plugins/scry-${client}.zip`} download>
-                Download {client === "codex" ? "Codex" : client === "claude" ? "Claude" : "Cursor"}{" "}
-                package
-              </a>
-              <p>
-                Install the downloaded package using your client’s local-plugin instructions.
-                ChatGPT uses the remote connector above; this package is not a ChatGPT marketplace
-                listing.
-              </p>
-            </details>
-          </>
-        )}
-        {error && (
-          <p role="alert" className="connection-error">
-            {error}{" "}
-            <button type="button" onClick={() => void load()} disabled={busy}>
-              Try again
-            </button>
-          </p>
-        )}
-      </section>
-      <section className="connection-list" aria-labelledby="connected-heading">
-        <div className="connection-section-title">
-          <h2 id="connected-heading" ref={connectionsHeading} tabIndex={-1}>
-            Your connections
-          </h2>
-          <p>Only clients you’ve authorized. Disconnecting does not delete your test results.</p>
-        </div>
-        {state && state.connections.length === 0 && (
-          <div className="panel connection-empty">
-            <PlugZap size={24} />
-            <h3>No linked clients yet</h3>
-            <p>Complete sign-in from your AI client, then check the connection status above.</p>
-          </div>
-        )}
-        {state?.connections.map((connection) => (
-          <article className="panel connection-row" key={connection.id}>
+      <div className="connections-layout">
+        <section className="connection-setup panel" aria-labelledby="connection-heading">
+          <div className="connection-heading">
+            <span className="connection-icon">
+              <PlugZap size={24} />
+            </span>
             <div>
-              <h3>{connection.clientName}</h3>
-              <p>{connection.workspaceName}</p>
-              <span
-                className={`connection-status ${connection.revokedAt || connection.expired ? "" : connection.lastUsedAt ? "connection-confirmed" : ""}`}
-              >
-                <CheckCircle2 size={15} />
-                {connection.revokedAt
-                  ? "Disconnected"
-                  : connection.expired
-                    ? "Expired · connect again from your AI client"
-                    : connection.lastUsedAt
-                      ? "Connected · authenticated access verified"
-                      : "Approved · waiting for client verification"}
-              </span>
+              <h2 id="connection-heading">Add a connection</h2>
+              <p>Choose your assistant to see how to connect.</p>
             </div>
-            {!connection.revokedAt && (
+          </div>
+          <div className="connection-clients" role="radiogroup" aria-label="AI client setup guides">
+            {(
+              [
+                ["codex", "Codex / ChatGPT", Code2],
+                ["claude", "Claude", Sparkles],
+                ["cursor", "Cursor", MousePointer2],
+              ] as const
+            ).map(([value, label, Icon]) => (
+              <label key={value} data-active={client === value}>
+                <input
+                  type="radio"
+                  name="scry-client-guide"
+                  value={value}
+                  aria-label={label}
+                  checked={client === value}
+                  onChange={() => {
+                    setClient(value);
+                    setCopied(false);
+                  }}
+                />
+                <Icon size={19} aria-hidden="true" />
+                <span>{label}</span>
+                <Check className="connection-client-check" size={14} aria-hidden="true" />
+              </label>
+            ))}
+          </div>
+          {!state && !error && (
+            <p className="connection-status" role="status">
+              <LoaderCircle className="connection-spin" size={18} /> Checking connection setup…
+            </p>
+          )}
+          {state?.available === false && (
+            <p className="connection-notice">
+              Guided sign-in is not enabled on this deployment yet. Existing connections still work.
+            </p>
+          )}
+          {state?.available && (
+            <>
+              <ol className="connection-guide">
+                <li>
+                  <span>1</span>
+                  <div>
+                    <h3>
+                      Open{" "}
+                      {client === "codex"
+                        ? "Codex or ChatGPT"
+                        : client === "claude"
+                          ? "Claude"
+                          : "Cursor"}
+                      {client === "cursor" ? " and add Scry" : " settings"}
+                    </h3>
+                    <p>
+                      {client === "codex"
+                        ? "Add a custom remote MCP server in your assistant’s integration settings. Use this server address."
+                        : client === "claude"
+                          ? "Open Settings → Connectors → Add custom connector. Name it Scry and use this server address. Your team may need to enable custom connectors first."
+                          : "Use Add to Cursor, then review the connection in Cursor."}
+                    </p>
+                    <div className="connection-endpoint">
+                      <code className="connection-address">{endpoint}</code>
+                      {client === "cursor" ? (
+                        <a
+                          className="connection-primary"
+                          href={`cursor://anysphere.cursor-deeplink/mcp/install?name=Scry&config=${encodeURIComponent(cursorConfig)}`}
+                        >
+                          Add to Cursor <ExternalLink size={15} />
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          className="connection-primary"
+                          onClick={() => void copy()}
+                        >
+                          <Copy size={15} />
+                          {copied ? "Address copied" : "Copy Scry address"}
+                        </button>
+                      )}
+                    </div>
+                    {client === "claude" && (
+                      <details className="connection-code-option">
+                        <summary>Using Claude Code?</summary>
+                        <code className="connection-command">
+                          claude mcp add --transport http scry {endpoint}
+                        </code>
+                      </details>
+                    )}
+                  </div>
+                </li>
+                <li>
+                  <span>2</span>
+                  <div>
+                    <h3>Sign in and choose a workspace</h3>
+                    <p>
+                      When your assistant opens Scry, sign in, choose your workspace and select
+                      Allow connection.
+                    </p>
+                  </div>
+                </li>
+                <li>
+                  <span>3</span>
+                  <div>
+                    <h3>Check that you’re connected</h3>
+                    <p>Ask your assistant:</p>
+                    <blockquote className="connection-prompt">
+                      Can you see my Scry projects?
+                    </blockquote>
+                    <p>
+                      Once it can, describe what you want to test and share the application address.
+                    </p>
+                  </div>
+                </li>
+              </ol>
+              <p className="connection-footnote">
+                <ShieldCheck size={17} /> Sign in securely. No access token to copy. Keep passwords
+                in Scry’s protected inputs, outside chat.
+              </p>
+              <details className="connection-package">
+                <summary>Optional workflow skills</summary>
+                {endpoint !== "https://scry.giize.com/mcp" && (
+                  <p>
+                    These downloads connect to hosted Scry at scry.giize.com, not this local or
+                    custom server. Use the connection address above to test this server.
+                  </p>
+                )}
+                <p>
+                  These packages add setup, testing and report-review guidance where your client
+                  supports plugins. They do not contain credentials or replace sign-in.
+                </p>
+                <a href={`/plugins/scry-${client}.zip`} download>
+                  Download{" "}
+                  {client === "codex" ? "Codex" : client === "claude" ? "Claude" : "Cursor"} package
+                </a>
+                <p>
+                  Install the downloaded package using your client’s local-plugin instructions.
+                  ChatGPT uses the remote connector above; this package is not a ChatGPT marketplace
+                  listing.
+                </p>
+              </details>
+            </>
+          )}
+          {error && (
+            <p role="alert" className="connection-error">
+              {error}{" "}
+              <button type="button" onClick={() => void load()} disabled={busy}>
+                Try again
+              </button>
+            </p>
+          )}
+        </section>
+        <section className="connection-list" aria-labelledby="connected-heading">
+          <div className="connection-section-title">
+            <div>
+              <h2 id="connected-heading" ref={connectionsHeading} tabIndex={-1}>
+                Your connections
+              </h2>
+              <p>Assistants with active access to your workspace.</p>
+            </div>
+            <button
+              type="button"
+              className="connection-refresh"
+              aria-label="Refresh connection list"
+              title="Refresh connection list"
+              onClick={() => void load(true)}
+              disabled={busy}
+            >
+              <RefreshCw size={17} className={busy ? "connection-spin" : ""} />
+            </button>
+          </div>
+          {checkMessage && (
+            <p role="status" className="connection-refresh-result">
+              {checkMessage}
+            </p>
+          )}
+          {activeConnections?.length === 0 && (
+            <div className="panel connection-empty">
+              <span className="connection-empty-icon">
+                <PlugZap size={24} />
+              </span>
+              <h3>No active connections</h3>
+              <p>
+                Follow the setup steps, then refresh this list. Your assistant appears here after
+                you approve access.
+              </p>
+            </div>
+          )}
+          {activeConnections?.map((connection) => (
+            <article className="panel connection-row" key={connection.id}>
+              <div>
+                <h3>
+                  <span className="connection-row-icon">
+                    <PlugZap size={17} />
+                  </span>
+                  {connection.clientName}
+                </h3>
+                <p>{connection.workspaceName}</p>
+                <span
+                  className={`connection-status ${connection.lastUsedAt ? "connection-confirmed" : ""}`}
+                >
+                  {connection.lastUsedAt ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
+                  {connection.lastUsedAt
+                    ? "Connected · authenticated access verified"
+                    : "Approved · waiting for client verification"}
+                </span>
+              </div>
               <button
                 type="button"
                 className="connection-secondary"
@@ -293,12 +327,18 @@ export function Connections() {
                   setDisconnecting(connection);
                 }}
               >
-                Disconnect {connection.clientName}
+                <span aria-hidden="true">Disconnect</span>
+                <span className="connection-sr-only">Disconnect {connection.clientName}</span>
               </button>
-            )}
-          </article>
-        ))}
-      </section>
+            </article>
+          ))}
+          <p className="connection-access-note">
+            <ShieldCheck size={17} />
+            You control access. Disconnect an assistant at any time; your reports and recordings
+            stay in Scry.
+          </p>
+        </section>
+      </div>
       <AlertDialog.Root
         open={!!disconnecting}
         onOpenChange={(open) => {
@@ -333,13 +373,6 @@ export function Connections() {
           </AlertDialog.Content>
         </AlertDialog.Portal>
       </AlertDialog.Root>
-      <details
-        className="connection-advanced"
-        onToggle={(event) => setAdvanced(event.currentTarget.open)}
-      >
-        <summary>Advanced: manual access-token setup</summary>
-        {advanced && <AdvancedIntegrations />}
-      </details>
-    </>
+    </div>
   );
 }

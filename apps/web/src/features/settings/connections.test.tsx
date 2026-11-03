@@ -53,15 +53,64 @@ describe("guided account connections", () => {
     expect(await screen.findByText("Approved · waiting for client verification")).toBeTruthy();
     expect(screen.queryByText("Connected · authenticated access verified")).toBeNull();
   });
-  it("offers guided setup without exposing access-token creation as the primary action", async () => {
+  it("offers guided setup without manual access-token controls", async () => {
     render(<Connections />);
     expect(await screen.findByRole("button", { name: "Copy Scry address" })).toBeTruthy();
-    const advanced = screen.getByText("Advanced: manual access-token setup").closest("details")!;
-    expect(advanced.open).toBe(false);
+    expect(screen.queryByText(/manual access-token setup/)).toBeNull();
     fireEvent.click(screen.getByRole("radio", { name: "Cursor" }));
     const link = screen.getByRole("link", { name: /Add to Cursor/ });
     expect(link.getAttribute("href")).toMatch(/^cursor:\/\//);
     expect(link.getAttribute("href")).not.toContain("Bearer");
+  });
+  it("shows only active grants, including approved clients awaiting first use", async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      available: true,
+      connections: [
+        connection,
+        {
+          ...connection,
+          id: "revoked",
+          clientName: "Old disconnected assistant",
+          revokedAt: "2026-11-03T10:00:00Z",
+        },
+        { ...connection, id: "expired", clientName: "Old expired assistant", expired: true },
+      ],
+    });
+    render(<Connections />);
+    expect(
+      await screen.findByRole("button", { name: "Disconnect Fictional assistant" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Old disconnected assistant")).toBeNull();
+    expect(screen.queryByText("Old expired assistant")).toBeNull();
+    expect(screen.queryByText("No active connections")).toBeNull();
+  });
+  it("shows the empty state when only historical connections exist", async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      available: true,
+      connections: [
+        { ...connection, revokedAt: "2026-11-03T10:00:00Z" },
+        { ...connection, id: "expired", expired: true },
+      ],
+    });
+    render(<Connections />);
+    expect(await screen.findByText("No active connections")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Disconnect/ })).toBeNull();
+  });
+  it("removes a disconnected client even if the subsequent refresh fails", async () => {
+    vi.mocked(api).mockResolvedValueOnce({ available: true, connections: [connection] });
+    render(<Connections />);
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect Fictional assistant" }));
+    vi.mocked(remove).mockResolvedValueOnce({ disconnected: true });
+    vi.mocked(api).mockRejectedValueOnce(new Error("Refresh unavailable"));
+    fireEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: /^Disconnect$/ }),
+    );
+    expect(await screen.findByText("No active connections")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Disconnect Fictional assistant" })).toBeNull();
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("couldn’t check your connections"),
+    );
   });
   it("shows a verified state only from server facts and asks before disconnecting", async () => {
     vi.mocked(api).mockImplementation(async (path) =>
