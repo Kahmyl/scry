@@ -64,7 +64,9 @@ export class ConnectionsController {
     if (!/^[A-Za-z0-9_-]{10,128}$/u.test(uid))
       throw new BadRequestException("Start the connection again from your AI client.");
     reply.header("Cache-Control", "no-store").header("Referrer-Policy", "no-referrer");
-    return reply.redirect(`${config.webOrigin}/connect/authorize/${uid}`);
+    // Nest sets GET's default status to 200 before invoking this handler.
+    // Fastify preserves that explicit status unless redirect is given one.
+    return reply.redirect(`${config.webOrigin}/connect/authorize/${uid}`, 302);
   }
 
   private async interaction(

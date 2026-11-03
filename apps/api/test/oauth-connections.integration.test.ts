@@ -225,6 +225,13 @@ live("workspace-bound OAuth account linking", () => {
     const location = response.headers.get("location")!;
     expect(location).toContain("/api/integrations/authorize/");
     const uid = location.split("/").at(-1)!;
+    // Follow the same hand-off a real browser follows. A Location header on a
+    // 200 response leaves users on a blank page instead of opening consent.
+    const handoff = await browser.fetch(location);
+    expect(handoff.status).toBe(302);
+    expect(handoff.headers.get("location")).toBe(`${base}/connect/authorize/${uid}`);
+    expect(handoff.headers.get("cache-control")).toBe("no-store");
+    expect(handoff.headers.get("referrer-policy")).toBe("no-referrer");
     const details = await browser.fetch(`/api/integrations/authorize/${uid}/details`, {
       headers: { authorization: `Bearer ${dashboardToken}` },
     });
@@ -287,6 +294,14 @@ live("workspace-bound OAuth account linking", () => {
     });
     expect(refused.status).toBe(400);
     expect((await refused.json()).error).toBe("invalid_client_metadata");
+  });
+
+  it("refuses malformed browser hand-offs without redirecting", async () => {
+    const response = await fetch(`${base}/api/integrations/authorize/invalid`, {
+      redirect: "manual",
+    });
+    expect(response.status).toBe(400);
+    expect(response.headers.has("location")).toBe(false);
   });
 
   it("approves only the chosen workspace, renews access and disconnects existing access and refresh tokens", async () => {
