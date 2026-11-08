@@ -30,6 +30,8 @@ describe("browser baseline MCP profile", () => {
       "get_mission",
       "finalize_run",
       "publish_mission_report",
+      "list_reports",
+      "get_report",
       "command",
       "get_command",
       "connect_test_mailbox",

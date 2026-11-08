@@ -309,6 +309,24 @@ export async function exerciseNativeBrowser({
     (await api(`/reports/${report.reportId}`)).safeReport.presentation.checks[0].status,
     "matched_expectation",
   );
+  const reportUrl = `https://scry.invalid/dashboard/reports/${report.reportId}`;
+  assert.equal(report.reportUrl, reportUrl, "PUBLISHED_REPORT_NAVIGATION_MISSING");
+  assert.equal(report.evidenceUrl, `${reportUrl}#supporting-evidence`);
+  const savedReport = await call("get_report", { reportId: report.reportId });
+  assert.deepEqual(savedReport.report, await api(`/reports/${report.reportId}`));
+  assert.equal(savedReport.reportUrl, reportUrl);
+  assert.equal(savedReport.evidenceUrl, report.evidenceUrl);
+  assert.ok(!JSON.stringify(savedReport).includes(credential), "REPORT_READER_EXPOSED_CREDENTIAL");
+  assert.ok(!("evidenceDigest" in savedReport.report), "REPORT_READER_EXPOSED_OPERATOR_DATA");
+  const savedReports = await call("list_reports", { projectId: project.id });
+  assert.ok(
+    savedReports.reports.some(
+      (item) => item.id === report.reportId && item.reportUrl === reportUrl,
+    ),
+  );
+  const savedMission = await call("get_mission", { missionId: mission.missionId });
+  assert.equal(savedMission.reportUrl, reportUrl);
+  assert.equal(savedMission.evidenceUrl, report.evidenceUrl);
   assert.equal((await api(`/runs/${run.runId}`)).state, "ended");
   assert.ok(
     !(
@@ -431,6 +449,11 @@ export async function exerciseNativeBrowser({
     assert.equal(publicLimited.safeReport.presentation.checks[0].status, "inconclusive");
     assert.equal(publicLimited.evidenceCoverage.complete, 0);
     assert.ok(!JSON.stringify(publicLimited).includes("object_unavailable"));
+    const readLimited = await call("get_report", { reportId: limitedReport.reportId });
+    assert.deepEqual(readLimited.report, publicLimited);
+    assert.equal(readLimited.report.evidenceCoverage.complete, 0);
+    assert.equal(readLimited.report.safeReport.presentation.checks[0].status, "inconclusive");
+    console.log("DEPLOYED_SAVED_REPORT_REVIEW_PASS");
   } finally {
     renameSync(held, filename);
   }

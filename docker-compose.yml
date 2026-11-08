@@ -221,6 +221,7 @@ services:
       SCRY_SERVICE_TOKEN: "${SCRY_SERVICE_TOKEN:-local-only-scry-service-token-change-me}"
       SCRY_API_BASE_URL: http://api:4000/api
       SCRY_PUBLIC_API_BASE_URL: "${SCRY_PUBLIC_API_BASE_URL:-http://127.0.0.1:4000/api}"
+      SCRY_WEB_ORIGIN: "${SCRY_WEB_ORIGIN:-http://127.0.0.1:5173}"
       MCP_HOST: 0.0.0.0
       MCP_PORT: 4100
     command: ["pnpm", "--filter", "@scry/mcp", "start:http"]

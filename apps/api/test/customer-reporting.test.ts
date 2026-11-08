@@ -152,6 +152,24 @@ describe("customer application reporting boundary", () => {
     );
   });
   it.each(["owner", "admin", "member", "viewer"] as const)(
+    "serves only the customer report projection to workspace-scoped MCP %s readers",
+    async (role) => {
+      const dashboard = {
+        getReport: vi.fn(async () => report),
+        listReports: vi.fn(async () => [report]),
+      };
+      const controller = new BrowserDashboardController(dashboard as never, {} as never);
+      const principal = user(role, "mcp");
+      expect(await controller.getReport("report", principal)).toEqual(customerReport(report));
+      expect(dashboard.getReport).toHaveBeenCalledWith("customer-workspace", "report");
+      expect(await controller.listReports("project", principal)).toEqual([customerReport(report)]);
+      expect(dashboard.listReports).toHaveBeenCalledWith("customer-workspace", "project");
+      expect(JSON.stringify(await controller.getReport("report", principal))).not.toMatch(
+        /PRIVATE_|private-chain/,
+      );
+    },
+  );
+  it.each(["owner", "admin", "member", "viewer"] as const)(
     "denies customer %s access to operator endpoints with both credential kinds",
     (role) => {
       const dashboard = { getReport: vi.fn(), getRun: vi.fn() };

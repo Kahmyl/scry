@@ -329,6 +329,7 @@ describe("qualification outcomes", () => {
         "test/browser-execution.process-failure.integration.test.ts",
         "test/browser-lifecycle.repository.integration.test.ts",
         "test/browser-auth-scope.integration.test.ts",
+        "test/saved-report-scope.integration.test.ts",
         "test/browser-scope-integrity.integration.test.ts",
         "test/browser-command-order.integration.test.ts",
         "test/browser-command-deadline.integration.test.ts",
@@ -339,7 +340,7 @@ describe("qualification outcomes", () => {
         "test/browser-evidence-admission.integration.test.ts",
       ]),
     );
-    expect(database.tests).toEqual({ minimumPassed: 86, allowSkipped: false });
+    expect(database.tests).toEqual({ minimumPassed: 88, allowSkipped: false });
     expect(database.command).toContain("test/browser-session-capacity.integration.test.ts");
     expect(database.environment?.SCRY_BROWSER_MAX_LIVE_SESSIONS).toBe("1000");
     expect(profiles.owner).toContain("evidence-closure");

@@ -17,6 +17,11 @@ import {
 import { z } from "zod";
 
 import { BrowserApiClient } from "./api-client.js";
+import {
+  registerSavedReportTools,
+  reportNavigation,
+  reportNavigationSchema,
+} from "./saved-report-tools.js";
 import { reportingInstructions } from "./reporting-guidance.js";
 import { customerWorkflowInstructions } from "./customer-workflow.js";
 import { registerTestResourceTools, testResourceInstructions } from "./test-resource-tools.js";
@@ -40,13 +45,15 @@ const INSTRUCTIONS =
 
 export function createBrowserMcpServer(client = new BrowserApiClient()) {
   const native = resolveBrowserRuntime(process.env) === "playwright_mcp";
+  const navigation = reportNavigation();
   const server = new McpServer(
     { name: "scry-browser", version: "baseline" },
     {
       instructions: `${customerWorkflowInstructions}\n\n${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${testResourceInstructions}\n\n${reportingInstructions}`,
     },
   );
-  registerLifecycleTools(server, client, native);
+  registerLifecycleTools(server, client, native, navigation);
+  registerSavedReportTools(server, client, navigation);
   registerBrowserCommandTools(server, client, native);
   if (native) registerNativeBrowserTools(server, client, awaitCommand);
   registerTestResourceTools(server, client);
@@ -134,7 +141,12 @@ async function awaitCommand(
   return undefined;
 }
 
-function registerLifecycleTools(server: McpServer, client: BrowserApiClient, native = false): void {
+function registerLifecycleTools(
+  server: McpServer,
+  client: BrowserApiClient,
+  native: boolean,
+  navigation: ReturnType<typeof reportNavigation>,
+): void {
   server.registerTool(
     "list_projects",
     {
@@ -403,12 +415,21 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
       description:
         "Read the Mission, Objectives, all agent-created Flows, Runs, browser session ownership, and durable outcomes before choosing the next action. Before asking the customer, review their earlier answers and available tools; reuse applicable inputs and continue independent checks. Own routine Scry setup. Ask only for genuinely missing decisions or required human actions, in plain English with the exact action, why it is needed and what can continue. Never infer new approval or ask the customer to debug Scry.",
       inputSchema: { missionId: uuid },
-      outputSchema: { message, mission: z.record(z.string(), z.unknown()) },
+      outputSchema: {
+        message,
+        mission: z.record(z.string(), z.unknown()),
+        ...reportNavigationSchema,
+      },
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
-    async ({ missionId }) =>
-      toolResult({ mission: await client.get(`/missions/${missionId}`) }, "Mission facts loaded."),
+    async ({ missionId }) => {
+      const mission = await client.get<Record<string, unknown>>(`/missions/${missionId}`);
+      return toolResult(
+        { mission, ...navigation(mission.finalReportId) },
+        "Mission facts loaded. Read the saved report with get_report before reviewing its results.",
+      );
+    },
   );
 
   server.registerTool(
@@ -433,14 +454,19 @@ function registerLifecycleTools(server: McpServer, client: BrowserApiClient, nat
       title: "Publish Mission report",
       description: `Publish the tested application's report after terminal work. ${reportingInstructions}`,
       inputSchema: { missionId: uuid, ...publishBrowserMissionReportSchema.shape },
-      outputSchema: { message, reportId: uuid, replay: z.boolean() },
+      outputSchema: { message, reportId: uuid, replay: z.boolean(), ...reportNavigationSchema },
       _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
     },
-    async ({ missionId, ...input }) =>
-      toolResult(
-        await client.post(`/missions/${missionId}/report`, input),
-        "Mission report published.",
-      ),
+    async ({ missionId, ...input }) => {
+      const published = await client.post<{ reportId: string; replay: boolean }>(
+        `/missions/${missionId}/report`,
+        input,
+      );
+      return toolResult(
+        { ...published, ...navigation(published.reportId) },
+        "Mission report published. Dashboard links require sign-in; evidence availability is not a claim of visual review.",
+      );
+    },
   );
 }

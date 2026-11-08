@@ -201,6 +201,7 @@ export const checks: readonly CheckDefinition[] = [
       "test/browser-lifecycle.repository.integration.test.ts",
       "test/browser-session-capacity.integration.test.ts",
       "test/browser-auth-scope.integration.test.ts",
+      "test/saved-report-scope.integration.test.ts",
       "test/browser-scope-integrity.integration.test.ts",
       "test/browser-command-order.integration.test.ts",
       "test/browser-command-deadline.integration.test.ts",
@@ -210,7 +211,7 @@ export const checks: readonly CheckDefinition[] = [
       "test/browser-error-admission.integration.test.ts",
       "test/browser-evidence-admission.integration.test.ts",
     ],
-    { database: true, minimum: 86 },
+    { database: true, minimum: 88 },
   ),
   tests(
     "command-queue",
