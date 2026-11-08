@@ -116,7 +116,7 @@ export function registerTestResourceTools(server: McpServer, client: BrowserApiC
         "Close this disposable test mailbox or disable its Hookdeck receiving source. Preserves recorded observations. A closing/waiting response means cleanup is pending; retry the same resource ID, never create a replacement for cleanup.",
       inputSchema: { resourceId: uuid },
       _meta: toolAuthMetadata(),
-      annotations: idempotentDurableWrite,
+      annotations: { ...idempotentDurableWrite, destructiveHint: true },
     },
     async ({ resourceId }) =>
       toolResult(
