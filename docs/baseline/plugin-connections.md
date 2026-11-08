@@ -99,6 +99,21 @@ own schema-compatibility rehearsal before rollback.
 
 ## Distribution and customer verification
 
+Saved-result review uses the read-only `list_reports` and `get_report` MCP tools.
+They call the same workspace-scoped customer report API as the dashboard, retaining
+recorded application checks, limitations, evidence references and coverage while
+excluding operator originals. Review does not start or rerun a Mission. Evidence
+metadata does not establish that an image or recording was visually inspected.
+
+MCP returns `reportUrl` and `evidenceUrl` navigation links after publication and
+when observing a Mission with a final report. The evidence link opens the report's
+authenticated Supporting evidence section; it is not a public media or signed
+download URL. Links use `SCRY_WEB_ORIGIN`, or the validated OAuth resource origin
+when no explicit web origin is set. An explicit web origin must be HTTPS (loopback
+HTTP is allowed locally) and agree with the OAuth origin. Compose sets the public
+domain in deployment and port 5173 locally. Without either setting, report data
+remains readable but links are omitted; internal API hostnames are never used.
+
 Web builds generate credential-free Codex, Claude and Cursor archives from an
 explicit source allowlist. The Connections screen links the optional downloads.
 The archives target `https://scry.giize.com/mcp`; the UI warns when the current
