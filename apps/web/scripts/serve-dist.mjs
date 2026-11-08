@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
 const host = process.env.WEB_HOST ?? "0.0.0.0";
 const port = Number(process.env.WEB_PORT ?? 3000);
+const domainChallengeFile = path.join(root, ".well-known", "openai-apps-challenge");
 const contentTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -27,7 +28,9 @@ async function sendFile(filePath, response, cacheControl = "no-cache") {
     response.statusCode = 200;
     response.setHeader(
       "content-type",
-      contentTypes.get(path.extname(filePath)) ?? "application/octet-stream",
+      filePath === domainChallengeFile
+        ? "text/plain; charset=utf-8"
+        : (contentTypes.get(path.extname(filePath)) ?? "application/octet-stream"),
     );
     response.setHeader("cache-control", cacheControl);
     createReadStream(filePath).pipe(response);
