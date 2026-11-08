@@ -179,7 +179,7 @@ export function PasswordRecovery({
       </div>
       {done ? (
         <button className="auth-submit" onClick={onComplete}>
-          Continue to workspace
+          Continue to Scry
         </button>
       ) : (
         <form onSubmit={(event) => void updatePassword(event)}>

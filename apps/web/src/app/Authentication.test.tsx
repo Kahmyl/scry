@@ -29,11 +29,16 @@ vi.mock("./Dashboard.js", () => ({
     </section>
   ),
 }));
+vi.mock("../features/settings/OAuthConsent.js", () => ({
+  OAuthConsent: () => <section aria-label="Connection consent">Connection consent</section>,
+}));
 import { Landing } from "../features/landing/Landing.js";
 import { ProductApp } from "./ProductApp.js";
+import { rememberConnectionReturn } from "../features/settings/connection-return.js";
 
 beforeEach(() => {
   vi.resetAllMocks();
+  sessionStorage.clear();
   auth.initialize.mockResolvedValue({ error: null });
   auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
   auth.onAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
@@ -376,7 +381,7 @@ describe("password recovery", () => {
     await screen.findByRole("heading", { name: "Password updated" });
     expect(auth.updateUser).toHaveBeenCalledWith({ password: "fictional-new-password" });
     expect(screen.queryByLabelText("New password")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Continue to workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Scry" }));
     await screen.findByLabelText("Signed-in workspace");
   });
 
@@ -417,6 +422,18 @@ describe("password recovery", () => {
     expect(auth.updateUser).toHaveBeenCalledTimes(1);
     await act(async () => finish({ data: { user: session.user }, error: null }));
     await screen.findByRole("heading", { name: "Password updated" });
+  });
+
+  it("returns a completed reset to a previously requested connection consent", async () => {
+    rememberConnectionReturn("/connect/authorize/fictional-request-id");
+    auth.updateUser.mockResolvedValue({ data: { user: session.user }, error: null });
+    await openReset();
+    fillPasswords();
+    fireEvent.click(screen.getByRole("button", { name: "Update password" }));
+    await screen.findByRole("heading", { name: "Password updated" });
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Scry" }));
+    await screen.findByLabelText("Connection consent");
+    expect(auth.signOut).not.toHaveBeenCalled();
   });
 
   it("clears entered passwords when the signed-in identity changes", async () => {

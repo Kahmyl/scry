@@ -108,7 +108,7 @@ function AccountApp() {
         authError={recoveryFailed ? "Recovery could not be completed." : authError}
         onComplete={() => {
           setRecoveringPassword(false);
-          navigate("/dashboard", { replace: true });
+          navigate(takeConnectionReturn(), { replace: true });
         }}
       />
     );
