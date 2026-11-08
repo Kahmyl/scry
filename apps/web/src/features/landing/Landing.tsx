@@ -216,6 +216,7 @@ function AuthDialog({
                   onChange={(event) => setPassword(event.target.value)}
                 />
               </label>
+              {mode === "signin" && <a href="/forgot-password">Forgot password?</a>}
               {error && (
                 <div className="auth-message error" role="alert">
                   {error}

@@ -1,12 +1,17 @@
 import type { Session } from "@supabase/supabase-js";
 import { useEffect, useState } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 
 import { Landing } from "../features/landing/index.js";
 import { LegalPage } from "../features/legal/LegalPage.js";
 import { SupportPage } from "../features/legal/SupportPage.js";
 import { privacyPolicy, termsOfService } from "../features/legal/policies.js";
-import { isSupabaseConfigured, supabase } from "../infrastructure/auth/index.js";
+import {
+  initialPasswordRecovery,
+  isSupabaseConfigured,
+  supabase,
+} from "../infrastructure/auth/index.js";
+import { PasswordRecovery, PasswordResetRequest } from "../features/landing/PasswordRecovery.js";
 import { Dashboard } from "./Dashboard.js";
 import { OAuthConsent } from "../features/settings/OAuthConsent.js";
 import {
@@ -26,13 +31,23 @@ export function ProductApp() {
 }
 
 function AccountApp() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
   const [checkingSession, setCheckingSession] = useState(isSupabaseConfigured);
   const [authError, setAuthError] = useState("");
+  const [recoveringPassword, setRecoveringPassword] = useState(initialPasswordRecovery);
+  const [recoveryFailed, setRecoveryFailed] = useState(false);
+
+  useEffect(() => {
+    if (location.pathname === "/reset-password") setRecoveringPassword(false);
+  }, [location.pathname, recoveringPassword]);
 
   useEffect(() => {
     if (!supabase) return;
     const auth = supabase.auth;
+    let active = true;
+    let initialized = false;
 
     void auth
       .initialize()
@@ -41,21 +56,35 @@ function AccountApp() {
         return { ...result, error: initializationError ?? result.error };
       })
       .then(({ data, error }) => {
+        if (!active) return;
+        initialized = true;
         setSession(data.session);
+        setRecoveryFailed(Boolean(error));
         if (error) setAuthError("Sign-in could not be completed. Please try again.");
         setCheckingSession(false);
       })
       .catch(() => {
+        if (!active) return;
+        initialized = true;
+        setRecoveryFailed(true);
         setAuthError("We couldn’t connect to sign-in. Please try again.");
         setCheckingSession(false);
       });
-    const { data } = auth.onAuthStateChange((_event, nextSession) => {
+    const { data } = auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return;
       setSession(nextSession);
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveringPassword(true);
+        setRecoveryFailed(false);
+      }
       if (nextSession) setAuthError("");
-      setCheckingSession(false);
+      if (initialized) setCheckingSession(false);
     });
 
-    return () => data.subscription.unsubscribe();
+    return () => {
+      active = false;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   if (checkingSession) {
@@ -64,6 +93,24 @@ function AccountApp() {
         <span className="auth-orbit" />
         <small>RESTORING SECURE SESSION</small>
       </div>
+    );
+  }
+
+  if (recoveringPassword && location.pathname !== "/reset-password") {
+    return <Navigate to="/reset-password" replace />;
+  }
+  if (location.pathname === "/forgot-password") return <PasswordResetRequest />;
+  if (location.pathname === "/reset-password") {
+    return (
+      <PasswordRecovery
+        key={session?.user.id ?? "signed-out"}
+        session={session}
+        authError={recoveryFailed ? "Recovery could not be completed." : authError}
+        onComplete={() => {
+          setRecoveringPassword(false);
+          navigate(takeConnectionReturn(), { replace: true });
+        }}
+      />
     );
   }
 
