@@ -6417,6 +6417,7 @@ select:focus-visible {
   letter-spacing: 1.4px;
   color: var(--lime);
 }
+.auth-heading h1,
 .auth-heading h2 {
   font-size: 25px;
   letter-spacing: -0.8px;

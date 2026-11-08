@@ -89,6 +89,26 @@ Only configured Google sign-in and email sign-in are advertised. GitHub sign-in 
 not advertised while its provider is disabled. Failed or cancelled OAuth completion
 returns to a retryable sign-in screen without exposing provider error details.
 
+### Password recovery
+
+The sign-in form links to `/forgot-password`. Supabase sends the recovery email;
+Scry returns the same success notice whether the address has an account or not.
+Add the exact `<application-origin>/reset-password` URL to the Supabase Auth
+redirect allowlist for every deployed origin. Preserve existing sign-in and OAuth
+return URLs. No wildcard, service-role key, database mutation or schema migration
+is needed for this flow.
+
+The SDK validates recovery callbacks and removes their token fragment. Scry handles
+`PASSWORD_RECOVERY` before routing to the workspace, including older admin-issued
+links that return to the origin root. `/reset-password` requires a restored session
+and successful callback initialization before presenting the password form. Failed
+or expired callbacks offer a fresh email; an older valid session does not turn a
+failed callback into a successful reset. Reloading the password page can restore
+the existing session. Supabase remains the authority for password updates and
+policy enforcement. Scry confirms success only after the provider returns the
+matching user, clears the form on success or identity change, and never persists
+passwords in application storage or logs.
+
 During pre-revenue operation, an optional external activity checker performs a
 read-only Supabase database query immediately on startup and every six hours.
 `supabase/migrations/20261101093651_scry_auth_healthcheck.sql` belongs to the
