@@ -72,6 +72,15 @@ describe("self-contained external-agent reporting guidance", () => {
           (t) => t.name === "publish_mission_report",
         )!;
         const mission = (await client.listTools()).tools.find((t) => t.name === "get_mission")!;
+        const finalization = (await client.listTools()).tools.find(
+          (t) => t.name === "finalize_run",
+        )!;
+        expect(finalization.annotations).toMatchObject({
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: true,
+          openWorldHint: false,
+        });
         expect(mission.description).toContain("review their earlier answers and available tools");
         expect(mission.description).toContain("Never infer new approval");
         const safe = report.inputSchema.properties?.safeReport as Record<string, unknown>;
