@@ -442,7 +442,7 @@ function registerLifecycleTools(
       inputSchema: { runId: uuid, ...finalizeBrowserRunSchema.shape },
       outputSchema: { message, replay: z.boolean() },
       _meta: toolAuthMetadata(),
-      annotations: idempotentDurableWrite,
+      annotations: { ...idempotentDurableWrite, destructiveHint: true },
     },
     async ({ runId, ...input }) =>
       toolResult(await client.post(`/runs/${runId}/finalize`, input), "Run finalized."),
