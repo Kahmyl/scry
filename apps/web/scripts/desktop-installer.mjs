@@ -333,13 +333,18 @@ export async function pluginInventory() {
         ...(cursor ? { cursor } : {}),
       });
       if (!Array.isArray(page.data)) fail("INVALID_CODEX_INVENTORY");
-      // Retain only the metadata needed for identity; never log tools or URLs.
+      // A stored OAuth entry is not a working connection. Retain readiness
+      // booleans, never the tool catalog or raw errors/URLs from discovery.
       servers.push(
-        ...page.data.map(({ name, pluginId, httpOrigin, authStatus }) => ({
+        ...page.data.map(({ name, pluginId, httpOrigin, authStatus, tools, toolsError }) => ({
           name,
           pluginId,
           httpOrigin,
           authStatus,
+          discoveryFailed: Boolean(toolsError),
+          projectListingAvailable: Object.values(tools ?? {}).some(
+            (tool) => tool?.name === "list_projects",
+          ),
         })),
       );
       cursor = page.nextCursor;
@@ -384,24 +389,47 @@ export async function authorize({ inventory = pluginInventory, signIn = login } 
   const fallback = {
     status: "needs_attention",
     url: "codex://plugins/install/scry?marketplace=scry-beta",
+    linkLabel: "Open Scry setup",
     message:
       "Open Scry setup using this link, click Connect, then sign in and choose your workspace. If this Codex version cannot show the connection, update Codex and run setup again.",
   };
-  try {
-    const servers = (await inventory()).filter(
+  const unavailable = {
+    status: "needs_attention",
+    url: "https://scry.giize.com/support",
+    linkLabel: "Contact Scry support",
+    message:
+      "Scry is installed, but its connection could not load. Setup is not complete. Try again shortly; if this continues, contact Scry support using this link.",
+  };
+  const select = (entries) => {
+    const servers = entries.filter(
       (server) =>
         server.pluginId === "scry@scry-beta" && server.httpOrigin === "https://scry.giize.com",
     );
-    if (servers.length !== 1 || !/^[A-Za-z0-9_.:@/-]+$/.test(servers[0].name)) return fallback;
-    if (servers[0].authStatus === "oAuth")
-      return {
-        status: "authorized",
-        message: "Scry is already signed in. Check workspace access before calling setup complete.",
-      };
-    if (!(await signIn(servers[0].name))) return fallback;
+    return servers.length === 1 && /^[A-Za-z0-9_.:@/-]+$/.test(servers[0].name)
+      ? servers[0]
+      : undefined;
+  };
+  const ready = (server) =>
+    server?.authStatus === "oAuth" &&
+    !server.discoveryFailed &&
+    server.projectListingAvailable === true;
+  try {
+    const server = select(await inventory());
+    if (!server) return fallback;
+    if (server.authStatus === "oAuth")
+      return ready(server)
+        ? {
+            status: "authorized",
+            message:
+              "Scry is signed in and its tools loaded. Check workspace access before calling setup complete.",
+          }
+        : unavailable;
+    if (!(await signIn(server.name))) return fallback;
+    if (!ready(select(await inventory()))) return unavailable;
     return {
       status: "authorized",
-      message: "Scry sign-in completed. Check workspace access before calling setup complete.",
+      message:
+        "Scry sign-in completed and its tools loaded. Check workspace access before calling setup complete.",
     };
   } catch {
     return fallback;

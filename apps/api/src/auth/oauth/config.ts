@@ -1,4 +1,7 @@
 export const testingScope = "scry:testing";
+export const oauthClientAuthMethods = ["none", "client_secret_basic", "client_secret_post"];
+export const oauthGrantTypes = ["authorization_code", "refresh_token"];
+export const oauthResponseTypes = ["code"] as const;
 
 export interface OAuthConfiguration {
   issuer: string;

@@ -99,11 +99,12 @@ ${createSetupCommand(installerChecksum)}
 
 Setup opens the browser for Scry sign-in automatically. Let the customer sign in
 and choose their workspace. Never approve consent for them. If setup returns a
-fallback link, show it as a clickable “Open Scry setup” link with the returned
-instructions. Do not log into an existing bare-name MCP server. After sign-in,
+fallback link, show it as a clickable link using its linkLabel with the returned
+instructions. Do not log into an existing bare-name MCP server. Only after authorization.status=authorized,
 verify access with read-only list_projects through the plugin’s scry_beta connection,
-never an older scry connection. If that tool is unavailable, say sign-in completed
-but workspace access is not yet checked. Describe results in plain language.
+never an older scry connection. If that tool is unavailable after successful
+authorization, say workspace access is not yet checked. Do not claim a working
+sign-in when setup reports needs_attention. Describe results in plain language.
 Do not start tests or claim access from installation alone.
 
 Manual archive: https://scry.giize.com/plugins/${versionedArchive}

@@ -296,6 +296,69 @@ live("workspace-bound OAuth account linking", () => {
     expect((await refused.json()).error).toBe("invalid_client_metadata");
   });
 
+  it("refreshes a testing-only grant with the scopes advertised to MCP clients, without expanding access", async () => {
+    const discovery = await fetch(`${base}/.well-known/oauth-authorization-server/oauth`);
+    const metadata = await discovery.json();
+    expect(discovery.headers.get("cache-control")).toBe("no-store");
+    const oidc = await (await fetch(`${base}/oauth/.well-known/openid-configuration`)).json();
+    expect(oidc.scopes_supported).toEqual(
+      expect.arrayContaining(["openid", "offline_access", "scry:testing"]),
+    );
+    for (const field of [
+      "issuer",
+      "authorization_endpoint",
+      "token_endpoint",
+      "registration_endpoint",
+      "revocation_endpoint",
+      "jwks_uri",
+    ])
+      expect(metadata[field]).toBe(oidc[field]);
+    const flow = await begin("scry:testing");
+    const { code } = await approve(flow);
+    const response = await exchange(flow, code);
+    const issued = await response.json();
+    const refreshed = await token({
+      grant_type: "refresh_token",
+      client_id: flow.client.client_id,
+      refresh_token: issued.refresh_token,
+      scope: metadata.scopes_supported.join(" "),
+    });
+    const renewed = await refreshed.json();
+    expect(refreshed.status, renewed.error_description).toBe(200);
+    expect(metadata.scopes_supported).toEqual(["scry:testing"]);
+    expect(renewed.scope).toBe("scry:testing");
+    const projects = await fetch(`${base}/api/projects`, {
+      headers: { authorization: `Bearer ${renewed.access_token}` },
+    });
+    expect(projects.status).toBe(200);
+    expect((await projects.json()).map((project: { name: string }) => project.name)).toEqual([
+      "Studio test app",
+    ]);
+    for (const scope of [
+      "scry:testing openid",
+      "scry:testing offline_access",
+      "scry:testing unrelated:admin",
+    ]) {
+      const denied = await token({
+        grant_type: "refresh_token",
+        client_id: flow.client.client_id,
+        refresh_token: renewed.refresh_token,
+        resource: `${base}/mcp`,
+        scope,
+      });
+      expect(denied.status).toBe(400);
+      expect((await denied.json()).error).toBe("invalid_scope");
+    }
+    const stillValid = await token({
+      grant_type: "refresh_token",
+      client_id: flow.client.client_id,
+      refresh_token: renewed.refresh_token,
+      scope: "scry:testing",
+    });
+    expect(stillValid.status).toBe(200);
+    expect((await stillValid.json()).scope).toBe("scry:testing");
+  });
+
   it("refuses malformed browser hand-offs without redirecting", async () => {
     const response = await fetch(`${base}/api/integrations/authorize/invalid`, {
       redirect: "manual",
@@ -335,6 +398,7 @@ live("workspace-bound OAuth account linking", () => {
       grant_type: "refresh_token",
       client_id: flow.client.client_id,
       refresh_token: issued.refresh_token,
+      scope: "scry:testing",
       resource: `${base}/mcp`,
     });
     const renewed = (await refreshed.json()) as typeof issued;
