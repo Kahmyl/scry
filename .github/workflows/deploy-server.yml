@@ -15,6 +15,18 @@ on:
         description: Exact qualified and published 40-character commit SHA
         required: true
         type: string
+      finalize_stopped_mission:
+        description: Optional exact Mission containing an owner-authorized stopped Run
+        required: false
+        type: string
+      finalize_stopped_run:
+        description: Optional exact stopped Run to finalize as blocked before deployment
+        required: false
+        type: string
+      finalize_confirmation:
+        description: For that Run only, enter FINALIZE_STOPPED_RUN_AS_INCOMPLETE after owner approval
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -103,6 +115,33 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" >"$HOME/.ssh/scry_deploy"
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >"$HOME/.ssh/known_hosts"
           chmod 0600 "$HOME/.ssh/scry_deploy" "$HOME/.ssh/known_hosts"
+
+      - name: Finalize one explicitly authorized stopped Run through the current API
+        if: inputs.finalize_stopped_run != '' || inputs.finalize_stopped_mission != '' || inputs.finalize_confirmation != ''
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ vars.SCRY_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.SCRY_DEPLOY_USER }}
+          STOPPED_MISSION: ${{ inputs.finalize_stopped_mission }}
+          STOPPED_RUN: ${{ inputs.finalize_stopped_run }}
+          FINALIZE_CONFIRMATION: ${{ inputs.finalize_confirmation }}
+        run: |
+          set -euo pipefail
+          uuid='^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+          [[ "$STOPPED_MISSION" =~ $uuid && "$STOPPED_RUN" =~ $uuid ]] || {
+            echo "An exact Mission and stopped Run are required"
+            exit 1
+          }
+          [[ "$FINALIZE_CONFIRMATION" == FINALIZE_STOPPED_RUN_AS_INCOMPLETE ]] || {
+            echo "Explicit owner-authorized finalization confirmation is required"
+            exit 1
+          }
+          # Uses the running API's internal credential locally. No credential
+          # is read back or passed to the runner. No database writes or app
+          # interactions bypass the normal lifecycle and evidence invariants.
+          ssh -i "$HOME/.ssh/scry_deploy" -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker exec -i scry-api-1 node --input-type=module - '$STOPPED_MISSION' '$STOPPED_RUN' '$FINALIZE_CONFIRMATION'" \
+            < scripts/operations/finalize-stopped-run.mjs
 
       - name: Transfer the qualified release controller and topology
         shell: bash

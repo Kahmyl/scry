@@ -22,6 +22,7 @@ import { ConnectionsController } from "../src/auth/oauth/connections.controller.
 import { ConnectionsRepository } from "../src/auth/oauth/connections.repository.js";
 import { OAuthService } from "../src/auth/oauth/oauth.service.js";
 import { mountOAuth } from "../src/auth/oauth/mount.js";
+import { providerAdapter } from "../src/auth/oauth/provider-adapter.js";
 import { BrowserProjectController } from "../src/browser-execution/controllers/browser-project.controller.js";
 import { BrowserProjectRepository } from "../src/browser-execution/repositories/browser-project.repository.js";
 
@@ -615,12 +616,17 @@ live("workspace-bound OAuth account linking", () => {
     ).toBe(0);
   }, 20000);
   it("survives an API/provider restart using durable keys, registrations and refresh tokens", async () => {
-    const flow = await begin();
+    const flow = await begin("scry:testing");
     const { code } = await approve(flow);
     const issued = (await (await exchange(flow, code)).json()) as {
       access_token: string;
       refresh_token: string;
     };
+    const refresh = await app.get(OAuthService).provider!.RefreshToken.find(issued.refresh_token);
+    await database.query(
+      "UPDATE oauth_provider_records SET expires_at=now()-interval '1 second' WHERE model='Session' AND uid_hash=$1",
+      [createHash("sha256").update(refresh!.sessionUid!).digest("hex")],
+    );
     await app.close();
     app = await NestFactory.create<NestFastifyApplication>(
       OAuthFixtureModule,
@@ -647,6 +653,135 @@ live("workspace-bound OAuth account linking", () => {
         })
       ).status,
     ).toBe(200);
+  }, 20000);
+  it("keeps a testing-only connection usable after its consent browser session expires", async () => {
+    const flow = await begin("scry:testing");
+    const { code } = await approve(flow);
+    const issued = (await (await exchange(flow, code)).json()) as {
+      access_token: string;
+      refresh_token: string;
+    };
+    const provider = app.get(OAuthService).provider!;
+    const refresh = await provider.RefreshToken.find(issued.refresh_token);
+    expect(refresh?.sessionUid).toBeTruthy();
+    // Expire only this synthetic consent browser session, not the approved
+    // connection grant or either token's own lifetime.
+    await database.query(
+      "UPDATE oauth_provider_records SET expires_at=now()-interval '1 second' WHERE model='Session' AND uid_hash=$1",
+      [createHash("sha256").update(refresh!.sessionUid!).digest("hex")],
+    );
+    expect(
+      (
+        await fetch(`${base}/api/projects`, {
+          headers: { authorization: `Bearer ${issued.access_token}` },
+        })
+      ).status,
+    ).toBe(200);
+    let current = issued;
+    for (let renewal = 0; renewal < 3; renewal++) {
+      // Exercise repeated access-token expiry without a wall-clock wait or a
+      // new consent interaction. The actual HTTP token/resource paths run.
+      await database.query(
+        "UPDATE oauth_provider_records SET expires_at=now()-interval '1 second' WHERE model='AccessToken' AND id_hash=$1",
+        [createHash("sha256").update(current.access_token).digest("hex")],
+      );
+      expect(
+        (
+          await fetch(`${base}/api/projects`, {
+            headers: { authorization: `Bearer ${current.access_token}` },
+          })
+        ).status,
+      ).toBe(401);
+      const renewed = await token({
+        grant_type: "refresh_token",
+        client_id: flow.client.client_id,
+        refresh_token: current.refresh_token,
+        scope: "scry:testing",
+        resource: `${base}/mcp`,
+      });
+      const result = await renewed.json();
+      expect(renewed.status, result.error_description).toBe(200);
+      expect(result.scope).toBe("scry:testing");
+      expect(
+        (
+          await fetch(`${base}/api/projects`, {
+            headers: { authorization: `Bearer ${result.access_token}` },
+          })
+        ).status,
+      ).toBe(200);
+      current = result;
+    }
+    expect(
+      (
+        await database.query(
+          "SELECT id FROM oauth_connections WHERE client_id=$1 AND revoked_at IS NULL",
+          [flow.client.client_id],
+        )
+      ).rowCount,
+    ).toBe(1);
+  }, 20000);
+  it("recovers old session-bound testing tokens without reviving expired or revoked credentials", async () => {
+    const flow = await begin("scry:testing");
+    const { code } = await approve(flow);
+    const issued = (await (await exchange(flow, code)).json()) as {
+      access_token: string;
+      refresh_token: string;
+    };
+    const Adapter = providerAdapter(database);
+    const refreshes = new Adapter("RefreshToken");
+    const accesses = new Adapter("AccessToken");
+    const refresh = (await refreshes.find(issued.refresh_token))!;
+    const access = (await accesses.find(issued.access_token))!;
+    // Emulate persisted tokens issued by the preceding release. All fixture
+    // credentials remain encrypted; this does not modify a real connection.
+    await refreshes.upsert(
+      issued.refresh_token,
+      { ...refresh, expiresWithSession: true },
+      30 * 86400,
+    );
+    await accesses.upsert(issued.access_token, { ...access, expiresWithSession: true }, 300);
+    await database.query(
+      "UPDATE oauth_provider_records SET expires_at=now()-interval '1 second' WHERE model='Session' AND uid_hash=$1",
+      [createHash("sha256").update(String(refresh.sessionUid)).digest("hex")],
+    );
+    expect(
+      (
+        await fetch(`${base}/api/projects`, {
+          headers: { authorization: `Bearer ${issued.access_token}` },
+        })
+      ).status,
+    ).toBe(200);
+    const renewed = await token({
+      grant_type: "refresh_token",
+      client_id: flow.client.client_id,
+      refresh_token: issued.refresh_token,
+      scope: "scry:testing",
+      resource: `${base}/mcp`,
+    });
+    const result = await renewed.json();
+    expect(renewed.status, result.error_description).toBe(200);
+    await database.query(
+      "UPDATE oauth_provider_records SET expires_at=now()-interval '1 second' WHERE model='AccessToken' AND id_hash=$1",
+      [createHash("sha256").update(result.access_token).digest("hex")],
+    );
+    expect(
+      (
+        await fetch(`${base}/api/projects`, {
+          headers: { authorization: `Bearer ${result.access_token}` },
+        })
+      ).status,
+    ).toBe(401);
+    await app.get(OAuthService).discardGrant(String(refresh.grantId));
+    expect(
+      (
+        await token({
+          grant_type: "refresh_token",
+          client_id: flow.client.client_id,
+          refresh_token: result.refresh_token,
+          resource: `${base}/mcp`,
+        })
+      ).status,
+    ).toBe(400);
   }, 20000);
   it("revokes a rotated refresh-token family on reuse and gives a new connection independent access", async () => {
     const flow = await begin();
