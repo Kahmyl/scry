@@ -18,6 +18,8 @@ import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { api, remove } from "../../infrastructure/api/client.js";
 import { publicConfig } from "../../infrastructure/config/runtime-config.js";
 import { PageTitle } from "../../shared/components/dashboard-primitives.js";
+import { createSetupCommand } from "../../../scripts/desktop-bootstrap.mjs";
+import type { createSetupCommand as SetupCommandFactory } from "../../../scripts/desktop-bootstrap.d.mts";
 import "./connections.css";
 
 type Connection = {
@@ -33,8 +35,11 @@ type Connections = { available: boolean; connections: Connection[] };
 type Client = "codex" | "claude" | "cursor" | "other";
 
 const hostedEndpoint = "https://scry.giize.com/mcp";
-const desktopSetupPrompt =
-  "Install the Scry plugin for me using the instructions at https://scry.giize.com/plugins/scry-desktop-setup.txt. Inspect the package before installing, preserve my other plugins and connections, and let me complete Scry sign-in and workspace consent. Verify the connection by listing my projects without starting a test. If this host cannot install it, explain what is missing without claiming success.";
+declare const __SCRY_DESKTOP_INSTALLER_SHA__: string;
+const setupCommand: ReturnType<typeof SetupCommandFactory> = createSetupCommand(
+  __SCRY_DESKTOP_INSTALLER_SHA__,
+);
+const desktopSetupPrompt = `Install Scry using the tested installer below. Run this one command; it checks the installer checksum, validates the package and uses supported Codex plugin commands while preserving existing connections. Do not write replacement installation scripts or repeat manual package checks. Stop if it reports a conflict or unsupported host. After installation, use the host's plugin Connect action if needed and let me handle sign-in and workspace consent. Do not log into an existing bare-name MCP server or claim account access until Scry's read-only list_projects tool succeeds. Do not start tests.\n\n${setupCommand}`;
 
 export function Connections() {
   const [client, setClient] = useState<Client>("codex");
@@ -207,7 +212,8 @@ export function Connections() {
                             <h4 id="desktop-setup-heading">Desktop / Codex</h4>
                             <p>
                               Open a setup chat in the desktop app, then send the prepared message.
-                              Your assistant installs the package and helps you connect.
+                              The tested installer handles the package checks and installation in
+                              one command. Then connect your Scry account if prompted.
                             </p>
                             <a
                               className="connection-primary"
@@ -216,7 +222,7 @@ export function Connections() {
                               Open desktop setup <ExternalLink size={15} />
                             </a>
                             <p className="connection-install-note">
-                              Requires the desktop app and local plugin support. This installs on
+                              Requires the desktop app, Node.js 18+ and Codex CLI. This installs on
                               your computer; it does not also install in ChatGPT web or mobile.
                             </p>
                           </section>

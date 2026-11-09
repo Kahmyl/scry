@@ -4,6 +4,8 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { unzipSync } from "fflate";
 import { createHash } from "node:crypto";
+import { createSetupCommand } from "./desktop-bootstrap.mjs";
+import { validatePackage } from "./desktop-installer.mjs";
 
 test("all downloadable packages contain the same skills and public MCP endpoint, never credentials", async () => {
   execFileSync(process.execPath, [new URL("./build-plugins.mjs", import.meta.url).pathname]);
@@ -62,10 +64,21 @@ test("all downloadable packages contain the same skills and public MCP endpoint,
   );
   assert.ok(setup.includes(createHash("sha256").update(first).digest("hex")));
   assert.ok(setup.includes(`https://scry.giize.com/plugins/scry-codex-${manifest.version}.zip`));
-  assert.ok(setup.includes("codex plugin marketplace add <root> --json"));
-  assert.ok(setup.includes("codex plugin add scry@scry-beta --json"));
-  assert.ok(setup.includes("Do not edit config.toml or grant"));
-  assert.ok(setup.includes("without that response"));
+  const installer = await readFile(
+    new URL("scry-desktop-install.mjs", new URL("../public/plugins/", import.meta.url)),
+  );
+  assert.ok(installer.equals(await readFile(new URL("./desktop-installer.mjs", import.meta.url))));
+  assert.ok(
+    setup.includes(createSetupCommand(createHash("sha256").update(installer).digest("hex"))),
+  );
+  assert.ok(setup.includes("Do not generate another installer"));
+  assert.ok(setup.includes("Do not log into an existing bare-name"));
+  const payload = JSON.parse(
+    await readFile(new URL("../public/plugins/scry-desktop-package.json", import.meta.url), "utf8"),
+  );
+  const packageFiles = validatePackage(payload);
+  for (const [name, bytes] of Object.entries(unzipSync(first)))
+    assert.ok(Buffer.from(bytes).equals(packageFiles.get(name)));
   const marketplace = JSON.parse(
     await readFile(
       new URL("../public/plugins/scry-desktop-marketplace.json", import.meta.url),

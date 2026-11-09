@@ -14,4 +14,6 @@ playwright-report/
 /apps/web/public/plugins/*.zip
 /apps/web/public/plugins/scry-desktop-setup.txt
 /apps/web/public/plugins/scry-desktop-marketplace.json
+/apps/web/public/plugins/scry-desktop-install.mjs
+/apps/web/public/plugins/scry-desktop-package.json
 /.env.oauth.local

@@ -1,8 +1,17 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __SCRY_DESKTOP_INSTALLER_SHA__: JSON.stringify(
+      createHash("sha256")
+        .update(readFileSync(new URL("./scripts/desktop-installer.mjs", import.meta.url)))
+        .digest("hex"),
+    ),
+  },
   build: {
     rollupOptions: {
       output: {
