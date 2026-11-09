@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
   MousePointer2,
+  Download,
 } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
@@ -29,7 +30,11 @@ type Connection = {
   expired?: boolean;
 };
 type Connections = { available: boolean; connections: Connection[] };
-type Client = "codex" | "claude" | "cursor";
+type Client = "codex" | "claude" | "cursor" | "other";
+
+const hostedEndpoint = "https://scry.giize.com/mcp";
+const desktopSetupPrompt =
+  "Install the Scry plugin for me using the instructions at https://scry.giize.com/plugins/scry-desktop-setup.txt. Inspect the package before installing, preserve my other plugins and connections, and let me complete Scry sign-in and workspace consent. Verify the connection by listing my projects without starting a test. If this host cannot install it, explain what is missing without claiming success.";
 
 export function Connections() {
   const [client, setClient] = useState<Client>("codex");
@@ -42,6 +47,7 @@ export function Connections() {
   const disconnectTrigger = useRef<HTMLButtonElement | null>(null);
   const connectionsHeading = useRef<HTMLHeadingElement | null>(null);
   const endpoint = new URL(publicConfig.mcpServerUrl, window.location.origin).href;
+  const packageSetup = client === "codex" && endpoint === hostedEndpoint;
   const activeConnections = state?.connections.filter(
     (connection) => !connection.revokedAt && !connection.expired,
   );
@@ -68,6 +74,7 @@ export function Connections() {
     try {
       await navigator.clipboard.writeText(endpoint);
       setCopied(true);
+      setError("");
     } catch {
       setError("Copy the connection address shown below, then return to your AI client.");
     }
@@ -118,9 +125,10 @@ export function Connections() {
           <div className="connection-clients" role="radiogroup" aria-label="AI client setup guides">
             {(
               [
-                ["codex", "Codex / ChatGPT", Code2],
+                ["codex", "ChatGPT / Codex", Code2],
                 ["claude", "Claude", Sparkles],
                 ["cursor", "Cursor", MousePointer2],
+                ["other", "Other MCP clients", PlugZap],
               ] as const
             ).map(([value, label, Icon]) => (
               <label key={value} data-active={client === value}>
@@ -157,49 +165,152 @@ export function Connections() {
                 <li>
                   <span>1</span>
                   <div>
-                    <h3>
-                      Open{" "}
-                      {client === "codex"
-                        ? "Codex or ChatGPT"
-                        : client === "claude"
-                          ? "Claude"
-                          : "Cursor"}
-                      {client === "cursor" ? " and add Scry" : " settings"}
-                    </h3>
-                    <p>
-                      {client === "codex"
-                        ? "Add a custom remote MCP server in your assistant’s integration settings. Use this server address."
-                        : client === "claude"
-                          ? "Open Settings → Connectors → Add custom connector. Name it Scry and use this server address. Your team may need to enable custom connectors first."
-                          : "Use Add to Cursor, then review the connection in Cursor."}
-                    </p>
-                    <div className="connection-endpoint">
-                      <code className="connection-address">{endpoint}</code>
-                      {client === "cursor" ? (
-                        <a
-                          className="connection-primary"
-                          href={`cursor://anysphere.cursor-deeplink/mcp/install?name=Scry&config=${encodeURIComponent(cursorConfig)}`}
-                        >
-                          Add to Cursor <ExternalLink size={15} />
-                        </a>
-                      ) : (
-                        <button
-                          type="button"
-                          className="connection-primary"
-                          onClick={() => void copy()}
-                        >
-                          <Copy size={15} />
-                          {copied ? "Address copied" : "Copy Scry address"}
-                        </button>
-                      )}
-                    </div>
-                    {client === "claude" && (
-                      <details className="connection-code-option">
-                        <summary>Using Claude Code?</summary>
-                        <code className="connection-command">
-                          claude mcp add --transport http scry {endpoint}
-                        </code>
-                      </details>
+                    {packageSetup ? (
+                      <>
+                        <h3>Install the Scry plugin</h3>
+                        <p>Choose where you use your assistant. No connection address to copy.</p>
+                        <div className="connection-install-options">
+                          <section
+                            className="connection-install-option"
+                            aria-labelledby="web-setup-heading"
+                          >
+                            <h4 id="web-setup-heading">ChatGPT web</h4>
+                            <p>
+                              Download the package, then open ChatGPT’s Plugins page. Choose Add →
+                              Upload plugin archive and select the ZIP.
+                            </p>
+                            <div className="connection-install-actions">
+                              <a
+                                className="connection-primary"
+                                href="/plugins/scry-chatgpt.zip"
+                                download
+                              >
+                                <Download size={15} /> Download Scry plugin
+                              </a>
+                              <a
+                                href="https://chatgpt.com/plugins"
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Open ChatGPT Plugins <ExternalLink size={14} />
+                              </a>
+                            </div>
+                            <p className="connection-install-note">
+                              Requires an account that allows plugin uploads and custom connections.
+                              If upload or connection is unavailable, open Other methods below.
+                            </p>
+                          </section>
+                          <section
+                            className="connection-install-option"
+                            aria-labelledby="desktop-setup-heading"
+                          >
+                            <h4 id="desktop-setup-heading">Desktop / Codex</h4>
+                            <p>
+                              Open a setup chat in the desktop app, then send the prepared message.
+                              Your assistant installs the package and helps you connect.
+                            </p>
+                            <a
+                              className="connection-primary"
+                              href={`codex://new?prompt=${encodeURIComponent(desktopSetupPrompt)}`}
+                            >
+                              Open desktop setup <ExternalLink size={15} />
+                            </a>
+                            <p className="connection-install-note">
+                              Requires the desktop app and local plugin support. This installs on
+                              your computer; it does not also install in ChatGPT web or mobile.
+                            </p>
+                          </section>
+                        </div>
+                        <details className="connection-package">
+                          <summary>Other methods</summary>
+                          <p>
+                            Add a custom remote MCP server in your assistant’s connection settings.
+                            Name it Scry and use this address, then choose OAuth sign-in.
+                          </p>
+                          <div className="connection-endpoint">
+                            <code className="connection-address">{endpoint}</code>
+                            <button
+                              type="button"
+                              className="connection-primary"
+                              onClick={() => void copy()}
+                            >
+                              <Copy size={15} /> {copied ? "Address copied" : "Copy Scry address"}
+                            </button>
+                          </div>
+                          <p>
+                            Already using Codex CLI? Ask it to install the{" "}
+                            <a
+                              href="/plugins/scry-desktop-setup.txt"
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Scry desktop package
+                            </a>
+                            . You can also{" "}
+                            <a href="/plugins/scry-codex.zip" download>
+                              download the ZIP
+                            </a>{" "}
+                            for manual installation.
+                          </p>
+                        </details>
+                      </>
+                    ) : (
+                      <>
+                        {client === "codex" && (
+                          <p className="connection-notice">
+                            Plugin downloads connect to hosted Scry at scry.giize.com. To connect to
+                            this server, use its address below.
+                          </p>
+                        )}
+                        <h3>
+                          Open{" "}
+                          {client === "codex"
+                            ? "Codex or ChatGPT"
+                            : client === "claude"
+                              ? "Claude"
+                              : client === "cursor"
+                                ? "Cursor"
+                                : "your assistant"}
+                          {client === "cursor" ? " and add Scry" : " settings"}
+                        </h3>
+                        <p>
+                          {client === "codex"
+                            ? "Add a custom remote MCP server in your assistant’s integration settings. Use this server address."
+                            : client === "claude"
+                              ? "Open Settings → Connectors → Add custom connector. Name it Scry and use this server address. Your team may need to enable custom connectors first."
+                              : client === "cursor"
+                                ? "Use Add to Cursor, then review the connection in Cursor."
+                                : "Add a custom remote MCP connection in your assistant’s settings. Name it Scry, use this address and choose OAuth if supported."}
+                        </p>
+                        <div className="connection-endpoint">
+                          <code className="connection-address">{endpoint}</code>
+                          {client === "cursor" ? (
+                            <a
+                              className="connection-primary"
+                              href={`cursor://anysphere.cursor-deeplink/mcp/install?name=Scry&config=${encodeURIComponent(cursorConfig)}`}
+                            >
+                              Add to Cursor <ExternalLink size={15} />
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              className="connection-primary"
+                              onClick={() => void copy()}
+                            >
+                              <Copy size={15} />
+                              {copied ? "Address copied" : "Copy Scry address"}
+                            </button>
+                          )}
+                        </div>
+                        {client === "claude" && (
+                          <details className="connection-code-option">
+                            <summary>Using Claude Code?</summary>
+                            <code className="connection-command">
+                              claude mcp add --transport http scry {endpoint}
+                            </code>
+                          </details>
+                        )}
+                      </>
                     )}
                   </div>
                 </li>
@@ -231,28 +342,28 @@ export function Connections() {
                 <ShieldCheck size={17} /> Sign in securely. No access token to copy. Keep passwords
                 in Scry’s protected inputs, outside chat.
               </p>
-              <details className="connection-package">
-                <summary>Optional workflow skills</summary>
-                {endpoint !== "https://scry.giize.com/mcp" && (
+              {(client === "claude" || client === "cursor") && (
+                <details className="connection-package">
+                  <summary>Optional workflow skills</summary>
+                  {endpoint !== "https://scry.giize.com/mcp" && (
+                    <p>
+                      These downloads connect to hosted Scry at scry.giize.com, not this local or
+                      custom server. Use the connection address above to test this server.
+                    </p>
+                  )}
                   <p>
-                    These downloads connect to hosted Scry at scry.giize.com, not this local or
-                    custom server. Use the connection address above to test this server.
+                    These packages add setup, testing and report-review guidance where your client
+                    supports plugins. They do not contain credentials or replace sign-in.
                   </p>
-                )}
-                <p>
-                  These packages add setup, testing and report-review guidance where your client
-                  supports plugins. They do not contain credentials or replace sign-in.
-                </p>
-                <a href={`/plugins/scry-${client}.zip`} download>
-                  Download{" "}
-                  {client === "codex" ? "Codex" : client === "claude" ? "Claude" : "Cursor"} package
-                </a>
-                <p>
-                  Install the downloaded package using your client’s local-plugin instructions.
-                  ChatGPT uses the remote connector above; this package is not a ChatGPT marketplace
-                  listing.
-                </p>
-              </details>
+                  <a href={`/plugins/scry-${client}.zip`} download>
+                    Download {client === "claude" ? "Claude" : "Cursor"} package
+                  </a>
+                  <p>
+                    Install the downloaded package using your client’s local-plugin instructions.
+                    These downloads are private packages, not public marketplace listings.
+                  </p>
+                </details>
+              )}
             </>
           )}
           {error && (
