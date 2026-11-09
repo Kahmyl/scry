@@ -59,6 +59,18 @@ untrusted tested application safe, verify the user's authorization to test a
 third-party system, or eliminate the need to use dedicated test accounts and
 least-privilege data.
 
+## Plugin directory domain proof
+
+The public `/.well-known/openai-apps-challenge` asset serves the current directory
+submission's exact challenge as plain text. This is a public ownership proof,
+not an authentication credential. Keep its body to the single value supplied by
+the saved submission; a missing asset falls through to the application shell and
+does not verify ownership. The production build must copy the asset unchanged.
+If another plugin needs the same challenge URL, follow the
+[submission domain-verification guidance](https://developers.openai.com/plugins/deploy/submission#domain-verification-details)
+and use an eligible different host rather than replacing its proof or combining
+multiple tokens. OAuth discovery and MCP authentication routes are independent.
+
 ## Principal types
 
 ### Signed-in user

@@ -66,6 +66,14 @@ describe("browser baseline MCP profile", () => {
     expect(tools.find((tool) => tool.name === "bind_credentials")?.description).toContain(
       "explicitly selected",
     );
+    expect(tools.find((tool) => tool.name === "close_test_resource")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+    });
+    expect(tools.find((tool) => tool.name === "read_test_messages")?.annotations).toMatchObject({
+      destructiveHint: false,
+    });
     await client.close();
     await server.close();
   });
