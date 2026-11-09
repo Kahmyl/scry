@@ -4,11 +4,12 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import { unzipSync } from "fflate";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { createSetupCommand } from "./desktop-bootstrap.mjs";
 import { validatePackage } from "./desktop-installer.mjs";
 
 test("all downloadable packages contain the same skills and public MCP endpoint, never credentials", async () => {
-  execFileSync(process.execPath, [new URL("./build-plugins.mjs", import.meta.url).pathname]);
+  execFileSync(process.execPath, [fileURLToPath(new URL("./build-plugins.mjs", import.meta.url))]);
   const expectedSkills = ["scry-setup", "scry-test-web-app", "scry-review-results"];
   for (const client of ["codex", "chatgpt", "claude", "cursor"]) {
     const files = unzipSync(
@@ -29,10 +30,16 @@ test("all downloadable packages contain the same skills and public MCP endpoint,
     for (const skill of expectedSkills) assert.ok(text[`skills/${skill}/SKILL.md`]);
     assert.ok(files["assets/scry.png"].length > 0);
     const config = JSON.parse(text[client === "claude" ? ".mcp.json" : "mcp.json"]);
-    assert.equal(config.mcpServers.scry.url, "https://scry.giize.com/mcp");
-    assert.equal(config.mcpServers.scry.type, client === "claude" ? "http" : "streamable-http");
-    assert.equal(config.mcpServers.scry.headers, undefined);
-    if (client !== "claude")
+    const server = config.mcpServers[client === "codex" ? "scry_beta" : "scry"];
+    assert.equal(server.url, "https://scry.giize.com/mcp");
+    assert.equal(server.type, client === "claude" ? "http" : "streamable-http");
+    assert.equal(server.headers, undefined);
+    if (client === "codex")
+      assert.deepEqual(server, {
+        type: "streamable-http",
+        url: "https://scry.giize.com/mcp",
+      });
+    else if (client !== "claude")
       assert.deepEqual(config.mcpServers.scry.extensions["com.openai"].auth, {
         type: "oauth",
         client: { mode: "dcr" },
@@ -52,7 +59,7 @@ test("all downloadable packages contain the same skills and public MCP endpoint,
   }
   const first = await readFile(new URL("../public/plugins/scry-codex.zip", import.meta.url));
   const web = await readFile(new URL("../public/plugins/scry-chatgpt.zip", import.meta.url));
-  assert.ok(first.equals(web), "web and desktop use the same portable plugin");
+  assert.ok(!first.equals(web), "desktop omits unsupported OAuth extension fields");
   const manifest = JSON.parse(new TextDecoder().decode(unzipSync(first)["plugin.json"]));
   const versioned = await readFile(
     new URL(`../public/plugins/scry-codex-${manifest.version}.zip`, import.meta.url),
@@ -73,6 +80,7 @@ test("all downloadable packages contain the same skills and public MCP endpoint,
   );
   assert.ok(setup.includes("Do not generate another installer"));
   assert.ok(setup.includes("Do not log into an existing bare-name"));
+  assert.ok(setup.includes("opens the browser for Scry sign-in automatically"));
   const payload = JSON.parse(
     await readFile(new URL("../public/plugins/scry-desktop-package.json", import.meta.url), "utf8"),
   );
@@ -94,7 +102,7 @@ test("all downloadable packages contain the same skills and public MCP endpoint,
       category: "Developer Tools",
     },
   ]);
-  execFileSync(process.execPath, [new URL("./build-plugins.mjs", import.meta.url).pathname]);
+  execFileSync(process.execPath, [fileURLToPath(new URL("./build-plugins.mjs", import.meta.url))]);
   assert.ok(
     first.equals(await readFile(new URL("../public/plugins/scry-codex.zip", import.meta.url))),
   );

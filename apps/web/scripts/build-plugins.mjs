@@ -29,6 +29,15 @@ const installerChecksum = createHash("sha256").update(installer).digest("hex");
 await writeFile(new URL("scry-desktop-install.mjs", output), installer);
 for (const client of ["codex", "chatgpt", "claude", "cursor"]) {
   const entries = { ...base };
+  if (client === "codex") {
+    // Codex's portable parser currently rejects per-server extensions. OAuth is
+    // discovered from the protected HTTPS endpoint instead; never embed tokens.
+    const mcp = JSON.parse(new TextDecoder().decode(base["mcp.json"]));
+    delete mcp.mcpServers.scry.extensions;
+    mcp.mcpServers.scry_beta = mcp.mcpServers.scry;
+    delete mcp.mcpServers.scry;
+    entries["mcp.json"] = strToU8(JSON.stringify(mcp, null, 2) + "\n");
+  }
   if (client === "claude") {
     const manifest = JSON.parse(new TextDecoder().decode(base["plugin.json"]));
     entries[".claude-plugin/plugin.json"] = strToU8(
@@ -70,7 +79,7 @@ for (const client of ["codex", "chatgpt", "claude", "cursor"]) {
       new URL("scry-desktop-package.json", output),
       JSON.stringify({
         version: metadata.version,
-        files: Object.entries(base).map(([path, bytes]) => ({
+        files: Object.entries(entries).map(([path, bytes]) => ({
           path,
           base64: Buffer.from(bytes).toString("base64"),
           sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -88,9 +97,14 @@ the checks manually. Requires Node.js 18+ and Codex CLI.
 
 ${createSetupCommand(installerChecksum)}
 
-After installation, use the host's plugin Connect action if needed. The customer
-completes sign-in and workspace consent. Do not log into an existing bare-name
-MCP server or claim access until read-only list_projects succeeds. Do not start tests.
+Setup opens the browser for Scry sign-in automatically. Let the customer sign in
+and choose their workspace. Never approve consent for them. If setup returns a
+fallback link, show it as a clickable “Open Scry setup” link with the returned
+instructions. Do not log into an existing bare-name MCP server. After sign-in,
+verify access with read-only list_projects through the plugin’s scry_beta connection,
+never an older scry connection. If that tool is unavailable, say sign-in completed
+but workspace access is not yet checked. Describe results in plain language.
+Do not start tests or claim access from installation alone.
 
 Manual archive: https://scry.giize.com/plugins/${versionedArchive}
 Version: ${metadata.version}

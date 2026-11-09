@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, mkdir, writeFile, symlink, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { install, validatePackage } from "./desktop-installer.mjs";
+import { pathToFileURL } from "node:url";
+import { authorize, codexCommand, install, validatePackage } from "./desktop-installer.mjs";
 import { createSetupCommand } from "./desktop-bootstrap.mjs";
 
 let data;
@@ -21,7 +22,11 @@ beforeAll(async () => {
     "skills/scry-review-results/SKILL.md",
   ];
   const entries = await Promise.all(
-    names.map(async (path) => [path, await readFile(new URL(path, root))]),
+    // Match the Linux-built published release, independent of Git checkout EOLs.
+    names.map(async (path) => [
+      path,
+      Buffer.from((await readFile(new URL(path, root), "utf8")).replaceAll("\r\n", "\n")),
+    ]),
   );
   entries.push([
     "assets/scry.png",
@@ -122,7 +127,7 @@ test("preserves conflicting catalogs, modified files and symlink targets", async
     }),
   ).rejects.toThrow("SCRY_MARKETPLACE_CONFLICT");
   await mkdir(join(f.userDirectory, "other"));
-  await symlink(join(f.userDirectory, "other"), join(f.userDirectory, ".scry"));
+  await symlink(join(f.userDirectory, "other"), join(f.userDirectory, ".scry"), "junction");
   await expect(install(data, f)).rejects.toThrow("UNSAFE_INSTALL_DIRECTORY");
   await rm(join(f.userDirectory, ".scry"));
   await install(data, f);
@@ -163,7 +168,7 @@ test("the executable starts through a symlinked path and --check never installs"
   const real = join(f.userDirectory, "actual");
   const alias = join(f.userDirectory, "alias");
   await mkdir(real);
-  await symlink(real, alias);
+  await symlink(real, alias, "junction");
   await writeFile(
     join(real, "installer.mjs"),
     await readFile(new URL("./desktop-installer.mjs", import.meta.url)),
@@ -175,10 +180,10 @@ test("the executable starts through a symlinked path and --check never installs"
   );
   const child = spawnSync(
     process.execPath,
-    ["--import", preload, join(alias, "installer.mjs"), "--check"],
+    ["--import", pathToFileURL(preload).href, join(alias, "installer.mjs"), "--check"],
     { encoding: "utf8", timeout: 5000 },
   );
-  expect(child.status).toBe(0);
+  expect(child.status, child.stderr).toBe(0);
   expect(child.stdout.trim()).not.toBe("");
   expect(JSON.parse(child.stdout)).toEqual({
     status: "validated",
@@ -206,14 +211,125 @@ test("the actual bootstrap rejects an empty successful process and accepts insta
       `globalThis.fetch = async () => ({ok:true,arrayBuffer:async()=>Buffer.from(${JSON.stringify(source)})});`,
     );
     const command = createSetupCommand(createHash("sha256").update(source).digest("hex"));
-    const script = command.slice("node --input-type=module -e '".length, -1);
+    const script = command.slice('node --input-type=module -e "'.length, -1);
     const child = spawnSync(
       process.execPath,
-      ["--import", preload, "--input-type=module", "-e", script],
+      ["--import", pathToFileURL(preload).href, "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 5000 },
     );
-    expect(child.status).toBe(source ? 0 : 1);
+    expect(child.status, child.stderr).toBe(source ? 0 : 1);
     if (source) expect(JSON.parse(child.stdout).status).toBe("installed");
     else expect(child.stdout).toBe("");
   }
+});
+
+test("authorization targets only the attributed plugin, opens sign-in and distinguishes consent from installation", async () => {
+  const calls = [];
+  const server = {
+    name: "plugin_scry_scry",
+    pluginId: "scry@scry-beta",
+    httpOrigin: "https://scry.giize.com",
+    authStatus: "notLoggedIn",
+  };
+  const signIn = async (name) => {
+    calls.push(name);
+    return true;
+  };
+  const result = await authorize({
+    inventory: async () => [
+      { ...server, name: "scry", pluginId: null, authStatus: "oAuth" },
+      server,
+    ],
+    signIn,
+  });
+  expect(calls).toEqual([server.name]);
+  expect(result.status).toBe("authorized");
+  calls.length = 0;
+  for (const inventory of [
+    async () => [{ ...server, pluginId: null }],
+    async () => [{ ...server, httpOrigin: "https://another.example" }],
+    async () => [server, server],
+    async () => {
+      throw new Error("private diagnostic must not escape");
+    },
+  ]) {
+    const fallback = await authorize({ inventory, signIn });
+    expect(fallback.status).toBe("needs_attention");
+    expect(fallback.url).toBe("codex://plugins/install/scry?marketplace=scry-beta");
+    expect(JSON.stringify(fallback)).not.toContain("private diagnostic");
+  }
+  expect(calls).toEqual([]);
+  expect(
+    (await authorize({ inventory: async () => [server], signIn: async () => false })).status,
+  ).toBe("needs_attention");
+  expect(
+    (await authorize({ inventory: async () => [{ ...server, authStatus: "oAuth" }], signIn }))
+      .status,
+  ).toBe("authorized");
+  expect(calls).toEqual([]);
+});
+
+test("Windows uses native executables or the npm Node entry point without a shell", () => {
+  const root = "C:\\Users\\Friend & Family\\AppData\\Roaming\\npm";
+  const native = root + "\\codex.exe";
+  expect(
+    codexCommand({ platform: "win32", searchPath: root, exists: (p) => p === native }),
+  ).toEqual({ command: native, prefix: [] });
+  const script = root + "\\node_modules\\@openai\\codex\\bin\\codex.js";
+  expect(
+    codexCommand({
+      platform: "win32",
+      searchPath: root,
+      exists: (p) => [root + "\\codex.cmd", script].includes(p),
+    }),
+  ).toEqual({ command: process.execPath, prefix: [script] });
+  expect(() => codexCommand({ platform: "win32", searchPath: root, exists: () => false })).toThrow(
+    "CODEX_EXECUTABLE_NOT_FOUND",
+  );
+});
+
+test.skipIf(process.platform !== "win32")(
+  "the published bootstrap command executes in Windows PowerShell with a path containing spaces",
+  async () => {
+    const f = await fixture();
+    const source =
+      'console.log(JSON.stringify({status:"installed",pluginId:"scry@scry-beta",authorization:{status:"needs_attention"}}));';
+    const preload = join(f.userDirectory, "mock download.mjs");
+    await writeFile(
+      preload,
+      `globalThis.fetch=async()=>({ok:true,arrayBuffer:async()=>Buffer.from(${JSON.stringify(source)})});`,
+    );
+    const command = createSetupCommand(createHash("sha256").update(source).digest("hex"));
+    const result = spawnSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", command],
+      {
+        encoding: "utf8",
+        // Windows runner process startup is outside the installer timing contract.
+        // Keep a bounded allowance for PowerShell + two Node processes.
+        timeout: 30000,
+        env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` },
+      },
+    );
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).authorization.status).toBe("needs_attention");
+  },
+  45000,
+);
+
+test("migrates only the exact shipped MCP file and preserves user modifications", async () => {
+  const f = await fixture();
+  await install(data, f);
+  const compatible = structuredClone(data);
+  changeFile(compatible, "mcp.json", (text) => {
+    const mcp = JSON.parse(text);
+    delete mcp.mcpServers.scry.extensions;
+    return JSON.stringify(mcp, null, 2) + "\n";
+  });
+  await install(compatible, f);
+  const path = join(f.userDirectory, ".scry/marketplace/plugins/scry/mcp.json");
+  expect(JSON.parse(await readFile(path, "utf8")).mcpServers.scry.extensions).toBeUndefined();
+  await writeFile(path, "my custom connection");
+  await expect(install(compatible, f)).rejects.toThrow("EXISTING_SCRY_FILES_DIFFER");
+  expect(await readFile(path, "utf8")).toBe("my custom connection");
 });
