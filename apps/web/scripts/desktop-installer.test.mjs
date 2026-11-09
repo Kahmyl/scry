@@ -305,13 +305,16 @@ test.skipIf(process.platform !== "win32")(
       ["-NoProfile", "-NonInteractive", "-Command", command],
       {
         encoding: "utf8",
-        timeout: 10000,
+        // Windows runner process startup is outside the installer timing contract.
+        // Keep a bounded allowance for PowerShell + two Node processes.
+        timeout: 30000,
         env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}` },
       },
     );
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(JSON.parse(result.stdout).authorization.status).toBe("needs_attention");
   },
+  45000,
 );
 
 test("migrates only the exact shipped MCP file and preserves user modifications", async () => {
