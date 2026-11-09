@@ -22,7 +22,11 @@ beforeAll(async () => {
     "skills/scry-review-results/SKILL.md",
   ];
   const entries = await Promise.all(
-    names.map(async (path) => [path, await readFile(new URL(path, root))]),
+    // Match the Linux-built published release, independent of Git checkout EOLs.
+    names.map(async (path) => [
+      path,
+      Buffer.from((await readFile(new URL(path, root), "utf8")).replaceAll("\r\n", "\n")),
+    ]),
   );
   entries.push([
     "assets/scry.png",
@@ -176,10 +180,10 @@ test("the executable starts through a symlinked path and --check never installs"
   );
   const child = spawnSync(
     process.execPath,
-    ["--import", preload, join(alias, "installer.mjs"), "--check"],
+    ["--import", pathToFileURL(preload).href, join(alias, "installer.mjs"), "--check"],
     { encoding: "utf8", timeout: 5000 },
   );
-  expect(child.status).toBe(0);
+  expect(child.status, child.stderr).toBe(0);
   expect(child.stdout.trim()).not.toBe("");
   expect(JSON.parse(child.stdout)).toEqual({
     status: "validated",
@@ -210,10 +214,10 @@ test("the actual bootstrap rejects an empty successful process and accepts insta
     const script = command.slice('node --input-type=module -e "'.length, -1);
     const child = spawnSync(
       process.execPath,
-      ["--import", preload, "--input-type=module", "-e", script],
+      ["--import", pathToFileURL(preload).href, "--input-type=module", "-e", script],
       { encoding: "utf8", timeout: 5000 },
     );
-    expect(child.status).toBe(source ? 0 : 1);
+    expect(child.status, child.stderr).toBe(source ? 0 : 1);
     if (source) expect(JSON.parse(child.stdout).status).toBe("installed");
     else expect(child.stdout).toBe("");
   }

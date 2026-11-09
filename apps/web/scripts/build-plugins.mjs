@@ -101,7 +101,9 @@ Setup opens the browser for Scry sign-in automatically. Let the customer sign in
 and choose their workspace. Never approve consent for them. If setup returns a
 fallback link, show it as a clickable “Open Scry setup” link with the returned
 instructions. Do not log into an existing bare-name MCP server. After sign-in,
-verify access with read-only list_projects; describe the result in plain language.
+verify access with read-only list_projects through the plugin’s scry_beta connection,
+never an older scry connection. If that tool is unavailable, say sign-in completed
+but workspace access is not yet checked. Describe results in plain language.
 Do not start tests or claim access from installation alone.
 
 Manual archive: https://scry.giize.com/plugins/${versionedArchive}
