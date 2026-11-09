@@ -410,7 +410,8 @@ export async function authorize({ inventory = pluginInventory, signIn = login } 
 
 if (
   process.argv[1] &&
-  (await realpath(process.argv[1]).catch(() => "")) === fileURLToPath(import.meta.url)
+  (await realpath(process.argv[1]).catch(() => undefined)) ===
+    (await realpath(fileURLToPath(import.meta.url)).catch(() => null))
 ) {
   try {
     const args = process.argv.slice(2);
