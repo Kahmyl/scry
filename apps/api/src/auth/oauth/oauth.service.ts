@@ -159,6 +159,12 @@ export function createOAuthProvider(
     claims: { openid: ["sub"] },
     pkce: { required: () => true },
     issueRefreshToken: (_ctx, client) => client.grantTypeAllowed("refresh_token"),
+    // The consent screen approves a durable workspace connection, not access
+    // only while the consent browser session remains signed in. OIDC's default
+    // ties testing-only grants to that shorter session unless offline_access
+    // was requested; MCP needs only scry:testing. Keep other OIDC behavior.
+    expiresWithSession: (_ctx, source) =>
+      !source.scopes.has(testingScope) && !source.scopes.has("offline_access"),
     rotateRefreshToken: true,
     revokeGrantPolicy: () => true,
     loadExistingGrant: async (ctx) => {

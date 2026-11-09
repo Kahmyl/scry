@@ -39,6 +39,13 @@ Use the standards library with existing identity and a narrow Scry grant instead
 - OAuth state is durable and expires. Revocation is authoritative in the database:
   existing access and refresh paths must stop, including an already-open MCP
   transport. Reconnection creates a new grant rather than reviving old tokens.
+- The approved workspace connection lasts up to 30 days independently of the
+  short-lived consent browser session. Five-minute access tokens renew through
+  rotating refresh tokens; closing or expiring the consent browser session does
+  not disconnect the assistant. Testing-only MCP grants do not need the optional
+  OIDC offline_access scope for this lifetime. Legacy session-bound access and
+  refresh payloads use the same connection policy when read, while token expiry,
+  grant expiry, explicit revocation and current membership remain authoritative.
 - MCP sessions bind stable authorized identity, not the current token bytes.
   Every HTTP request revalidates access; each tool uses that request's credential.
 - Existing evidence, workers and customer records stay unchanged. OAuth storage

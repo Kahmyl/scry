@@ -165,3 +165,21 @@ Local candidate qualification does not establish live TLS, DNS, production
 credentials, email delivery, all-browser support, mobile-browser execution,
 universal app compatibility or perfect masking. These limits must remain explicit
 in the promotion decision rather than being hidden by a UI-only acceptance.
+
+## Owner-authorized stopped Run finalization
+
+When a stopped assessment still reserves a browser and the client connection is
+unavailable, the existing protected deployment workflow accepts an optional exact
+`finalize_stopped_mission`, `finalize_stopped_run` and
+`finalize_confirmation=FINALIZE_STOPPED_RUN_AS_INCOMPLETE`. Obtain the owner's
+explicit permission for that stopped Run first. Omit all three for normal deploys.
+
+The helper runs inside the current API container using its existing internal
+credential without exporting it. It checks Mission identity, native runtime,
+terminal command activity and current owner generation, then calls the supported
+finalization API with `blocked`. It verifies terminal Run and browser states.
+An already-finalized Run is a read-only replay and is never relabeled. A typed
+owner-fencing response permits one re-read of an actually advanced generation;
+other failures stop before deployment. Application actions are never replayed,
+uncertain outcomes and evidence remain preserved, and no direct database update
+is made. The deployment controller still refuses any remaining nonterminal work.

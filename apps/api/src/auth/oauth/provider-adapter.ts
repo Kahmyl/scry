@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { errors, type AdapterPayload, type AdapterConstructor } from "oidc-provider";
 import { BrowserProtectedValueCipher } from "@scry/veil";
 import type { Database } from "../../infrastructure/database.js";
+import { testingScope } from "./config.js";
 
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -91,6 +92,17 @@ export function providerAdapter(database: Database): AdapterConstructor {
           { purpose: "oauth-provider", model: this.model, idHash: row.id_hash },
         ),
       ) as AdapterPayload;
+      // Older testing-only tokens inherited OIDC's browser-session binding.
+      // Honor their already-approved connection lifetime without rewriting or
+      // resurrecting a token. The query still enforces token expiry; provider
+      // grant validation and the workspace connection remain authoritative.
+      if (
+        ["AccessToken", "RefreshToken"].includes(this.model) &&
+        payload.grantId &&
+        typeof payload.scope === "string" &&
+        payload.scope.split(" ").includes(testingScope)
+      )
+        payload.expiresWithSession = false;
       if (row.consumed_at)
         payload.consumed = Math.floor(new Date(row.consumed_at).getTime() / 1000);
       return payload;

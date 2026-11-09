@@ -6,6 +6,9 @@ execFileSync("bash", ["-n", "scripts/deploy-server-release.sh"], { stdio: "inher
 execFileSync("node", ["scripts/operations/preserve-browser-key-config.test.mjs"], {
   stdio: "inherit",
 });
+execFileSync("node", ["scripts/operations/finalize-stopped-run.test.mjs"], {
+  stdio: "inherit",
+});
 execFileSync("node", ["packages/assurance/gates/deploy-server-release.test.mjs"], {
   stdio: "inherit",
 });
