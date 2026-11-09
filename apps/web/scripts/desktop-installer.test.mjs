@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, expect, test } from "vitest";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, mkdir, writeFile, symlink, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,10 +10,31 @@ import { createSetupCommand } from "./desktop-bootstrap.mjs";
 let data;
 const temporary = [];
 beforeAll(async () => {
-  execFileSync(process.execPath, [new URL("./build-plugins.mjs", import.meta.url).pathname]);
-  data = JSON.parse(
-    await readFile(new URL("../public/plugins/scry-desktop-package.json", import.meta.url), "utf8"),
+  // Build this fixture from source without competing with the archive test's output files.
+  const root = new URL("../../../plugins/scry/", import.meta.url);
+  const names = [
+    "plugin.json",
+    "mcp.json",
+    "README.md",
+    "skills/scry-setup/SKILL.md",
+    "skills/scry-test-web-app/SKILL.md",
+    "skills/scry-review-results/SKILL.md",
+  ];
+  const entries = await Promise.all(
+    names.map(async (path) => [path, await readFile(new URL(path, root))]),
   );
+  entries.push([
+    "assets/scry.png",
+    await readFile(new URL("../public/brand/scry-icon-192.png", import.meta.url)),
+  ]);
+  data = {
+    version: JSON.parse(entries.find(([path]) => path === "plugin.json")[1].toString()).version,
+    files: entries.map(([path, contents]) => ({
+      path,
+      base64: contents.toString("base64"),
+      sha256: createHash("sha256").update(contents).digest("hex"),
+    })),
+  };
 });
 afterEach(async () => {
   await Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true })));
@@ -135,4 +156,64 @@ test("bootstrap verifies the exact installer before executing and contains no ad
   expect(command).not.toContain("python");
   expect(command).not.toContain("config.toml");
   expect(() => createSetupCommand("not a digest")).toThrow();
+});
+
+test("the executable starts through a symlinked path and --check never installs", async () => {
+  const f = await fixture();
+  const real = join(f.userDirectory, "actual");
+  const alias = join(f.userDirectory, "alias");
+  await mkdir(real);
+  await symlink(real, alias);
+  await writeFile(
+    join(real, "installer.mjs"),
+    await readFile(new URL("./desktop-installer.mjs", import.meta.url)),
+  );
+  const preload = join(f.userDirectory, "fixture-fetch.mjs");
+  await writeFile(
+    preload,
+    `globalThis.fetch = async () => ({ok:true,headers:new Headers(),json:async()=>(${JSON.stringify(data)})});`,
+  );
+  const child = spawnSync(
+    process.execPath,
+    ["--import", preload, join(alias, "installer.mjs"), "--check"],
+    { encoding: "utf8", timeout: 5000 },
+  );
+  expect(child.status).toBe(0);
+  expect(child.stdout.trim()).not.toBe("");
+  expect(JSON.parse(child.stdout)).toEqual({
+    status: "validated",
+    version: data.version,
+    writes: false,
+  });
+  await expect(stat(join(f.userDirectory, ".scry"))).rejects.toMatchObject({ code: "ENOENT" });
+  const invalid = spawnSync(process.execPath, [join(alias, "installer.mjs"), "--unknown"], {
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  expect(invalid.status).toBe(1);
+  expect(JSON.parse(invalid.stderr).code).toBe("INVALID_ARGUMENTS");
+});
+
+test("the actual bootstrap rejects an empty successful process and accepts installation confirmation", async () => {
+  const f = await fixture();
+  for (const source of [
+    "",
+    'console.log(JSON.stringify({status:"installed",pluginId:"scry@scry-beta"}));',
+  ]) {
+    const preload = join(f.userDirectory, "bootstrap-fetch.mjs");
+    await writeFile(
+      preload,
+      `globalThis.fetch = async () => ({ok:true,arrayBuffer:async()=>Buffer.from(${JSON.stringify(source)})});`,
+    );
+    const command = createSetupCommand(createHash("sha256").update(source).digest("hex"));
+    const script = command.slice("node --input-type=module -e '".length, -1);
+    const child = spawnSync(
+      process.execPath,
+      ["--import", preload, "--input-type=module", "-e", script],
+      { encoding: "utf8", timeout: 5000 },
+    );
+    expect(child.status).toBe(source ? 0 : 1);
+    if (source) expect(JSON.parse(child.stdout).status).toBe("installed");
+    else expect(child.stdout).toBe("");
+  }
 });

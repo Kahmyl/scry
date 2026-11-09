@@ -1,7 +1,7 @@
 // Standalone installer: Node built-ins only. No package scripts, shell or OAuth credentials.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -217,8 +217,13 @@ export async function install(data, { userDirectory = homedir(), run = codex } =
   };
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  (await realpath(process.argv[1]).catch(() => "")) === fileURLToPath(import.meta.url)
+) {
   try {
+    const args = process.argv.slice(2);
+    if (args.length && (args.length !== 1 || args[0] !== "--check")) fail("INVALID_ARGUMENTS");
     const response = await fetch("https://scry.giize.com/plugins/scry-desktop-package.json", {
       signal: AbortSignal.timeout(10000),
       redirect: "error",
