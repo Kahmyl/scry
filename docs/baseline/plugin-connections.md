@@ -123,10 +123,23 @@ Manual MCP setup remains under Other methods. Claude, Cursor and other MCP clien
 retain their custom connection guides. No package download or setup click marks
 account access as verified.
 
-Desktop setup instructions are generated alongside the archive with its exact
-version and SHA-256. They use a dedicated local marketplace and the supported
-marketplace/plugin install commands, preserve existing configuration, and require
-the customer to complete OAuth consent. They do not assume an unknown marketplace
+Desktop setup uses a tested standalone Node installer and a short, prefilled
+command whose installer digest is pinned by the same web build. A generated data
+payload contains only the seven allowlisted plugin files with per-file SHA-256
+checksums. The installer validates the manifests, rejects file/catalog conflicts
+and symlinks, and invokes at most three supported CLI commands. It does not ask
+the model to research installation, generate Python, inspect general configuration,
+or implement its own archive extraction. Node.js 18+ and Codex CLI are prerequisites.
+
+The installer uses a dedicated local marketplace, preserves existing configuration,
+and leaves OAuth consent to the customer through the host's plugin Connect action.
+Do not use a bare-name `codex mcp login scry` as proof of plugin authorization: it
+can authenticate an unrelated pre-existing direct MCP configuration. Verify access
+using the actual plugin's tools. Installation time, agent response time, host
+activation and human sign-in time are distinct measurements; a total 10–15 second
+onboarding duration is not guaranteed.
+
+The setup does not assume an unknown marketplace
 can be installed by a deep link. A local installation does not establish a cloud
 or mobile installation. Accounts must allow the relevant upload/custom-connection
 capabilities; fresh independent personal-account import and OAuth remain a

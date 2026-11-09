@@ -69,7 +69,7 @@ describe("guided account connections", () => {
     expect(url.protocol).toBe("codex:");
     expect(url.hostname).toBe("new");
     expect(url.searchParams.get("prompt")).toContain(
-      "https://scry.giize.com/plugins/scry-desktop-setup.txt",
+      "https://scry.giize.com/plugins/scry-desktop-install.mjs",
     );
     expect(screen.getByText(/then send the prepared message/)).toBeTruthy();
     const other = screen.getByText("Other methods").closest("details")!;
