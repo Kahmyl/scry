@@ -1,9 +1,11 @@
 // Standalone installer: Node built-ins only. No package scripts, shell or OAuth credentials.
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const endpoint = "https://scry.giize.com/mcp";
@@ -59,20 +61,22 @@ export function validatePackage(data) {
     fail("INVALID_PLUGIN_MANIFEST");
   const mcp = JSON.parse(files.get("mcp.json").toString());
   const servers = mcp.mcpServers;
+  const server = servers?.scry_beta ?? servers?.scry;
   if (
     mcp.$schema !== "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json" ||
     Object.keys(servers ?? {}).length !== 1 ||
-    servers.scry?.url !== endpoint ||
-    servers.scry?.type !== "streamable-http"
+    server?.url !== endpoint ||
+    server?.type !== "streamable-http"
   )
     fail("INVALID_MCP_ENDPOINT");
-  const auth = servers.scry.extensions?.["com.openai"]?.auth;
+  const auth = server.extensions?.["com.openai"]?.auth;
   if (
-    auth?.type !== "oauth" ||
-    auth.client?.mode !== "dcr" ||
-    JSON.stringify(auth.baseScopes) !== '["scry:testing"]' ||
-    JSON.stringify(auth.defaultScopes) !== '["scry:testing"]' ||
-    servers.scry.headers
+    server.headers ||
+    (auth &&
+      (auth.type !== "oauth" ||
+        auth.client?.mode !== "dcr" ||
+        JSON.stringify(auth.baseScopes) !== '["scry:testing"]' ||
+        JSON.stringify(auth.defaultScopes) !== '["scry:testing"]'))
   )
     fail("INVALID_MCP_AUTH");
   for (const [name, contents] of files) {
@@ -108,15 +112,56 @@ async function directory(path) {
     fail("UNSAFE_INSTALL_DIRECTORY");
   if (!existing) await mkdir(path, { mode: 0o700 });
 }
-async function unchangedOrMissing(path, expected) {
+async function unchangedOrMissing(path, expected, name) {
   const existing = await stat(path);
   if (!existing) return;
-  if (!existing.isFile() || existing.isSymbolicLink() || !(await readFile(path)).equals(expected))
-    fail("EXISTING_SCRY_FILES_DIFFER");
+  if (!existing.isFile() || existing.isSymbolicLink()) fail("EXISTING_SCRY_FILES_DIFFER");
+  const bytes = await readFile(path);
+  if (bytes.equals(expected)) return;
+  // Migrate only exact files from the previously shipped 0.1.3 release.
+  // Never overwrite user edits or accept a hash supplied by the network.
+  if (
+    name === "mcp.json" &&
+    digest(bytes) === "8561f934e8d375392c3c0635c0fe30726c9cae818ef5a5145b6db980632b4447"
+  )
+    return;
+  // URL-only predecessor/control uses the old global-colliding server name.
+  if (
+    name === "mcp.json" &&
+    digest(bytes) === "560cc5e06e4d57b5e5225dcdd2f0117837c943cfca698dd8f89884b4a3dafbbc"
+  )
+    return;
+  if (
+    name === "plugin.json" &&
+    digest(bytes) === "f57b9177d0278a78896f74f11e59046190e52f63cd8a604bbe203327f5494609"
+  )
+    return;
+  fail("EXISTING_SCRY_FILES_DIFFER");
+}
+
+export function codexCommand({
+  platform = process.platform,
+  searchPath = process.env.PATH ?? "",
+  exists = existsSync,
+} = {}) {
+  if (platform !== "win32") return { command: "codex", prefix: [] };
+  for (const directory of searchPath
+    .split(platform === "win32" ? ";" : delimiter)
+    .filter(Boolean)) {
+    const native = win32.join(directory, "codex.exe");
+    if (exists(native)) return { command: native, prefix: [] };
+    // npm exposes a .cmd shim, which spawn(shell:false) cannot execute on
+    // Windows. Run its standard Node entry point directly, without cmd.exe.
+    const script = win32.join(directory, "node_modules", "@openai", "codex", "bin", "codex.js");
+    if (exists(win32.join(directory, "codex.cmd")) && exists(script))
+      return { command: process.execPath, prefix: [script] };
+  }
+  fail("CODEX_EXECUTABLE_NOT_FOUND");
 }
 
 export function codex(args) {
-  const result = spawnSync("codex", args, {
+  const { command, prefix } = codexCommand();
+  const result = spawnSync(command, [...prefix, ...args], {
     encoding: "utf8",
     timeout: 15000,
     maxBuffer: 4 * 1024 * 1024,
@@ -182,7 +227,8 @@ export async function install(data, { userDirectory = homedir(), run = codex } =
     }
   }
   await checkTree(plugin);
-  for (const [name, contents] of files) await unchangedOrMissing(join(plugin, name), contents);
+  for (const [name, contents] of files)
+    await unchangedOrMissing(join(plugin, name), contents, name);
   const catalogPath = join(root, ".agents", "plugins", "marketplace.json");
   if (await stat(catalogPath)) {
     const item = await lstat(catalogPath);
@@ -197,6 +243,8 @@ export async function install(data, { userDirectory = homedir(), run = codex } =
   for (const [name, contents] of files) {
     if (!(await stat(join(plugin, name))))
       await writeFile(join(plugin, name), contents, { flag: "wx", mode: 0o644 });
+    else if (!(await readFile(join(plugin, name))).equals(contents))
+      await writeFile(join(plugin, name), contents, { mode: 0o644 });
   }
   if (!(await stat(catalogPath)))
     await writeFile(catalogPath, JSON.stringify(catalog, null, 2) + "\n", {
@@ -212,9 +260,148 @@ export async function install(data, { userDirectory = homedir(), run = codex } =
     pluginId: result.pluginId,
     version: data.version,
     elapsedMs: Math.round(performance.now() - started),
-    authorization:
-      "Complete the plugin's Connect action in the host; installation is not verified account access.",
   };
+}
+
+// Use the documented app-server inventory to prove package attribution before
+// starting OAuth. A same-name global server is not this plugin's connection.
+export async function pluginInventory() {
+  const { command, prefix } = codexCommand();
+  const child = spawn(command, [...prefix, "app-server", "--listen", "stdio://"], {
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  child.stderr.resume();
+  const lines = createInterface({ input: child.stdout });
+  const pending = new Map();
+  let nextId = 0;
+  const stop = () => {
+    for (const item of pending.values()) item.reject(new Error("CODEX_INVENTORY_FAILED"));
+    pending.clear();
+  };
+  child.on("error", stop);
+  child.on("exit", stop);
+  child.stdin.on("error", stop);
+  lines.on("line", (line) => {
+    if (line.length > 4 * 1024 * 1024) return stop();
+    try {
+      const message = JSON.parse(line);
+      const item = pending.get(message.id);
+      if (item) {
+        pending.delete(message.id);
+        if (message.error) item.reject(new Error("CODEX_INVENTORY_FAILED"));
+        else item.resolve(message.result);
+      }
+    } catch {
+      stop();
+    }
+  });
+  function request(method, params) {
+    return new Promise((resolve, reject) => {
+      const id = ++nextId;
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error("CODEX_INVENTORY_TIMEOUT"));
+      }, 20000);
+      pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      child.stdin.write(JSON.stringify({ id, method, params }) + "\n");
+    });
+  }
+  try {
+    await request("initialize", { clientInfo: { name: "scry_setup", version: "1.0.0" } });
+    child.stdin.write(JSON.stringify({ method: "initialized" }) + "\n");
+    const servers = [];
+    let cursor;
+    const seen = new Set();
+    do {
+      const page = await request("mcpServerStatus/list", {
+        detail: "toolsAndAuthOnly",
+        limit: 100,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (!Array.isArray(page.data)) fail("INVALID_CODEX_INVENTORY");
+      // Retain only the metadata needed for identity; never log tools or URLs.
+      servers.push(
+        ...page.data.map(({ name, pluginId, httpOrigin, authStatus }) => ({
+          name,
+          pluginId,
+          httpOrigin,
+          authStatus,
+        })),
+      );
+      cursor = page.nextCursor;
+      if (cursor && seen.has(cursor)) fail("INVALID_CODEX_INVENTORY");
+      seen.add(cursor);
+    } while (cursor);
+    return servers;
+  } finally {
+    stop();
+    child.kill();
+    lines.close();
+  }
+}
+
+export function login(name) {
+  const { command, prefix } = codexCommand();
+  // Codex owns the OAuth callback and credential storage and opens the default
+  // browser on macOS, Windows and Linux. Keep its URL/token output out of chat.
+  const result = spawnSync(
+    command,
+    [
+      ...prefix,
+      "mcp",
+      "login",
+      name,
+      "--scopes",
+      "scry:testing",
+      "--oauth-client-registration",
+      "dcr",
+    ],
+    {
+      encoding: "utf8",
+      timeout: 300000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  return !result.error && result.status === 0;
+}
+
+export async function authorize({ inventory = pluginInventory, signIn = login } = {}) {
+  const fallback = {
+    status: "needs_attention",
+    url: "codex://plugins/install/scry?marketplace=scry-beta",
+    message:
+      "Open Scry setup using this link, click Connect, then sign in and choose your workspace. If this Codex version cannot show the connection, update Codex and run setup again.",
+  };
+  try {
+    const servers = (await inventory()).filter(
+      (server) =>
+        server.pluginId === "scry@scry-beta" && server.httpOrigin === "https://scry.giize.com",
+    );
+    if (servers.length !== 1 || !/^[A-Za-z0-9_.:@/-]+$/.test(servers[0].name)) return fallback;
+    if (servers[0].authStatus === "oAuth")
+      return {
+        status: "authorized",
+        message: "Scry is already signed in. Check workspace access before calling setup complete.",
+      };
+    if (!(await signIn(servers[0].name))) return fallback;
+    return {
+      status: "authorized",
+      message: "Scry sign-in completed. Check workspace access before calling setup complete.",
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 if (
@@ -234,7 +421,10 @@ if (
     if (process.argv.includes("--check")) {
       validatePackage(data);
       console.log(JSON.stringify({ status: "validated", version: data.version, writes: false }));
-    } else console.log(JSON.stringify(await install(data)));
+    } else {
+      const result = await install(data);
+      console.log(JSON.stringify({ ...result, authorization: await authorize() }));
+    }
   } catch (error) {
     const known =
       /^(?:INVALID_|PACKAGE_|CODEX_|SCRY_|UNSAFE_|EXISTING_|UNEXPECTED_|INSTALL_)[A-Z_]+$/;

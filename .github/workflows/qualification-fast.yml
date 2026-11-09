@@ -8,6 +8,21 @@ permissions:
   contents: read
 
 jobs:
+  desktop-windows:
+    name: Windows desktop installer compatibility
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @scry/web exec vitest run scripts/desktop-installer.test.mjs scripts/build-plugins.test.mjs
+
   fast:
     name: Format, types, baseline boundaries, and tests
     runs-on: ubuntu-latest
