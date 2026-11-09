@@ -317,7 +317,10 @@ export async function pluginInventory() {
     });
   }
   try {
-    await request("initialize", { clientInfo: { name: "scry_setup", version: "1.0.0" } });
+    await request("initialize", {
+      clientInfo: { name: "scry_setup", version: "1.0.0" },
+      capabilities: { explicitGatewayOauth: true },
+    });
     child.stdin.write(JSON.stringify({ method: "initialized" }) + "\n");
     const servers = [];
     let cursor;
@@ -325,7 +328,8 @@ export async function pluginInventory() {
     do {
       const page = await request("mcpServerStatus/list", {
         detail: "toolsAndAuthOnly",
-        limit: 100,
+        serverName: "scry_beta",
+        limit: 1,
         ...(cursor ? { cursor } : {}),
       });
       if (!Array.isArray(page.data)) fail("INVALID_CODEX_INVENTORY");
