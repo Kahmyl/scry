@@ -179,12 +179,35 @@ describe("controlled native MCP profile", () => {
     await server.connect(a);
     await client.connect(b);
     try {
-      const tools = (await client.listTools()).tools.map((t) => t.name);
+      const definitions = (await client.listTools()).tools;
+      const tools = definitions.map((t) => t.name);
       expect(tools).toContain("browser_take_screenshot");
       expect(tools).toContain("browser_type_secret");
       expect(tools).toContain("browser_edit_text");
       expect(tools).not.toContain("command");
       expect(tools).not.toContain("browser_evaluate");
+      for (const name of [
+        "browser_take_screenshot",
+        "browser_snapshot",
+        "browser_find",
+        "browser_wait_for",
+      ]) {
+        const observation = definitions.find((t) => t.name === name)!;
+        expect(observation.annotations).toMatchObject({
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        });
+        expect(observation.description).toContain("durable action");
+      }
+      expect(definitions.find((t) => t.name === "browser_take_screenshot")?.description).toContain(
+        "Run evidence",
+      );
+      expect(definitions.find((t) => t.name === "browser_click")?.annotations).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: true,
+      });
       const result = await client.callTool({
         name: "browser_take_screenshot",
         arguments: {

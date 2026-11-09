@@ -97,7 +97,14 @@ export function registerNativeBrowserTools(
     server.registerTool(
       d.name,
       {
-        description: d.description,
+        description:
+          d.description +
+          (nativeObservationTools.has(d.name)
+            ? " Scry queues this observation as a durable action and saves its result." +
+              (d.name === "browser_take_screenshot"
+                ? " Screenshot images persist as Run evidence."
+                : "")
+            : ""),
         inputSchema: {
           ...d.schema.shape,
           browserSessionId: uuid,
@@ -111,7 +118,8 @@ export function registerNativeBrowserTools(
         },
         _meta: toolAuthMetadata(),
         annotations: {
-          readOnlyHint: nativeObservationTools.has(d.name),
+          // Observing the target still queues work and persists state in Scry.
+          readOnlyHint: false,
           destructiveHint: !nativeObservationTools.has(d.name),
           idempotentHint: true,
           openWorldHint: true,
