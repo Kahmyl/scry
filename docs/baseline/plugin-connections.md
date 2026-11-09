@@ -130,6 +130,9 @@ checksums. The installer validates the manifests, rejects file/catalog conflicts
 and symlinks, and invokes at most three supported CLI commands. It does not ask
 the model to research installation, generate Python, inspect general configuration,
 or implement its own archive extraction. Node.js 18+ and Codex CLI are prerequisites.
+The executable resolves its entry path canonically so symlinked temporary
+directories on macOS start correctly. The bootstrap requires an explicit
+installation confirmation instead of treating an empty successful exit as a pass.
 
 The installer uses a dedicated local marketplace, preserves existing configuration,
 and leaves OAuth consent to the customer through the host's plugin Connect action.
