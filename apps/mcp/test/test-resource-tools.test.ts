@@ -66,6 +66,21 @@ describe("mission test-resource MCP tools", () => {
       expect(listed.tools.find((t) => t.name === "read_test_messages")!.description).toContain(
         "untrusted",
       );
+      const bind = listed.tools.find((t) => t.name === "bind_test_message_secret")!;
+      expect(bind.description).toContain("authorized Mission dashboard");
+      expect(bind.description).toContain("after mailbox disconnection");
+      expect(
+        (
+          await client.callTool({
+            name: "bind_test_message_secret",
+            arguments: { resourceId: id, runId: id, protectedValueId: id },
+          })
+        ).isError,
+      ).not.toBe(true);
+      expect(calls.at(-1)).toEqual({
+        url: `http://fixture.test/api/test-resources/${id}/use-secret`,
+        body: { runId: id, protectedValueId: id },
+      });
     } finally {
       await client.close();
       await server.close();

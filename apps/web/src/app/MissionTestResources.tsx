@@ -503,12 +503,37 @@ function MissionTestResourcesPanel({
                       </summary>
                       <MessageContent content={event.content} />
                       {!!event.secrets.length && (
-                        <p className="test-resource-secret-note">
-                          {event.secrets.length} access{" "}
-                          {event.secrets.length === 1 ? "value is" : "values are"} protected. The
-                          testing agent can use them within this mission without displaying them
-                          here.
-                        </p>
+                        <details className="test-message-handoff">
+                          <summary>Use protected values in this mission</summary>
+                          <p>
+                            The links and codes stay private. These opaque references let your
+                            testing agent use them in the same Mission and an active Run. Scry
+                            checks access and expiry before use; a reference does not confirm that
+                            an invitation was accepted.
+                          </p>
+                          <dl>
+                            <dt>Resource reference (resourceId)</dt>
+                            <dd>
+                              <code>{current.id}</code>
+                            </dd>
+                            {event.secrets.map((secret, index) => (
+                              <div key={secret.protectedValueId}>
+                                <dt>
+                                  Protected {secret.kind === "link" ? "link" : "code"} {index + 1}
+                                </dt>
+                                <dd>
+                                  <span>protectedValueId: </span>
+                                  <code>{secret.protectedValueId}</code>
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                          <p>
+                            The agent can bind the chosen reference with bind_test_message_secret,
+                            then use browser_navigate_secret for a link or browser_type_secret for a
+                            code. The browser's existing origin limits still apply.
+                          </p>
+                        </details>
                       )}
                     </details>
                   ))}

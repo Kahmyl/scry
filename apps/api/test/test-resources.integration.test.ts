@@ -231,6 +231,79 @@ const target = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
       await withProviderBudget(() => service.close(scope.workspaceId, resource.id));
       expect(await repo.events(scope.workspaceId, resource.id)).toHaveLength(1);
     }, 20000);
+    it("hands off a saved invitation after disconnection while enforcing scope, expiry and active Run checks", async () => {
+      const address = `invitation-${randomUUID()}@mail.example`;
+      const account = { id: randomUUID(), password: "fictional-inbox-password" };
+      const url = "https://fixture.example/accept?token=fictional_invitation_access";
+      accounts.set(address, account);
+      messages.set(address, [
+        {
+          id: randomUUID(),
+          accountId: account.id,
+          createdAt: new Date().toISOString(),
+          subject: "Review your invitation",
+          text: `Review invitation: ${url}`,
+          html: [`<a href="${url}">Review invitation</a>`],
+        },
+      ]);
+      const password = await service.commands.createProtectedInput(scope.workspaceId, {
+        projectId: scope.projectId,
+        displayName: "Invitation inbox",
+        value: account.password,
+        expiresInSeconds: null,
+        idempotencyKey: randomUUID(),
+      });
+      const resource = await withProviderBudget(() =>
+        service.connect(scope.workspaceId, scope.missionId, {
+          name: "Restoration inbox",
+          address,
+          passwordCredentialId: password.protectedValueId,
+          idempotencyKey: randomUUID(),
+          expiresInSeconds: 3600,
+        }),
+      );
+      await withProviderBudget(() =>
+        service.read(scope.workspaceId, resource.id, { waitSeconds: 0 }),
+      );
+      await service.close(scope.workspaceId, resource.id);
+      const beforeRead = vi.mocked(fetch).mock.calls.length;
+      const saved = await repo.events(scope.workspaceId, resource.id);
+      const reference = saved[0]!.secrets.find((s) => s.kind === "link")!;
+      expect(reference).toBeDefined();
+      expect(JSON.stringify(saved)).not.toContain("fictional_invitation_access");
+      const bind = () =>
+        service.useSecret(scope.workspaceId, resource.id, scope.runId, reference.protectedValueId);
+      expect((await bind()).browserSessionId).toBe(sessionId);
+      expect((await bind()).replay).toBe(true);
+      expect(
+        await service.commands.protectedValueForBrowser(sessionId, reference.protectedValueId),
+      ).toBe(url);
+      expect(vi.mocked(fetch).mock.calls.length).toBe(beforeRead);
+      expect(accounts.has(address)).toBe(true);
+      await expect(
+        service.useSecret(randomUUID(), resource.id, scope.runId, reference.protectedValueId),
+      ).rejects.toThrow("TEST_RESOURCE_NOT_FOUND");
+      await expect(
+        service.useSecret(scope.workspaceId, resource.id, scope.runId, password.protectedValueId),
+      ).rejects.toThrow("TEST_SECRET_SCOPE_INVALID");
+      await db.query(
+        "UPDATE protected_values SET expires_at=now()-interval '1 second' WHERE id=$1",
+        [reference.protectedValueId],
+      );
+      await expect(bind()).rejects.toThrow("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
+      await expect(
+        service.commands.protectedValueForBrowser(sessionId, reference.protectedValueId),
+      ).rejects.toThrow("SCRY_BROWSER_PROTECTED_VALUE_UNAVAILABLE");
+      await db.query("UPDATE protected_values SET expires_at=now()+interval '1 day' WHERE id=$1", [
+        reference.protectedValueId,
+      ]);
+      await db.query("UPDATE runs SET state='finalizing' WHERE id=$1", [scope.runId]);
+      try {
+        await expect(bind()).rejects.toThrow("SCRY_BROWSER_RUN_NOT_ACTIVE");
+      } finally {
+        await db.query("UPDATE runs SET state='running' WHERE id=$1", [scope.runId]);
+      }
+    }, 20000);
     it("accepts only exact account references for received email", async () => {
       const resource = await allocate();
       const account = accounts.get(resource.address!)!;

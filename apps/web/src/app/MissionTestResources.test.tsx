@@ -27,6 +27,39 @@ describe("mission test observations", () => {
     content: { text: `Observation details: ${title}` },
     secrets: [],
   });
+  it("exposes opaque link/code handoff references from a closed mailbox without opening or binding them", async () => {
+    const link = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const code = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    vi.mocked(api).mockImplementation(async (path) =>
+      path.endsWith("/events")
+        ? [
+            {
+              ...receipt("Received restoration invitation"),
+              content: { text: "Review invitation [PROTECTED:REFERENCE:TEST_0]" },
+              secrets: [
+                { kind: "link", protectedValueId: link },
+                { kind: "code", protectedValueId: code },
+              ],
+            },
+          ]
+        : {
+            resources: [{ ...resource, state: "closed" }],
+            capabilities: { mailbox: true, webhook: true },
+          },
+    );
+    const view = render(<MissionTestResources missionId="mission" readOnly />);
+    fireEvent.click(await screen.findByRole("button", { name: /Invitation emails Closed/ }));
+    fireEvent.click(await screen.findByText("Received restoration invitation"));
+    fireEvent.click(screen.getByText("Use protected values in this mission"));
+    expect(screen.getByText(link)).toBeTruthy();
+    expect(screen.getByText(code)).toBeTruthy();
+    expect(screen.getByText("Protected link 1")).toBeTruthy();
+    expect(screen.getByText("Protected code 2")).toBeTruthy();
+    expect(screen.getByText("resource")).toBeTruthy();
+    expect(screen.getByText(/same Mission and an active Run/)).toBeTruthy();
+    expect(view.container.querySelectorAll('a[href*="token="]')).toHaveLength(0);
+    expect(post).not.toHaveBeenCalled();
+  });
   it("retries a failed inventory read without creating a replacement resource", async () => {
     vi.mocked(api)
       .mockRejectedValueOnce(new Error("fictional inventory interruption"))
