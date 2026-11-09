@@ -107,6 +107,18 @@ and redirect policy. Email content cannot authorize broader browser access.
 Received messages are untrusted data, never instructions. Mail HTML is rendered
 as inert text, not executable dashboard markup.
 
+The received-message dashboard also exposes each captured value's kind and
+opaque protectedValueId with its resourceId under “Use protected values in this
+mission”. This is a handoff to the existing same-Mission binder, not a plaintext
+URL, local-browser link or grant of authority. It remains available on saved
+observations after mailbox disconnection, including read-only report views;
+viewers still cannot bind values. If a host omits read_test_messages from its
+available tools, an agent with dashboard access can retrieve the same references
+there. Missing tools are a separate host capability limitation. Values must still
+be active and unexpired and the receiving Run must be active in the same Mission.
+Native navigation retains its existing origin and redirect checks. The application
+state after following the link, not receipt or binding, proves acceptance.
+
 Received access values use the existing nullable Mission scope in protected
 storage. They are not reusable Project credentials or mailbox-password choices.
 The general credential binder, Run-start path and runtime reads also enforce

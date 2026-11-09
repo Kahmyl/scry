@@ -95,7 +95,7 @@ export function registerTestResourceTools(server: McpServer, client: BrowserApiC
     "bind_test_message_secret",
     {
       description:
-        "Bind a generated test-message code/access-link reference to an active Run in the same Mission. Only use protectedValueId returned for this resource; no saved customer credential is selected. Does not return plaintext. In the native profile use browser_type_secret or browser_navigate_secret; retained command profiles support protected fills for codes only.",
+        "Bind a generated test-message code/access-link reference to an active Run in the same Mission. Use protectedValueId and resourceId from read_test_messages or the authorized Mission dashboard's received message: expand Use protected values in this mission. This dashboard handoff also works for already-recorded messages after mailbox disconnection. No saved customer credential is selected. Does not return plaintext. In the native profile use browser_type_secret or browser_navigate_secret; retained command profiles support protected fills for codes only. Verify the application outcome afterward; receipt or binding alone is not acceptance.",
       inputSchema: { resourceId: uuid, runId: uuid, protectedValueId: uuid },
       _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,

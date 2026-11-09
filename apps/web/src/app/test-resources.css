@@ -140,6 +140,23 @@
   border-left: 2px solid #a9d5ee;
   padding-left: 0.75rem;
 }
+.test-message-handoff {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border, #2c353d);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+.test-message-handoff summary {
+  color: var(--text, #e6ecef);
+}
+.test-message-handoff dt {
+  margin-top: 0.75rem;
+}
+.test-message-handoff dd {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
 .test-resource-status {
   display: flex;
   gap: 0.5rem;
