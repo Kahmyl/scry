@@ -8,7 +8,14 @@ import {
 } from "@nestjs/common";
 import Provider, { errors, type Configuration, type ClientMetadata } from "oidc-provider";
 import { Database } from "../../infrastructure/database.js";
-import { oauthConfiguration, testingScope, type OAuthConfiguration } from "./config.js";
+import {
+  oauthConfiguration,
+  testingScope,
+  oauthClientAuthMethods,
+  oauthGrantTypes,
+  oauthResponseTypes,
+  type OAuthConfiguration,
+} from "./config.js";
 import { ConnectionsRepository } from "./connections.repository.js";
 import { providerAdapter } from "./provider-adapter.js";
 import { BrowserProtectedValueCipher } from "@scry/veil";
@@ -96,9 +103,7 @@ export function validateClient(metadata: ClientMetadata) {
     metadata.jwks ||
     (metadata.subject_type && metadata.subject_type !== "public") ||
     (metadata.token_endpoint_auth_method &&
-      !["none", "client_secret_basic", "client_secret_post"].includes(
-        metadata.token_endpoint_auth_method,
-      ))
+      !oauthClientAuthMethods.includes(metadata.token_endpoint_auth_method))
   )
     throw new errors.InvalidClientMetadata("Use a standard authorization-code client with PKCE.");
   if (
@@ -106,11 +111,13 @@ export function validateClient(metadata: ClientMetadata) {
     (metadata.client_name.length > 100 || /[\x00-\x1f]/u.test(metadata.client_name))
   )
     throw new errors.InvalidClientMetadata("Choose a short client name.");
-  if (
-    metadata.grant_types?.some((grant) => !["authorization_code", "refresh_token"].includes(grant))
-  )
+  if (metadata.grant_types?.some((grant) => !oauthGrantTypes.includes(grant)))
     throw new errors.InvalidClientMetadata("Unsupported grant type.");
-  if (metadata.response_types?.some((response) => response !== "code"))
+  if (
+    metadata.response_types?.some(
+      (response) => !oauthResponseTypes.some((allowed) => allowed === response),
+    )
+  )
     throw new errors.InvalidClientMetadata("Only authorization code responses are supported.");
   for (const value of metadata.redirect_uris ?? []) {
     const url = new URL(value);
@@ -140,11 +147,11 @@ export function createOAuthProvider(
     },
     clients: [],
     clientDefaults: {
-      grant_types: ["authorization_code", "refresh_token"],
-      response_types: ["code"],
+      grant_types: [...oauthGrantTypes],
+      response_types: [...oauthResponseTypes],
       token_endpoint_auth_method: "none",
     },
-    responseTypes: ["code"],
+    responseTypes: [...oauthResponseTypes],
     // MCP clients repeat the resource scope during dynamic registration. It
     // must be advertised here as well as in resourceIndicators; grants still
     // bind it exclusively to the configured Scry resource and workspace.

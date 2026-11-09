@@ -230,9 +230,12 @@ test("authorization targets only the attributed plugin, opens sign-in and distin
     pluginId: "scry@scry-beta",
     httpOrigin: "https://scry.giize.com",
     authStatus: "notLoggedIn",
+    projectListingAvailable: true,
+    discoveryFailed: false,
   };
   const signIn = async (name) => {
     calls.push(name);
+    server.authStatus = "oAuth";
     return true;
   };
   const result = await authorize({
@@ -260,13 +263,52 @@ test("authorization targets only the attributed plugin, opens sign-in and distin
   }
   expect(calls).toEqual([]);
   expect(
-    (await authorize({ inventory: async () => [server], signIn: async () => false })).status,
+    (
+      await authorize({
+        inventory: async () => [{ ...server, authStatus: "notLoggedIn" }],
+        signIn: async () => false,
+      })
+    ).status,
   ).toBe("needs_attention");
   expect(
     (await authorize({ inventory: async () => [{ ...server, authStatus: "oAuth" }], signIn }))
       .status,
   ).toBe("authorized");
   expect(calls).toEqual([]);
+});
+
+test("stored OAuth and a successful login never count as ready when discovery fails", async () => {
+  const server = {
+    name: "scry_beta",
+    pluginId: "scry@scry-beta",
+    httpOrigin: "https://scry.giize.com",
+    authStatus: "oAuth",
+    discoveryFailed: true,
+    projectListingAvailable: false,
+  };
+  let loginCalls = 0;
+  const signIn = async () => {
+    loginCalls++;
+    return true;
+  };
+  const stale = await authorize({ inventory: async () => [server], signIn });
+  expect(stale.status).toBe("needs_attention");
+  expect(stale.linkLabel).toBe("Contact Scry support");
+  expect(stale.message).not.toContain("already signed in");
+  expect(loginCalls).toBe(0);
+  let reads = 0;
+  const afterLogin = await authorize({
+    inventory: async () => [{ ...server, authStatus: ++reads === 1 ? "notLoggedIn" : "oAuth" }],
+    signIn,
+  });
+  expect(loginCalls).toBe(1);
+  expect(reads).toBe(2);
+  expect(afterLogin.status).toBe("needs_attention");
+  const noCatalog = await authorize({
+    inventory: async () => [{ ...server, discoveryFailed: false }],
+    signIn,
+  });
+  expect(noCatalog.status).toBe("needs_attention");
 });
 
 test("Windows uses native executables or the npm Node entry point without a shell", () => {
