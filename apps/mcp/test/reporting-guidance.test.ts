@@ -43,6 +43,10 @@ describe("self-contained external-agent reporting guidance", () => {
         );
         expect(instructions).toContain("Continue independent checks while waiting");
         expect(instructions).toContain("Do not ask customers for internal IDs");
+        expect(instructions).toContain("unsupported workspace administration");
+        expect(instructions).toContain("in the same reply");
+        expect(instructions).toContain("https://scry.giize.com/support");
+        expect(instructions).toContain("Do not invent an administration screen");
         expect(instructions).toContain(
           "Separate operations exercised from successful business journeys",
         );
