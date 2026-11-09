@@ -12,4 +12,6 @@ test-results/
 playwright-report/
 /eng.traineddata
 /apps/web/public/plugins/*.zip
+/apps/web/public/plugins/scry-desktop-setup.txt
+/apps/web/public/plugins/scry-desktop-marketplace.json
 /.env.oauth.local

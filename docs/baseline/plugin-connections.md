@@ -114,18 +114,33 @@ HTTP is allowed locally) and agree with the OAuth origin. Compose sets the publi
 domain in deployment and port 5173 locally. Without either setting, report data
 remains readable but links are omitted; internal API hostnames are never used.
 
-Web builds generate credential-free Codex, Claude and Cursor archives from an
-explicit source allowlist. The Connections screen links the optional downloads.
+Web builds generate credential-free ChatGPT, Codex, Claude and Cursor archives
+from an explicit source allowlist. ChatGPT and Codex share the same portable
+package. For the hosted Scry endpoint, package installation is the primary
+Connections guide: ChatGPT web uses Add → Upload plugin archive, while desktop /
+Codex opens a setup chat with a prefilled message the customer must send.
+Manual MCP setup remains under Other methods. Claude, Cursor and other MCP clients
+retain their custom connection guides. No package download or setup click marks
+account access as verified.
+
+Desktop setup instructions are generated alongside the archive with its exact
+version and SHA-256. They use a dedicated local marketplace and the supported
+marketplace/plugin install commands, preserve existing configuration, and require
+the customer to complete OAuth consent. They do not assume an unknown marketplace
+can be installed by a deep link. A local installation does not establish a cloud
+or mobile installation. Accounts must allow the relevant upload/custom-connection
+capabilities; fresh independent personal-account import and OAuth remain a
+separate compatibility gate, not a claim established by this setup UI.
+
 The archives target `https://scry.giize.com/mcp`; the UI warns when the current
-server address differs. A local-server trial must use that server's address,
+server address differs and keeps manual setup primary there. A local-server trial must use that server's address,
 not silently install a package targeting the hosted deployment.
 These are local installation candidates, not public marketplace listings.
 Claude has its native manifest alongside the portable manifest; Codex and Cursor
 use the Agent Plugins format. Review each client's installation documentation
 and plan/organization restrictions before promising a particular setup path.
 
-The normal path remains adding the hosted MCP address and signing in. Installation
-and consent alone do not mark a connection verified: an authenticated request
+Installation and consent alone do not mark a connection verified: an authenticated request
 must reach Scry. The customer can refresh all connections and explicitly
 disconnect an owned grant without deleting evidence. Expired grants are labeled
 for reconnection. Manual token management stays collapsed under Advanced.

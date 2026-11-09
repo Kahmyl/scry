@@ -6,6 +6,11 @@ import { api, post, remove } from "../../infrastructure/api/client.js";
 import { Connections } from "./connections.js";
 import { OAuthConsent } from "./OAuthConsent.js";
 import { rememberConnectionReturn, takeConnectionReturn } from "./connection-return.js";
+import { publicConfig } from "../../infrastructure/config/runtime-config.js";
+
+vi.mock("../../infrastructure/config/runtime-config.js", () => ({
+  publicConfig: { mcpServerUrl: "https://scry.giize.com/mcp" },
+}));
 
 vi.mock("../../infrastructure/api/client.js", () => ({
   api: vi.fn(),
@@ -21,6 +26,7 @@ const connection = {
   revokedAt: null,
 };
 beforeEach(() => {
+  publicConfig.mcpServerUrl = "https://scry.giize.com/mcp";
   vi.mocked(api).mockImplementation(async (path) =>
     path === "/mcp-tokens" ? [] : { available: true, connections: [] },
   );
@@ -53,14 +59,64 @@ describe("guided account connections", () => {
     expect(await screen.findByText("Approved · waiting for client verification")).toBeTruthy();
     expect(screen.queryByText("Connected · authenticated access verified")).toBeNull();
   });
-  it("offers guided setup without manual access-token controls", async () => {
+  it("makes packaged web and desktop setup primary and keeps manual connection collapsed", async () => {
     render(<Connections />);
-    expect(await screen.findByRole("button", { name: "Copy Scry address" })).toBeTruthy();
+    expect(
+      (await screen.findByRole("link", { name: "Download Scry plugin" })).getAttribute("href"),
+    ).toBe("/plugins/scry-chatgpt.zip");
+    const desktop = screen.getByRole("link", { name: /Open desktop setup/ });
+    const url = new URL(desktop.getAttribute("href")!);
+    expect(url.protocol).toBe("codex:");
+    expect(url.hostname).toBe("new");
+    expect(url.searchParams.get("prompt")).toContain(
+      "https://scry.giize.com/plugins/scry-desktop-setup.txt",
+    );
+    expect(screen.getByText(/then send the prepared message/)).toBeTruthy();
+    const other = screen.getByText("Other methods").closest("details")!;
+    expect(other.open).toBe(false);
+    fireEvent.click(screen.getByText("Other methods"));
+    expect(other.open).toBe(true);
+    expect(screen.getByRole("button", { name: "Copy Scry address" })).toBeTruthy();
     expect(screen.queryByText(/manual access-token setup/)).toBeNull();
+  });
+  it("keeps Cursor and other MCP client setup on their custom connection paths", async () => {
+    render(<Connections />);
+    await screen.findByRole("link", { name: "Download Scry plugin" });
     fireEvent.click(screen.getByRole("radio", { name: "Cursor" }));
     const link = screen.getByRole("link", { name: /Add to Cursor/ });
     expect(link.getAttribute("href")).toMatch(/^cursor:\/\//);
     expect(link.getAttribute("href")).not.toContain("Bearer");
+    expect(screen.queryByRole("link", { name: /Open desktop setup/ })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Other MCP clients" }));
+    expect(screen.getByText(/custom remote MCP connection/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Copy Scry address" })).toBeTruthy();
+    expect(screen.queryByText("Optional workflow skills")).toBeNull();
+  });
+  it("does not connect local or custom deployments to the hosted plugin by mistake", async () => {
+    publicConfig.mcpServerUrl = "https://custom.example/mcp";
+    render(<Connections />);
+    expect(await screen.findByRole("button", { name: "Copy Scry address" })).toBeTruthy();
+    expect(screen.getByText("https://custom.example/mcp")).toBeTruthy();
+    expect(screen.getByText(/To connect to this server/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Download Scry plugin" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Open desktop setup/ })).toBeNull();
+  });
+  it("copies the manual address only when chosen, with useful clipboard failure recovery", async () => {
+    const writeText = vi.fn().mockRejectedValueOnce(new Error("Clipboard denied"));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<Connections />);
+    await screen.findByRole("link", { name: "Download Scry plugin" });
+    expect(writeText).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Other methods"));
+    fireEvent.click(screen.getByRole("button", { name: "Copy Scry address" }));
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("Copy the connection address"),
+    );
+    writeText.mockResolvedValueOnce(undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Copy Scry address" }));
+    expect(await screen.findByRole("button", { name: "Address copied" })).toBeTruthy();
+    expect(writeText).toHaveBeenLastCalledWith("https://scry.giize.com/mcp");
   });
   it("shows only active grants, including approved clients awaiting first use", async () => {
     vi.mocked(api).mockResolvedValueOnce({
@@ -140,6 +196,7 @@ describe("guided account connections", () => {
     render(<Connections />);
     expect(await screen.findByText(/Guided sign-in is not enabled/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Copy Scry address" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Download Scry plugin" })).toBeNull();
     cleanup();
     vi.mocked(api).mockRejectedValueOnce(new Error("private internal diagnostic"));
     render(<Connections />);
