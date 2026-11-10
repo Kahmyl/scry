@@ -72,7 +72,8 @@ export class ConnectionsRepository {
     const user = requireDashboardUser(principal);
     return (
       await this.database.query(
-        `SELECT c.id,c.client_name AS "clientName",w.name AS "workspaceName",c.created_at AS "createdAt",c.last_used_at AS "lastUsedAt",c.revoked_at AS "revokedAt",
+        `SELECT c.id,c.client_name AS "clientName",c.workspace_id AS "workspaceId",w.name AS "workspaceName",c.created_at AS "createdAt",c.last_used_at AS "lastUsedAt",c.revoked_at AS "revokedAt",
+          EXISTS(SELECT 1 FROM workspace_memberships m WHERE m.user_id=c.user_id AND m.workspace_id=c.workspace_id) AS "workspaceAccess",
           (g.id_hash IS NULL OR g.expires_at<=now()) AS expired
       FROM oauth_connections c JOIN workspaces w ON w.id=c.workspace_id
       LEFT JOIN oauth_provider_records g ON g.model='Grant' AND g.id_hash=c.grant_hash
@@ -80,6 +81,47 @@ export class ConnectionsRepository {
         [user.userId],
       )
     ).rows;
+  }
+  async diagnostics(principal: Principal, id?: string) {
+    if (id) requireDashboardUser(principal);
+    if (principal.kind === "service")
+      return {
+        serverAuthenticated: true,
+        credentialKind: "service",
+        hostToolExposure: "unknown",
+        connection: null,
+      };
+    const connectionId = id ?? principal.oauthConnectionId;
+    const result = connectionId
+      ? await this.database.boundedTransaction(async (c) => {
+          const rows = await c.query(
+            `SELECT c.id,c.client_id,c.client_name AS "clientName",c.workspace_id AS "workspaceId",c.created_at AS "createdAt",c.last_used_at AS "lastAuthenticatedUse",c.revoked_at IS NOT NULL AS revoked,
+        EXISTS(SELECT 1 FROM workspace_memberships m WHERE m.user_id=c.user_id AND m.workspace_id=c.workspace_id) AS "workspaceAccess",
+        (g.id_hash IS NOT NULL AND g.expires_at>now()) AS "grantAvailable",g.expires_at AS "grantExpiresAt",c.scope
+        FROM oauth_connections c LEFT JOIN oauth_provider_records g ON g.model='Grant' AND g.id_hash=c.grant_hash WHERE c.id=$1 AND c.user_id=$2`,
+            [connectionId, principal.userId],
+          );
+          if (rows.rows[0]) {
+            const client = await c.query(
+              "SELECT EXISTS(SELECT 1 FROM oauth_provider_records WHERE model='Client' AND id_hash=$1 AND (expires_at IS NULL OR expires_at>now())) AS ready",
+              [digest(rows.rows[0].client_id)],
+            );
+            rows.rows[0].clientRegistrationAvailable = client.rows[0]?.ready === true;
+            delete rows.rows[0].client_id;
+          }
+          return rows;
+        }, 2000)
+      : undefined;
+    if (id && !result?.rows[0]) throw new ForbiddenException("Connection not found.");
+    return {
+      serverAuthenticated: true,
+      credentialKind: principal.credentialKind ?? "user",
+      workspaceId: principal.workspaceId,
+      hostToolExposure: "unknown",
+      connection: result?.rows[0] ?? null,
+      explanation:
+        "This verifies this server request and stored authorization facts. It cannot prove that a desktop chat loaded the plugin or exposed its tools. A historical successful call does not prove current host discovery. No reinstall or re-consent is performed.",
+    };
   }
   async revoke(principal: Principal, id: string) {
     const user = requireDashboardUser(principal);

@@ -923,6 +923,13 @@ export class BrowserExecutionRepository {
       );
       if (incomplete.rows[0])
         throw new Error(`SCRY_BROWSER_SESSION_INCOMPLETE:${incomplete.rows[0].id}`);
+      if (!allowUnknown) {
+        const nativeUncertain = await client.query(
+          "SELECT 1 FROM browser_commands WHERE session_id=$1 AND kind='browser_tool' AND (state IN ('queued','running') OR safe_result->>'execution'='unknown') LIMIT 1",
+          [sessionId],
+        );
+        if (nativeUncertain.rowCount) throw new Error("SCRY_BROWSER_NATIVE_OUTCOME_UNKNOWN");
+      }
       const evidence = await new ChronicleRepository(client).evidenceStatus(sessionId, true);
       if (
         !evidence?.sealed ||

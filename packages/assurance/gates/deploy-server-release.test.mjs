@@ -95,7 +95,26 @@ assert.ok(
   "active-work refusal must occur before backup or migration",
 );
 assert.ok(!active.log.includes("run --rm --no-deps migrate"));
-assert.ok(active.log.includes("start caddy"), "the previous public entrypoint must be restored");
+assert.ok(!active.log.includes("stop -t"), "known active work must refuse without disruption");
+assert.ok(!active.log.includes("beginning recovery"));
+
+const activeWithBrokenMigration = runScenario("active-broken-migration", {
+  ACTIVE_WORK: "2",
+  FAIL_MIGRATE: "true",
+});
+assert.notEqual(activeWithBrokenMigration.status, 0);
+assert.ok(!activeWithBrokenMigration.log.includes("stop -t"));
+assert.ok(!activeWithBrokenMigration.log.includes("migrate"));
+
+const racedAdmission = runScenario("active-race", { RACE_ACTIVE_WORK: "true" });
+assert.notEqual(racedAdmission.status, 0);
+assert.match(racedAdmission.stderr, /deployment refused because 2 browser work item/);
+assert.ok(!racedAdmission.log.includes("stop -t 30 caddy"));
+assert.ok(!racedAdmission.log.includes("pg_dump"));
+assert.ok(!racedAdmission.log.includes("--force-recreate"));
+assert.ok(!racedAdmission.log.includes("start caddy"));
+assert.ok(!racedAdmission.log.includes("stop -t 60 caddy web"));
+assert.match(racedAdmission.state, new RegExp(`CURRENT_RELEASE_ID=${previousRelease}`));
 
 const migrationFailure = runScenario("migration-failure", { FAIL_MIGRATE: "true" });
 assert.notEqual(migrationFailure.status, 0);
@@ -293,7 +312,11 @@ if [[ "$args" == *"com.docker.compose.project.working_dir"* ]]; then printf '%s\
 if [[ "$args" == *"index .RepoDigests 0"* ]]; then printf '%s\\n' "$CANDIDATE_IMAGE"; exit 0; fi
 if [[ "$args" == *"org.scry.release-id"* ]]; then printf '%s\\n' "$CANDIDATE_RELEASE"; exit 0; fi
 if [[ "$args" == *"SELECT 1 FROM pg_database"* ]]; then printf '1\\n'; exit 0; fi
-if [[ "$args" == *"browser_execution_sessions"* ]]; then printf '%s\\n' "\${ACTIVE_WORK:-0}"; exit 0; fi
+if [[ "$args" == *"browser_try_deployment"* ]]; then
+  if [[ "\${RACE_ACTIVE_WORK:-false}" == true ]]; then printf '2\\n';
+  else printf '%s\\n' "\${ACTIVE_WORK:-0}"; fi
+  exit 0
+fi
 if [[ "$args" == *"pg_dump"* ]]; then printf 'mock-database-dump\\n'; exit 0; fi
 if [[ "$args" == *"exec -T api wget"* ]]; then
   if [[ "$SCRY_RELEASE_ID" == "$CANDIDATE_RELEASE" ]]; then

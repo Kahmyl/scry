@@ -13,6 +13,7 @@ const app = await NestFactory.create<NestFastifyApplication>(AppModule, new Fast
 await mountOAuth(app);
 await app.get(BrowserExecutionRepository).assertCompatibleBaseline();
 app.enableCors({
+  credentials: true,
   origin: (process.env.API_CORS_ORIGINS ?? "http://127.0.0.1:5173,http://localhost:5173")
     .split(",")
     .map((origin) => origin.trim()),

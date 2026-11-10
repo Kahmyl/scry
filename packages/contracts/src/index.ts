@@ -7,3 +7,7 @@ export * from "./praxis-ports.js";
 export * from "./native-browser-command.js";
 export * from "./browser-runtime-profile.js";
 export * from "./test-resources.js";
+export * from "./agent-workflow.js";
+export * from "./cleanup.js";
+export * from "./masking-diagnostics.js";
+export * from "./native-capabilities.js";

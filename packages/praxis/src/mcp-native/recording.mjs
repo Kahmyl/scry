@@ -101,13 +101,15 @@ if (process.argv[2] === "--child") {
     stopping,
     coverage = "complete",
     reason = "complete";
-  const started = Date.now();
+  let started = Date.now(),
+    timingOrigin = "recorder_start";
   const manifest = async () => {
     const receipt = {
       ...(await inspectRecording(directory)),
       coverage,
       reason,
       started,
+      timingOrigin,
       ended: Date.now(),
       timing: "native_realtime",
       masking: "best_effort",
@@ -158,7 +160,8 @@ if (process.argv[2] === "--child") {
       [
         "-hide_banner",
         "-loglevel",
-        "error",
+        "info",
+        "-nostats",
         "-f",
         "x11grab",
         "-draw_mouse",
@@ -188,7 +191,19 @@ if (process.argv[2] === "--child") {
       ],
       { stdio: ["ignore", "ignore", "pipe"] },
     );
-    ffmpeg.stderr.on("data", () => {});
+    let captureHeader = "";
+    ffmpeg.stderr.on("data", (chunk) => {
+      if (timingOrigin === "native_capture") return;
+      captureHeader = (captureHeader + chunk.toString("utf8")).slice(-32768);
+      const match = captureHeader.match(/start:\s*(\d+\.\d+)/);
+      if (match) {
+        const epoch = Math.round(Number(match[1]) * 1000);
+        if (Number.isSafeInteger(epoch) && Math.abs(Date.now() - epoch) < 30000) {
+          started = epoch;
+          timingOrigin = "native_capture";
+        }
+      }
+    });
     ffmpeg.on("error", () => {
       coverage = "unavailable";
       reason = "encoder_start_failed";

@@ -21,11 +21,13 @@ import {
 } from "./components/index.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { RunEvidence } from "./RunEvidence.js";
+import { RunRecovery } from "./RunRecovery.js";
 import { reportNarrative, type EvidenceSelection } from "./ReportNarrative.js";
 import { MissionCollection } from "./MissionCollection.js";
 import { ReportEvidenceBrowser } from "./ReportEvidenceBrowser.js";
 import { EvidenceLoading } from "./EvidenceLoading.js";
 import { MissionTestResources } from "./MissionTestResources.js";
+import { MissionCleanup } from "./MissionCleanup.js";
 import {
   MissionDetailDesign,
   JourneyEvidenceDesign,
@@ -369,6 +371,7 @@ function MissionDetailView({
         <>
           <MissionJourneys mission={mission} />
           <MissionTestResources missionId={missionId} />
+          <MissionCleanup missionId={missionId} />
         </>
       }
     />
@@ -429,11 +432,14 @@ function MissionJourneys({
         (run || selected) && (
           <section aria-label="Selected attempt evidence" ref={evidenceDestination} tabIndex={-1}>
             {run ? (
-              <RunEvidence
-                key={run.id}
-                runId={run.id}
-                {...(selected?.artifactId ? { initialArtifactId: selected.artifactId } : {})}
-              />
+              <>
+                <RunRecovery key={`recovery-${run.id}`} runId={run.id} />
+                <RunEvidence
+                  key={run.id}
+                  runId={run.id}
+                  {...(selected?.artifactId ? { initialArtifactId: selected.artifactId } : {})}
+                />
+              </>
             ) : (
               <p role="alert">
                 That evidence reference does not belong to an available attempt in this mission.
@@ -522,6 +528,7 @@ function ReportDetail({
             onSelect={setSelection}
           />
           <MissionTestResources missionId={report.missionId} readOnly />
+          <MissionCleanup missionId={report.missionId} readOnly />
         </>
       )}
     />

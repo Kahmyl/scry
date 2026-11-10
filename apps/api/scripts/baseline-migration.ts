@@ -226,7 +226,18 @@ export async function migrateBrowserBaseline(input: BaselineMigrationInput) {
     // DDL/history commit together; readiness is a separate short transaction.
     // A crash before marker setup is recovered by replay, not schema re-creation.
     await client.query("BEGIN");
-    await assertBrowserSchema(client);
+    // Historical catalog rehearsals verify that catalog's additive guarantees;
+    // current CLI migrations and all runtime startup checks remain strict.
+    await assertBrowserSchema(
+      client,
+      input.directory
+        ? {
+            workflow: names.includes("0018-agent-workflow.sql"),
+            deploymentAdmission: names.includes("0019-deployment-admission.sql"),
+            capabilityLifecycle: names.includes("0020-workflow-capabilities.sql"),
+          }
+        : {},
+    );
     await client.query(
       "INSERT INTO schema_baseline(singleton,runtime_capability_id) VALUES(true,$1) ON CONFLICT(singleton) DO NOTHING",
       [BROWSER_RUNTIME_CAPABILITY_ID],

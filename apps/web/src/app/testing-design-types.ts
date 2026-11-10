@@ -44,6 +44,7 @@ export type ReportCard = {
   finalizedAt?: string;
 };
 export type ReportContent = {
+  sections?: Array<{ title: string; items: Array<{ title: string; detail: string }> }>;
   scope: string[];
   verified: string[];
   limitations: string[];

@@ -9,6 +9,11 @@ import type {
   EvidenceReadProtectionPort,
 } from "@scry/contracts";
 import type { ChronicleRecording } from "./recording.js";
+import {
+  maskingDiagnosticSchema,
+  maskingDiagnosticsSchema,
+  type MaskingDiagnostic,
+} from "@scry/contracts";
 import { ensurePrivateDirectory, durableWrite } from "./durable-file.js";
 import { AdmittedEvidenceReader } from "./admitted-evidence-reader.js";
 import {
@@ -32,8 +37,26 @@ export async function createNativeRecording(options: {
   const admitted = new Set<string>();
   const screenshotDigests = new Set<string>();
   let maskingUnavailable = false;
+  const maskingEvents: MaskingDiagnostic[] = [];
+  let maskingTruncated = false;
   return {
     directory,
+    recordMasking(event) {
+      options.assertActive();
+      const safe = maskingDiagnosticSchema.parse(event);
+      if (maskingEvents.length >= 256) {
+        if (!maskingTruncated)
+          options.recording.receive(
+            JSON.stringify({ type: "native_masking_truncated", timestamp: safe.at }),
+          );
+        maskingTruncated = true;
+        return;
+      }
+      maskingEvents.push(safe);
+      options.recording.receive(
+        JSON.stringify({ type: "native_masking", timestamp: safe.at, event: safe }),
+      );
+    },
     async reserveCapture() {
       options.assertActive();
       const captureDirectory = path.join(directory, "capture");
@@ -92,7 +115,15 @@ export async function createNativeRecording(options: {
         }
       }
       const receipt: NativeMediaReceipt = {
-        masking: maskingUnavailable ? "unavailable" : (input.masking ?? "best_effort"),
+        masking: maskingUnavailable
+          ? "unavailable"
+          : input.kind === "video" &&
+              (maskingTruncated || maskingEvents.some((e) => e.state === "degraded"))
+            ? "best_effort_partial"
+            : (input.masking ?? "best_effort"),
+        ...(maskingEvents.length || maskingTruncated
+          ? { maskingDiagnostics: { events: [...maskingEvents], truncated: maskingTruncated } }
+          : {}),
         ...(input.coverage ? { coverage: input.coverage } : {}),
         kind: input.kind,
         objectKey: path.relative(options.root, file),
@@ -104,6 +135,7 @@ export async function createNativeRecording(options: {
         ...(input.description ? { description: input.description } : {}),
         ...(input.interruptionReason ? { interruptionReason: input.interruptionReason } : {}),
         ...(input.durationMs === undefined ? {} : { durationMs: input.durationMs }),
+        ...(input.timingOrigin ? { timingOrigin: input.timingOrigin } : {}),
       };
       options.assertActive();
       options.recording.receive(
@@ -215,6 +247,16 @@ export function nativeMediaReceipts(events: Array<Record<string, unknown>>): Nat
       !validPresentation(item)
     )
       throw new Error("native_media_manifest_invalid");
+    if (
+      item.timingOrigin !== undefined &&
+      !["native_capture", "recorder_start"].includes(item.timingOrigin)
+    )
+      throw new Error("native_media_manifest_invalid");
+    if (
+      item.maskingDiagnostics !== undefined &&
+      !maskingDiagnosticsSchema.safeParse(item.maskingDiagnostics).success
+    )
+      throw new Error("native_media_manifest_invalid");
   }
   return media;
 }
@@ -254,13 +296,28 @@ export async function recoverNativeCaptures(
   // A receipt admitted before a crash is already authoritative. Do not create
   // another copy merely because its pre-capture reservation remains in history.
   if (nativeMediaReceipts(events).some((item) => item.kind === "video")) return 1;
+  const diagnostics = events.filter((e) => e.type === "native_masking").slice(0, 256);
+  for (const event of diagnostics) {
+    const parsed = maskingDiagnosticSchema.safeParse(event.event);
+    if (parsed.success) native.recordMasking?.(parsed.data);
+  }
+  if (events.some((e) => e.type === "native_masking_truncated") && diagnostics[0]) {
+    const first = maskingDiagnosticSchema.safeParse(diagnostics[0].event);
+    if (first.success) native.recordMasking?.(first.data);
+  }
   const captures = events.filter((e) => e.type === "native_capture_started");
   let recovered = 0;
   for (const capture of captures) {
     const directory = capture.directory;
     if (typeof directory !== "string" || !/^native\/\d+\/[a-f0-9-]{36}\/capture$/u.test(directory))
       throw new Error("native_media_path_invalid");
-    let manifest: { coverage?: string; started?: number; duration?: string; reason?: string };
+    let manifest: {
+      coverage?: string;
+      started?: number;
+      duration?: string;
+      reason?: string;
+      timingOrigin?: string;
+    };
     try {
       manifest = JSON.parse(
         (await privateFile(path.join(root, directory, "recording.json"), root, 8192)).toString(
@@ -289,6 +346,9 @@ export async function recoverNativeCaptures(
       timestamp: manifest.started!,
       label: "final",
       durationMs: Number(manifest.duration) * 1000,
+      ...(["native_capture", "recorder_start"].includes(manifest.timingOrigin ?? "")
+        ? { timingOrigin: manifest.timingOrigin as "native_capture" | "recorder_start" }
+        : {}),
       coverage: manifest.coverage as "complete" | "partial",
       ...(manifest.coverage === "partial"
         ? {

@@ -7,6 +7,12 @@ export const createTestResourceSchema = z.strictObject({
   expiresInSeconds: z.number().int().min(300).max(604800).default(86400),
 });
 export const refreshTestResourceSchema = z.strictObject({
+  refresh: z
+    .boolean()
+    .optional()
+    .describe(
+      "False reads captured observations immediately without a provider request. Omit or true to look for new receipts.",
+    ),
   waitSeconds: z.number().int().min(0).max(15).default(0),
   afterEventId: z.string().uuid().optional(),
 });

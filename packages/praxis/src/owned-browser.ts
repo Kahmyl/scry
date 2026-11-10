@@ -1,5 +1,7 @@
 import { chromium, type Browser, type BrowserServer } from "playwright";
 import { chromium as mcpChromium } from "playwright-mcp-runtime";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 
 export interface OwnedBrowserOptions {
   headless?: boolean;
@@ -97,7 +99,13 @@ export class BrowserProcessCustody {
     try {
       // The custodian loads both pinned drivers before accepting authority.
       const driver = options.runtime === "playwright_mcp" ? mcpChromium : chromium;
+      const downloadDirectory =
+        options.runtime === "playwright_mcp" && options.captureDirectory
+          ? path.join(options.captureDirectory, "downloads")
+          : undefined;
+      if (downloadDirectory) await mkdir(downloadDirectory, { recursive: true, mode: 0o700 });
       server = await driver.launchServer({
+        ...(downloadDirectory ? { downloadsPath: downloadDirectory } : {}),
         host: "127.0.0.1",
         port: 0,
         timeout: launchTimeout,

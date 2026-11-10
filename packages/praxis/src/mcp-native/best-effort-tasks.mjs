@@ -1,9 +1,10 @@
 // Optional masking maintenance must never become browser-command admission.
 // At most one unfinished task per page; deadlines do not enqueue replacements.
 export class BestEffortTasks {
-  constructor(warn, budgetMs = 200) {
+  constructor(warn, budgetMs = 200, recovered = () => {}) {
     this.warn = warn;
     this.budgetMs = budgetMs;
+    this.recovered = recovered;
     this.pending = new Map();
   }
   forget(key) {
@@ -14,7 +15,8 @@ export class BestEffortTasks {
       if (!this.pending.has(key)) {
         const task = Promise.resolve()
           .then(fn)
-          .catch(() => this.warn())
+          .then(() => this.recovered(key))
+          .catch(() => this.warn("maintenance_failed", key))
           .finally(() => {
             if (this.pending.get(key) === task) this.pending.delete(key);
           });
@@ -28,7 +30,8 @@ export class BestEffortTasks {
         Promise.all(tasks),
         new Promise((resolve) => {
           timer = setTimeout(() => {
-            this.warn();
+            for (const [key] of entries)
+              if (this.pending.has(key)) this.warn("maintenance_timeout", key);
             resolve();
           }, this.budgetMs);
         }),

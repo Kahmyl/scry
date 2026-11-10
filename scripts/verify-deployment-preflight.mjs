@@ -9,6 +9,35 @@ const profiles = new Set(
     .filter(Boolean),
 );
 const operationsEnabled = profiles.has("operations");
+for (const flag of ["SCRY_BROWSER_WORKFLOW_V1_ENABLED", "SCRY_BROWSER_WORKFLOW_V2_ENABLED"]) {
+  if (process.env[flag] !== undefined && !["true", "false"].includes(process.env[flag]))
+    fail(`${flag} must be true or false`);
+}
+if (process.env.SCRY_BROWSER_WORKFLOW_V2_ENABLED === "true") {
+  let origins;
+  try {
+    origins = JSON.parse(process.env.SCRY_BROWSER_PRIVATE_NETWORK_ORIGINS ?? "[]");
+  } catch {
+    fail("SCRY_BROWSER_PRIVATE_NETWORK_ORIGINS must be a JSON array of explicit HTTP(S) origins");
+  }
+  if (
+    !Array.isArray(origins) ||
+    origins.length > 20 ||
+    origins.some((value) => {
+      try {
+        const u = new URL(value);
+        return (
+          typeof value !== "string" ||
+          u.origin !== value ||
+          !["http:", "https:"].includes(u.protocol)
+        );
+      } catch {
+        return true;
+      }
+    })
+  )
+    fail("SCRY_BROWSER_PRIVATE_NETWORK_ORIGINS must contain at most 20 exact HTTP(S) origins");
+}
 
 if (tier === "production" && !operationsEnabled)
   fail("production requires COMPOSE_PROFILES=operations");

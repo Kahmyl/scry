@@ -108,6 +108,11 @@ export interface ChronicleRecordingPort {
 
 /** Native, already best-effort-masked pixels. No DOM or application values. */
 export interface NativeMediaReceipt {
+  maskingDiagnostics?: {
+    events: import("./masking-diagnostics.js").MaskingDiagnostic[];
+    truncated: boolean;
+  };
+  timingOrigin?: "native_capture" | "recorder_start";
   title?: string;
   description?: string;
   interruptionReason?: string;
@@ -122,6 +127,7 @@ export interface NativeMediaReceipt {
   durationMs?: number;
 }
 export interface ChronicleNativeRecordingPort {
+  recordMasking?(event: import("./masking-diagnostics.js").MaskingDiagnostic): void;
   maskingUnavailable(): void;
   readonly directory: string;
   reserveCapture?(): Promise<string>;
@@ -134,6 +140,7 @@ export interface ChronicleNativeRecordingPort {
     description?: string;
     interruptionReason?: string;
     durationMs?: number;
+    timingOrigin?: NativeMediaReceipt["timingOrigin"];
     masking?: NativeMediaReceipt["masking"];
     coverage?: "complete" | "partial";
   }): Promise<void>;

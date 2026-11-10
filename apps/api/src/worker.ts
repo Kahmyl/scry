@@ -45,6 +45,8 @@ const sessionWorker = new Worker<BrowserExecutionJob>(
     work.run(job, token, async () => {
       if (job.data.runtimeCapabilityId !== BROWSER_RUNTIME_CAPABILITY_ID)
         throw new Error("SCRY_BROWSER_JOB_CAPABILITY_MISMATCH");
+      if ((await commands.sessionContext(job.data.sessionId)).stopRequested)
+        return { startSkipped: "closure_requested" };
       return praxis.openSession(job.data.sessionId);
     }),
   {

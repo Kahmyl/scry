@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ChronicleEvidenceService } from "../src/evidence-session.js";
-import { readNativeMedia, readNativeEvidence } from "../src/native-media.js";
+import { readNativeMedia, readNativeEvidence, recoverNativeCaptures } from "../src/native-media.js";
 import { memoryAdmission } from "./fixtures/evidence-admission.js";
 import { EvidenceCipher } from "@scry/veil";
 
@@ -38,6 +38,82 @@ async function fixture() {
   return { root, admission, evidence, native, input, revoke, readMedia };
 }
 describe("native media custody", () => {
+  it("retains finite masking reasons and recovery in the admitted video history", async () => {
+    const f = await fixture(),
+      pageId = randomUUID(),
+      at = Date.now();
+    const events = [
+      { pageId, at, state: "degraded" as const, reason: "maintenance_timeout" as const },
+      { pageId, at: at + 1000, state: "recovered" as const, reason: "refresh_confirmed" as const },
+    ];
+    const capture = await f.native.reserveCapture!();
+    await writeFile(path.join(capture, "recording.mp4"), randomBytes(128));
+    await writeFile(
+      path.join(capture, "recording.json"),
+      JSON.stringify({
+        started: at,
+        duration: "2",
+        coverage: "complete",
+        timingOrigin: "native_capture",
+      }),
+    );
+    // A replacement owner's recovery reconstructs diagnostics from admitted
+    // events, rather than trusting the filesystem or erasing a recovered gap.
+    await recoverNativeCaptures(
+      f.root,
+      [
+        ...events.map((event) => ({ type: "native_masking", event })),
+        { type: "native_capture_started", directory: path.relative(f.root, capture) },
+      ],
+      f.native,
+    );
+    await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
+    await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
+    expect(await f.readMedia()).toMatchObject([
+      {
+        masking: "best_effort_partial",
+        timingOrigin: "native_capture",
+        maskingDiagnostics: { events, truncated: false },
+      },
+    ]);
+  });
+  it("truncated masking history cannot certify complete coverage", async () => {
+    const f = await fixture(),
+      pageId = randomUUID(),
+      at = Date.now();
+    for (let n = 0; n < 256; n++)
+      f.native.recordMasking!({
+        pageId,
+        at: at + n,
+        state: "recovered",
+        reason: "refresh_confirmed",
+      });
+    f.native.recordMasking!({
+      pageId,
+      at: at + 256,
+      state: "degraded",
+      reason: "installation_failed",
+    });
+    const filename = `${randomUUID()}.mp4`;
+    await writeFile(path.join(f.native.directory, filename), randomBytes(128));
+    await f.native.admit({ filename, kind: "video", label: "final", timestamp: at });
+    expect(() =>
+      f.native.recordMasking!({
+        pageId,
+        at,
+        state: "degraded",
+        reason: "private arbitrary text",
+      } as never),
+    ).toThrow();
+    await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
+    await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
+    const media = await f.readMedia();
+    expect(media[0]).toMatchObject({
+      masking: "best_effort_partial",
+      maskingDiagnostics: { truncated: true },
+    });
+    expect(media[0]!.maskingDiagnostics!.events).toHaveLength(256);
+  });
   it("retains bounded user-facing evidence descriptions in admitted receipts", async () => {
     const f = await fixture();
     await f.native.admit({

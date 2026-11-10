@@ -11,6 +11,7 @@ import {
 
 import { Database } from "../../infrastructure/database.js";
 import { readBrowserEvidenceProtection } from "../browser-boundary-composition.js";
+import type { NativeMediaReceipt } from "@scry/contracts";
 
 @Injectable()
 export class BrowserDashboardRepository {
@@ -61,16 +62,32 @@ export class BrowserDashboardRepository {
         (publication?.media.some(
           (item) => item.masking === "unavailable" || item.masking === "best_effort_partial",
         )
-          ? " Automatic masking was unavailable for part of this recording."
+          ? " Masking could not be confirmed for one or more intervals. Review the recorded reasons before sharing."
           : ""),
       playbackRate: 1,
       items: (publication?.media ?? []).map(
-        ({ kind, timestamp, label, durationMs, coverage, digest, title, description }, index) => ({
+        (
+          {
+            kind,
+            timestamp,
+            label,
+            durationMs,
+            coverage,
+            digest,
+            title,
+            description,
+            maskingDiagnostics,
+            timingOrigin,
+          },
+          index,
+        ) => ({
           index,
           artifactId: digest,
           kind,
           timestamp,
           label,
+          ...(maskingDiagnostics ? { maskingDiagnostics } : {}),
+          ...(timingOrigin ? { timingOrigin } : {}),
           title:
             title ??
             (kind === "video"
@@ -94,10 +111,23 @@ export class BrowserDashboardRepository {
     };
   }
 
-  async getMedia(workspaceId: string | undefined, runId: string, index: number) {
+  async getMedia(
+    workspaceId: string | undefined,
+    runId: string,
+    index: number,
+    streamVideo = false,
+  ): Promise<
+    { bytes: Buffer; type: string } | { root: string; receipt: NativeMediaReceipt; type: string }
+  > {
     const publication = await this.nativePublication(workspaceId, runId);
     const receipt = publication?.media[index];
     if (!publication || !receipt) throw new NotFoundException("Recording not found");
+    if (streamVideo && receipt.kind === "video")
+      return {
+        root: publication.sessionRoot,
+        receipt,
+        type: receipt.objectKey.endsWith(".mp4") ? "video/mp4" : "video/webm",
+      };
     return {
       bytes: await readNativeMedia(publication.sessionRoot, receipt),
       type:
@@ -110,6 +140,17 @@ export class BrowserDashboardRepository {
             : receipt.objectKey.endsWith(".webp")
               ? "image/webp"
               : "image/png",
+    };
+  }
+  async mediaForStreaming(workspaceId: string | undefined, runId: string, index: number) {
+    const publication = await this.nativePublication(workspaceId, runId),
+      receipt = publication?.media[index];
+    if (!publication || !receipt || receipt.kind !== "video")
+      throw new NotFoundException("Recording not found");
+    return {
+      root: publication.sessionRoot,
+      receipt,
+      type: receipt.objectKey.endsWith(".mp4") ? "video/mp4" : "video/webm",
     };
   }
 
@@ -155,6 +196,23 @@ export class BrowserDashboardRepository {
       ...(activity ? { activity } : {}),
       ...(await new ChronicleRepository(this.database).runEvidence(runId)),
     };
+  }
+
+  async recoveryStatus(workspaceId: string | undefined, runId: string) {
+    return this.database.boundedTransaction(async (client) => {
+      const result = await client.query(
+        `SELECT r.id,r.mission_id AS "missionId",r.state,r.outcome_classification AS "outcomeClassification",
+        s.state AS "browserSessionState",s.active_owner_generation AS "ownerGeneration",s.stop_requested_at AS "stopRequestedAt",
+        EXISTS(SELECT 1 FROM browser_evidence_streams es WHERE es.session_id=s.id AND es.sealed_at IS NOT NULL) AS "evidenceSealed",
+        EXISTS(SELECT 1 FROM browser_owner_generations og WHERE og.session_id=s.id AND og.generation=s.active_owner_generation AND og.state='released' AND og.replacement_reason IN ('physical_retirement_confirmed','session_finalized')) AS "ownerReleased",
+        (SELECT count(*)::int FROM browser_commands bc WHERE bc.session_id=s.id AND bc.state IN ('queued','running')) AS "pendingCommandCount"
+        FROM runs r JOIN projects p ON p.id=r.project_id LEFT JOIN browser_execution_sessions s ON s.run_id=r.id
+        WHERE r.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
+        [runId, workspaceId ?? null],
+      );
+      if (!result.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
+      return result.rows[0];
+    }, 3000);
   }
 
   async listReports(workspaceId: string | undefined, projectId: string) {

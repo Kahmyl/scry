@@ -34,6 +34,11 @@ export function post<T>(path: string, body: unknown = {}) {
 export function remove<T>(path: string) {
   return api<T>(path, { method: "DELETE" });
 }
+/** Playback cookies are narrow capabilities; account bearer headers stay in
+ * authenticated fetch, never a media URL. Cross-origin use needs explicit CORS. */
+export function videoPlayback<T>(path: string, init: RequestInit) {
+  return api<T>(path, { ...init, credentials: "include" });
+}
 
 export async function apiBlob(path: string, signal?: AbortSignal): Promise<Blob> {
   const response = await fetch(`${API_BASE}${path}`, {

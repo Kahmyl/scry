@@ -10,7 +10,13 @@ import type {
   CreateBrowserProtectedInputInput,
   SubmitBrowserCommandInput,
 } from "@scry/contracts";
-import { browserProtectionSinkSchema } from "@scry/contracts";
+import {
+  browserProtectionSinkSchema,
+  submitBrowserCommandSchema,
+  browserSequenceInputSchema,
+  nativeObservationTools,
+  nativeBrowserToolSchema,
+} from "@scry/contracts";
 import { protectCommandInput, storedBrowserFailureCode } from "@scry/veil";
 import type { PoolClient, QueryResultRow } from "pg";
 import type { PraxisStorageState } from "@scry/contracts";
@@ -19,6 +25,7 @@ import { Database } from "../../infrastructure/database.js";
 import { commandExecutionBudgetMs } from "../command-budget.js";
 import { runtimeRecoveryCode, type RuntimeRecoveryCode } from "../command-recovery.js";
 import { lockLiveBrowserOwner } from "./browser-owner-admission.js";
+import { immutableWorkflowInput } from "../workflow-input.js";
 import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
@@ -226,15 +233,36 @@ export class BrowserCommandRepository {
 
   async submit(
     sessionId: string,
-    input: SubmitBrowserCommandInput,
+    requested: SubmitBrowserCommandInput,
   ): Promise<{ commandId: string; replay: boolean; state: string }> {
+    const parsed = submitBrowserCommandSchema.parse(structuredClone(requested));
+    if (
+      parsed.command.kind === "browser_tool" &&
+      [
+        "browser_scoped_request",
+        "browser_list_downloads",
+        "browser_verify_download",
+        "browser_set_viewport",
+      ].includes(parsed.command.tool)
+    ) {
+      if (process.env.SCRY_BROWSER_WORKFLOW_V2_ENABLED !== "true")
+        throw new Error("SCRY_BROWSER_WORKFLOW_DISABLED");
+      parsed.command.args = nativeBrowserToolSchema(parsed.command.tool).parse(parsed.command.args);
+    }
+    if (parsed.command.kind === "browser_tool" && parsed.command.tool === "browser_sequence")
+      if (process.env.SCRY_BROWSER_WORKFLOW_V1_ENABLED !== "true")
+        throw new Error("SCRY_BROWSER_WORKFLOW_DISABLED");
+    if (parsed.command.kind === "browser_tool" && parsed.command.tool === "browser_sequence")
+      parsed.command.args = browserSequenceInputSchema.parse(parsed.command.args);
+    const input = immutableWorkflowInput(parsed);
     return this.database.transaction(async (client) => {
       const session = await client.query<{
         run_id: string;
         state: string;
         runtime_adapter: string;
+        stop_requested_at: Date | null;
       }>(
-        "SELECT run_id,state,runtime_adapter FROM browser_execution_sessions WHERE id=$1 FOR UPDATE",
+        "SELECT run_id,state,runtime_adapter,stop_requested_at FROM browser_execution_sessions WHERE id=$1 FOR UPDATE",
         [sessionId],
       );
       if (!session.rows[0] || !["active", "starting", "finalizing"].includes(session.rows[0].state))
@@ -265,6 +293,29 @@ export class BrowserCommandRepository {
         )
           throw new Error("SCRY_BROWSER_COMMAND_IDEMPOTENCY_CONFLICT");
         return { commandId: existing.rows[0].id, replay: true, state: existing.rows[0].state };
+      }
+      if (
+        session.rows[0].stop_requested_at &&
+        !["close", "close_for_failure"].includes(input.command.kind)
+      )
+        throw new Error("SCRY_BROWSER_COMMAND_STOP_REQUESTED");
+      // Legacy close can refuse pending effect reconciliation; it must leave
+      // determine/discard and subsequent closure available. Explicit stop is
+      // fenced by requestStop independently of the adapter.
+      if (native && ["close", "close_for_failure"].includes(input.command.kind))
+        await client.query(
+          "UPDATE browser_execution_sessions SET stop_requested_at=COALESCE(stop_requested_at,clock_timestamp()) WHERE id=$1",
+          [sessionId],
+        );
+      if (
+        input.command.kind === "browser_tool" &&
+        !nativeObservationTools.has(input.command.tool)
+      ) {
+        const uncertain = await client.query(
+          "SELECT 1 FROM browser_commands WHERE session_id=$1 AND state IN ('completed','failed') AND safe_result->>'execution'='unknown' LIMIT 1",
+          [sessionId],
+        );
+        if (uncertain.rowCount) throw new Error("SCRY_BROWSER_COMMAND_RECONCILIATION_REQUIRED");
       }
       const ordinal = await client.query<{ next: string }>(
         "SELECT COALESCE(MAX(command_ordinal),0)+1 AS next FROM browser_commands WHERE session_id=$1",
@@ -306,6 +357,36 @@ export class BrowserCommandRepository {
       );
       await client.query("INSERT INTO browser_command_outbox(command_id) VALUES($1)", [commandId]);
       return { commandId, replay: false, state: "queued" };
+    });
+  }
+
+  async requestStop(sessionId: string, workspaceId: string | undefined) {
+    return this.database.transaction(async (client) => {
+      const session = await client.query(
+        `SELECT s.id FROM browser_execution_sessions s JOIN projects p ON p.id=s.project_id
+         WHERE s.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2) FOR UPDATE OF s`,
+        [sessionId, workspaceId ?? null],
+      );
+      if (!session.rowCount) throw new Error("SCRY_BROWSER_SESSION_NOT_FOUND");
+      await client.query(
+        "UPDATE browser_execution_sessions SET stop_requested_at=COALESCE(stop_requested_at,clock_timestamp()) WHERE id=$1",
+        [sessionId],
+      );
+      const pending = await client.query<{ state: string }>(
+        `UPDATE browser_commands SET cancel_requested_at=COALESCE(cancel_requested_at,clock_timestamp())
+         WHERE session_id=$1 AND kind NOT IN ('close','close_for_failure') AND state IN ('queued','running') RETURNING state`,
+        [sessionId],
+      );
+      await client.query(
+        `UPDATE browser_commands SET state='failed',error_code='SCRY_BROWSER_COMMAND_STOP_REQUESTED',completed_at=clock_timestamp()
+         WHERE session_id=$1 AND state='queued' AND cancel_requested_at IS NOT NULL`,
+        [sessionId],
+      );
+      return {
+        stopRequested: true,
+        inFlight: pending.rows.some((r) => r.state === "running"),
+        browserReleased: false,
+      };
     });
   }
 
@@ -390,6 +471,22 @@ export class BrowserCommandRepository {
         [row.session_id, row.command_ordinal],
       );
       if (predecessor.rowCount) throw new Error("SCRY_BROWSER_COMMAND_PREDECESSOR_PENDING");
+      if (
+        row.safe_input.kind === "browser_tool" &&
+        !nativeObservationTools.has(row.safe_input.tool)
+      ) {
+        const uncertain = await client.query(
+          "SELECT 1 FROM browser_commands WHERE session_id=$1 AND command_ordinal<$2 AND state IN ('completed','failed') AND safe_result->>'execution'='unknown' LIMIT 1",
+          [row.session_id, row.command_ordinal],
+        );
+        if (uncertain.rowCount) {
+          await client.query(
+            `UPDATE browser_commands SET state='failed',completed_at=clock_timestamp(),error_code='SCRY_BROWSER_COMMAND_RECONCILIATION_REQUIRED',safe_result='{"execution":"not_dispatched","businessOutcome":"not_dispatched","reason":"prior_uncertain_action"}'::jsonb WHERE id=$1`,
+            [commandId],
+          );
+          return null;
+        }
+      }
       const live = await client.query<{ live: boolean }>(
         "SELECT claim_lease_expires_at>clock_timestamp() AS live FROM browser_commands WHERE id=$1",
         [commandId],
@@ -406,7 +503,15 @@ export class BrowserCommandRepository {
            execution_deadline_at=COALESCE(execution_deadline_at,claim_clock.at+($4::int * interval '1 millisecond')),
            execution_budget_ms=COALESCE(execution_budget_ms,$4),attempt_count=attempt_count+1
          FROM claim_clock WHERE id=$1 RETURNING browser_commands.*,${claimClockProjection}`,
-        [commandId, claimToken, leaseMs, commandExecutionBudgetMs(row.kind)],
+        [
+          commandId,
+          claimToken,
+          leaseMs,
+          commandExecutionBudgetMs(
+            row.kind,
+            row.safe_input.kind === "browser_tool" ? row.safe_input.tool : undefined,
+          ),
+        ],
       );
       const claimedRow = { ...claimed.rows[0]!, sampleStartedAt };
       if (
@@ -451,10 +556,15 @@ export class BrowserCommandRepository {
       await client.query("SELECT id FROM browser_commands WHERE id=$1 FOR UPDATE", [commandId]);
       const sampleStartedAt = performance.now();
       const result = await client.query<
-        CommandClaimDurations & { state: string; claim_token: string | null }
-      >(`SELECT state,claim_token,${claimClockProjection} FROM browser_commands WHERE id=$1`, [
-        commandId,
-      ]);
+        CommandClaimDurations & {
+          state: string;
+          claim_token: string | null;
+          cancel_requested_at: Date | null;
+        }
+      >(
+        `SELECT state,claim_token,cancel_requested_at,${claimClockProjection} FROM browser_commands WHERE id=$1`,
+        [commandId],
+      );
       const row = result.rows[0];
       const fenced =
         mode === "complete"
@@ -469,6 +579,8 @@ export class BrowserCommandRepository {
         throw new Error(fenced);
       if ((mode === "dispatch" || mode === "complete") && row.executionRemainingMs <= 0)
         throw new Error(mode === "dispatch" ? "SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED" : fenced);
+      if ((mode === "dispatch" || mode === "heartbeat") && row.cancel_requested_at)
+        throw new Error("SCRY_BROWSER_COMMAND_STOP_REQUESTED");
       return work(client, {
         executionRemainingMs: row.executionRemainingMs,
         claimRemainingMs: row.claimRemainingMs,
@@ -521,12 +633,17 @@ export class BrowserCommandRepository {
     result: Record<string, unknown>,
   ): Promise<void> {
     const serialized = JSON.stringify(result);
-    await this.withLiveClaim(commandId, claimToken, "complete", async (client) => {
-      await client.query(
-        "UPDATE browser_commands SET safe_result=$2::jsonb WHERE id=$1 AND kind='browser_tool'",
-        [commandId, serialized],
-      );
-    });
+    await this.withLiveClaim(
+      commandId,
+      claimToken,
+      result.reason === "dispatch_started" ? "dispatch" : "complete",
+      async (client) => {
+        await client.query(
+          "UPDATE browser_commands SET safe_result=$2::jsonb WHERE id=$1 AND kind='browser_tool'",
+          [commandId, serialized],
+        );
+      },
+    );
   }
 
   async fail(commandId: string, claimToken: string, error: unknown): Promise<void> {
@@ -565,6 +682,7 @@ export class BrowserCommandRepository {
     protectionKeyId: string;
     runtimeAdapter: "legacy" | "playwright_mcp";
     allowedOrigins: string[];
+    stopRequested: boolean;
   }> {
     const result = await this.database.query<{
       sessionId: string;
@@ -577,9 +695,10 @@ export class BrowserCommandRepository {
       protectionKeyId: string;
       runtimeAdapter: "legacy" | "playwright_mcp";
       allowedOrigins: string[];
+      stopRequested: boolean;
     }>(
       `SELECT s.id AS "sessionId",s.run_id AS "runId",s.project_id AS "projectId",s.mission_id AS "missionId",
-         e.base_origin AS "baseOrigin",s.active_owner_generation AS "ownerGeneration",
+         e.base_origin AS "baseOrigin",s.active_owner_generation AS "ownerGeneration",(s.stop_requested_at IS NOT NULL) AS "stopRequested",
          s.disclosure_mode AS "disclosureMode",s.protection_key_id AS "protectionKeyId",
          s.runtime_adapter AS "runtimeAdapter",(s.allowed_first_party_origins || s.allowed_service_origins) AS "allowedOrigins"
        FROM browser_execution_sessions s JOIN environments e ON e.id=s.environment_id

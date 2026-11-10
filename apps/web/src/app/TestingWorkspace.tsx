@@ -359,6 +359,19 @@ export function ReportContentDesign({
             )}
           </div>
         </div>
+        {(content.sections ?? []).map((detail, index) => (
+          <section key={index} className="tw-context-block">
+            <h3>{detail.title}</h3>
+            <dl>
+              {detail.items.map((item, i) => (
+                <div key={i}>
+                  <dt>{item.title}</dt>
+                  <dd>{item.detail}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
       </section>
     </div>
   );
@@ -405,19 +418,26 @@ export function ReportDetailDesign({
   const sections = useMemo(
     () => [
       { id: "overview", label: "Summary", Icon: FileCheck2, count: undefined },
-      ...resultCategories.map((category) => ({
-        id: checkSection(category.value),
-        label: category.label,
-        Icon:
-          category.value === "expected"
-            ? CheckCircle2
-            : category.value === "different"
-              ? XCircle
-              : category.value === "uncertain"
-                ? CircleDashed
-                : PauseCircle,
-        count: content.checks.filter((check) => checkGroup(check.label) === category.value).length,
-      })),
+      ...resultCategories
+        .filter(
+          (category) =>
+            !["blocked", "excluded"].includes(category.value) ||
+            content.checks.some((check) => checkGroup(check.label) === category.value),
+        )
+        .map((category) => ({
+          id: checkSection(category.value),
+          label: category.label,
+          Icon:
+            category.value === "expected"
+              ? CheckCircle2
+              : category.value === "different"
+                ? XCircle
+                : category.value === "uncertain"
+                  ? CircleDashed
+                  : PauseCircle,
+          count: content.checks.filter((check) => checkGroup(check.label) === category.value)
+            .length,
+        })),
       {
         id: "supporting-evidence",
         label: "Recordings & screenshots",

@@ -45,6 +45,15 @@ export function browserErrorStatus(code: string): number {
 }
 
 function browserSafeActions(code: string): string[] {
+  if (code === "SCRY_BROWSER_COMMAND_RECONCILIATION_REQUIRED")
+    return [
+      "An earlier application action has an uncertain outcome. Read its receipt and inspect the application without further mutations.",
+      "Finish this attempt incomplete through the supported stop action; verify browser release before starting a new attempt. Do not replay the uncertain write.",
+    ];
+  if (code === "SCRY_BROWSER_COMMAND_STOP_REQUESTED")
+    return [
+      "This attempt is stopping. Read its status and wait for confirmed browser release; no later application action was admitted.",
+    ];
   if (code === "SCRY_BROWSER_SESSION_CAPACITY_EXHAUSTED")
     return [
       "Browser capacity is currently in use. This start request launched no browser and performed no application action.",

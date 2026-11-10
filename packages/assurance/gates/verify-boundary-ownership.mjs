@@ -2,7 +2,11 @@ import { fileURLToPath as qualificationFilePath } from "node:url";
 process.chdir(qualificationFilePath(new URL("../../../", import.meta.url)));
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { boundaryViolations, unsupportedPraxisDependencies } from "./boundary-ownership-rules.mjs";
+import {
+  boundaryViolations,
+  unsupportedPraxisDependencies,
+  unsupportedVeilDependencies,
+} from "./boundary-ownership-rules.mjs";
 
 const root = new URL("../../../", import.meta.url);
 const productionPackages = [
@@ -121,7 +125,7 @@ for (const retired of [
   )
     fail(`retired Assurance workflow remains: ${retired}`);
 }
-if (Object.keys(veilPackage.dependencies ?? {}).some((name) => name !== "@scry/contracts"))
+if (unsupportedVeilDependencies(veilPackage.dependencies).length)
   fail("Veil has an implementation dependency outside its contracts");
 for (const consumer of ["apps/api"]) {
   const manifest = JSON.parse(read(`${consumer}/package.json`));

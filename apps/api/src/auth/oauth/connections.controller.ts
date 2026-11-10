@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Inject,
   Param,
   Post,
@@ -49,6 +50,26 @@ export class ConnectionsController {
     requireDashboardUser(principal);
     if (!this.oauth.provider) return { available: false, connections: [] };
     return { available: true, connections: await this.connections.list(principal) };
+  }
+  @Get("diagnostics")
+  @Header("Cache-Control", "private, no-store")
+  async diagnostics(@CurrentPrincipal() principal: Principal) {
+    return {
+      ...(await this.connections.diagnostics(principal)),
+      oauthDiscoveryConfigured: !!this.oauth.provider,
+      requiredScope: testingScope,
+    };
+  }
+
+  @Get("connections/:id/diagnostics")
+  @Header("Cache-Control", "private, no-store")
+  async connectionDiagnostics(@CurrentPrincipal() principal: Principal, @Param("id") id: string) {
+    if (!z.uuid().safeParse(id).success) throw new BadRequestException("Connection not found.");
+    return {
+      ...(await this.connections.diagnostics(principal, id)),
+      oauthDiscoveryConfigured: !!this.oauth.provider,
+      requiredScope: testingScope,
+    };
   }
 
   @Delete("connections/:id")

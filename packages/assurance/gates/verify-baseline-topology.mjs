@@ -2,6 +2,7 @@ import { fileURLToPath as qualificationFilePath } from "node:url";
 process.chdir(qualificationFilePath(new URL("../../../", import.meta.url)));
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { admittedWorkflowFeature } from "./workflow-feature-owners.mjs";
 
 const api = JSON.parse(read("apps/api/package.json"));
 const mcp = JSON.parse(read("apps/mcp/package.json"));
@@ -201,6 +202,7 @@ for (const sourcePath of activeSourcePaths) {
     enabledFlags.some(
       (flag) =>
         flag !== "SCRY_BROWSER_ENABLED" &&
+        !admittedWorkflowFeature(sourcePath, flag) &&
         !(flag === "SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED" && nativeAdapterOwners.has(sourcePath)),
     )
   ) {

@@ -1,4 +1,10 @@
-import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
+import {
+  Inject,
+  Injectable,
+  HttpException,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from "@nestjs/common";
 import type {
   ConnectTestMailboxInput,
   CreateTestResourceInput,
@@ -7,7 +13,13 @@ import type {
 import { BrowserCommandRepository } from "../browser-execution/repositories/browser-command.repository.js";
 import { TestResourceProviders, type PrivateResource } from "./providers.js";
 import { TestResourcesRepository, type ResourceRow } from "./test-resources.repository.js";
-import { ProviderDeferred, resourceError, withProviderBudget } from "./provider-http.js";
+import {
+  ProviderDeferred,
+  resourceError,
+  withProviderBudget,
+  providerPause,
+  providerTiming,
+} from "./provider-http.js";
 
 @Injectable()
 export class TestResourcesService implements OnModuleInit, OnModuleDestroy {
@@ -103,12 +115,66 @@ export class TestResourcesService implements OnModuleInit, OnModuleDestroy {
     return this.repository.public(await this.repository.resource(workspace, row.id));
   }
   async read(workspace: string | undefined, id: string, input: RefreshTestResourceInput) {
+    const started = Date.now();
+    const budgetMs = Math.min(20000, input.waitSeconds * 1000 + 5000);
+    const { result, timing } = await withProviderBudget(async () => {
+      try {
+        return {
+          result: await this.readWithinBudget(workspace, id, input),
+          timing: providerTiming(),
+        };
+      } catch (error) {
+        if (error instanceof ProviderDeferred)
+          throw new HttpException(
+            {
+              code: "TEST_RESOURCE_METADATA_UNAVAILABLE",
+              status: 503,
+              message:
+                "Resource facts could not be loaded in time. Saved observations are unchanged; retry the same resource.",
+              retryAfterSeconds: error.retryAfterSeconds,
+            },
+            503,
+          );
+        throw error;
+      }
+    }, budgetMs);
+    return {
+      ...result,
+      timing: {
+        elapsedMs: Date.now() - started,
+        refreshRequested: input.refresh !== false,
+        providerBudgetMs: input.refresh === false ? 0 : budgetMs,
+        serverBudgetMs: budgetMs + 1000,
+        ...timing,
+      },
+    };
+  }
+  private async readWithinBudget(
+    workspace: string | undefined,
+    id: string,
+    input: RefreshTestResourceInput,
+  ) {
     const row = await this.repository.resource(workspace, id);
     if (
       input.afterEventId &&
       !(await this.repository.events(workspace, id)).some((e) => e.id === input.afterEventId)
     )
       resourceError("TEST_EVENT_CURSOR_INVALID", 400);
+    if (input.refresh === false) {
+      const events = await this.repository.events(workspace, id);
+      return {
+        resource: this.repository.public(row),
+        events,
+        status: (
+          input.afterEventId
+            ? events.findIndex((e) => e.id === input.afterEventId) < events.length - 1
+            : events.length > 0
+        )
+          ? ("received" as const)
+          : ("waiting" as const),
+        cached: true,
+      };
+    }
     if (row.state !== "ready" || new Date(row.expiresAt).getTime() <= Date.now())
       return {
         resource: this.repository.public(row),
@@ -123,9 +189,9 @@ export class TestResourcesService implements OnModuleInit, OnModuleDestroy {
         status: "waiting" as const,
         retryAfterSeconds: 2,
       };
-    const baseline = await this.repository.known(id);
     const deadline = Date.now() + input.waitSeconds * 1000;
     try {
+      const baseline = await this.repository.known(id);
       do {
         const messages = await this.providers.messages(
           row.kind,
@@ -142,7 +208,7 @@ export class TestResourcesService implements OnModuleInit, OnModuleDestroy {
         )
           return { resource: this.repository.public(row), events, status: "received" as const };
         if (Date.now() >= deadline) break;
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await providerPause(Math.min(1500, Math.max(0, deadline - Date.now())), "polling");
       } while (Date.now() < deadline);
       return {
         resource: this.repository.public(row),
@@ -176,10 +242,7 @@ export class TestResourcesService implements OnModuleInit, OnModuleDestroy {
       // All closure paths disconnect customer mailboxes locally, including
       // expiry and recovery. No provider create/delete operation is permitted.
       if (row.ownership === "customer") {
-        await this.repository.db.query(
-          "UPDATE test_resources SET state='closed',address=NULL WHERE id=$1 AND lease_id=$2 AND lease_until>now()",
-          [id, lease],
-        );
+        await this.repository.markClosed(id, lease);
         return this.repository.public(await this.repository.resource(workspace, id));
       }
       let state = this.repository.open<PrivateResource>(row.private_data, id);
@@ -190,10 +253,7 @@ export class TestResourcesService implements OnModuleInit, OnModuleDestroy {
         await this.repository.savePrivate(id, lease, state);
       }
       await this.providers.close(row.kind, state);
-      await this.repository.db.query(
-        "UPDATE test_resources SET state='closed',address=NULL WHERE id=$1 AND lease_id=$2 AND lease_until>now()",
-        [id, lease],
-      );
+      await this.repository.markClosed(id, lease);
     } catch (error) {
       if (!(error instanceof ProviderDeferred)) throw error;
       return {
@@ -214,10 +274,8 @@ export class TestResourcesService implements OnModuleInit, OnModuleDestroy {
     if (this.sweeping) return;
     this.sweeping = true;
     try {
-      const rows = await this.repository.db.query<{ id: string }>(
-        "SELECT id FROM test_resources WHERE expires_at<now() AND state<>'closed' AND (lease_until IS NULL OR lease_until<now()) ORDER BY expires_at LIMIT 10",
-      );
-      for (const row of rows.rows)
+      const rows = await this.repository.expiredForCleanup();
+      for (const row of rows)
         await withProviderBudget(() => this.close(undefined, row.id)).catch(() => {
           /* Durable closing state remains retryable. No provider details in logs. */
         });

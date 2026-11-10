@@ -5,6 +5,7 @@ import {
   nativeObservationTools,
   editBrowserTextSchema,
   nativeBrowserToolSchema,
+  nativeCapabilitySchemas,
 } from "@scry/contracts";
 import { z } from "zod";
 import { BrowserApiClient } from "./api-client.js";
@@ -65,6 +66,22 @@ export function registerNativeBrowserTools(
   ) => Promise<Record<string, unknown> | undefined>,
 ) {
   const definitions = [
+    ...Object.entries(nativeCapabilitySchemas).map(([name, schema]) => ({
+      name,
+      schema,
+      description: (
+        {
+          browser_scoped_request:
+            "Run one scoped HTTP request in this Run's existing durable worker lane. Requires API capability. Only Environment origins and approved network destinations; no automatic redirects/retries or browser cookie reuse. Credentials and sensitive body fields use explicitly bound protectedValueId references. Response size/time are bounded; sensitive response fields are redacted and are not new reusable credentials. Status/transport completion is not business success. A write can have happened when response is unknown; never replay under a different actionId.",
+          browser_list_downloads:
+            "Read bounded download completion facts captured by this browser Session. Pending is not completed; no private file paths or file contents are returned. Use browser_verify_download on the returned ID, then include its durable receipt in the report.",
+          browser_verify_download:
+            "Verify an actual completed download against optional hash, size, suggested filename and format expectations. Facts come from bounded bytes after completion, not a successful click. Does not expose/download the file contents. A mismatch is a testing observation, not automatic proof of an application defect.",
+          browser_set_viewport:
+            "Set a supported desktop, mobile, mobile_landscape or tablet viewport in the owned browser. This changes viewport dimensions only, not user-agent/touch/device hardware. Recording stays on the fixed private 1280x720 canvas with unused padding; no viewport content may be cropped. Inspect returned actual dimensions and take a screenshot for visual checks. Desktop resets the viewport. Invalidates old observations.",
+        } as Record<string, string>
+      )[name]!,
+    })),
     ...playwrightToolDefinitions.map((d) => ({
       name: d.name,
       description: d.description,

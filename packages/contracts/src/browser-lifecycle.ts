@@ -117,6 +117,8 @@ export const applicationTestCheckSchema = z
       "different_from_expectation",
       "inconclusive",
       "not_tested",
+      "blocked",
+      "excluded",
     ]),
     evidence: z.array(reportEvidenceReferenceSchema).max(50).default([]),
   })
@@ -135,6 +137,27 @@ export const applicationReportPresentationSchema = missionReportPresentationSche
   subject: z.literal("application"),
   scope: z.array(z.string().min(1).max(4000)).max(100).default([]),
   checks: z.array(applicationTestCheckSchema).min(1).max(200),
+  sections: z
+    .array(
+      z.strictObject({
+        title: z.string().min(1).max(200),
+        items: z
+          .array(
+            z.strictObject({
+              title: z.string().min(1).max(200),
+              detail: z.string().min(1).max(4000),
+              evidence: z.array(reportEvidenceReferenceSchema).max(50).default([]),
+            }),
+          )
+          .min(1)
+          .max(200),
+      }),
+    )
+    .max(20)
+    .optional()
+    .describe(
+      "Safe customer detail sections: API operation matrix, cleanup, retained resources and received-message evidence. Keep operator diagnostics outside presentation.",
+    ),
 });
 export type ApplicationReportPresentation = z.infer<typeof applicationReportPresentationSchema>;
 export const publishBrowserMissionReportSchema = z.object({

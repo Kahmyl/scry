@@ -23,6 +23,7 @@ export type ServicePrincipal = {
 export type Principal = UserPrincipal | ServicePrincipal;
 
 export type AuthenticatedRequest = {
+  method?: string;
   headers: Record<string, string | string[] | undefined>;
   principal?: Principal;
 };

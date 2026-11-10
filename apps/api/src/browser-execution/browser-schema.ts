@@ -51,8 +51,39 @@ const REQUIRED_SCHEMA: Readonly<Record<string, readonly string[]>> = {
   identity_import_receipts: ["id", "mode", "identity_digest", "state", "activated_at"],
 };
 
-export async function assertBrowserSchema(database: Queryable): Promise<void> {
+export async function assertBrowserSchema(
+  database: Queryable,
+  historicalTarget: {
+    workflow?: boolean;
+    deploymentAdmission?: boolean;
+    capabilityLifecycle?: boolean;
+  } = {},
+): Promise<void> {
   await assertRetainedBrowserSchema(database);
+  if (historicalTarget.capabilityLifecycle !== false) {
+    const found =
+      await database.query(`SELECT table_name||'.'||column_name FROM information_schema.columns WHERE table_schema='public' AND
+      ((table_name='mission_cleanup_decisions' AND column_name IN ('id','mission_id','kind','item_id','decision','reason','idempotency_key','input_digest','created_at')) OR
+       (table_name='media_playback_grants' AND column_name IN ('id','secret_hash','run_id','media_index','artifact_digest','user_id','workspace_id','source_kind','source_id','source_hash','expires_at','revoked_at','created_at')))`);
+    if (found.rowCount !== 22)
+      throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:workflow_capabilities");
+  }
+  if (historicalTarget.workflow !== false) {
+    const workflow =
+      await database.query(`SELECT table_name||'.'||column_name FROM information_schema.columns
+    WHERE table_schema='public' AND
+      ((table_name='browser_journey_receipts' AND column_name IN ('mission_id','attempt_id','input_digest','result')) OR
+       (table_name='browser_execution_sessions' AND column_name='stop_requested_at') OR
+       (table_name='browser_commands' AND column_name='cancel_requested_at'))`);
+    if (workflow.rowCount !== 6) throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:agent_workflow");
+  }
+  if (historicalTarget.deploymentAdmission !== false) {
+    const admission =
+      await database.query(`SELECT to_regprocedure('browser_try_deployment(text)') IS NOT NULL AND
+      (SELECT count(*)=2 FROM pg_trigger WHERE tgname IN ('browser_session_deployment_admission','browser_command_deployment_admission') AND NOT tgisinternal) AS ready`);
+    if (admission.rows[0]?.ready !== true)
+      throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:deployment_admission");
+  }
   const result = await database.query<{ column_name: string }>(
     "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='browser_commands' AND column_name=ANY($1::text[])",
     [["execution_deadline_at", "execution_budget_ms"]],
