@@ -6,7 +6,13 @@ import {
   type OnModuleInit,
   type OnModuleDestroy,
 } from "@nestjs/common";
-import Provider, { errors, type Configuration, type ClientMetadata } from "oidc-provider";
+import Provider, {
+  errors,
+  type Configuration,
+  type ClientMetadata,
+  type TokenEndpointGrantContext,
+  type UnknownObject,
+} from "oidc-provider";
 import { Database } from "../../infrastructure/database.js";
 import {
   oauthConfiguration,
@@ -19,6 +25,7 @@ import {
 import { ConnectionsRepository } from "./connections.repository.js";
 import { providerAdapter } from "./provider-adapter.js";
 import { BrowserProtectedValueCipher } from "@scry/veil";
+import { OAuthRenewal } from "./renewal.js";
 
 @Injectable()
 export class OAuthService implements OnModuleInit, OnModuleDestroy {
@@ -63,6 +70,12 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
       await this.database.query(`DELETE FROM oauth_provider_records WHERE ctid IN (
         SELECT ctid FROM oauth_provider_records WHERE expires_at<=now()
         ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
+      await this.database.query(`DELETE FROM oauth_renewal_receipts WHERE ctid IN (
+        SELECT ctid FROM oauth_renewal_receipts WHERE expires_at<=clock_timestamp()
+        ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
+      await this.database.query(`DELETE FROM oauth_connection_events WHERE id IN (
+        SELECT id FROM oauth_connection_events WHERE created_at<now()-interval '30 days'
+        ORDER BY id LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
     } finally {
       this.sweeping = false;
     }
@@ -90,6 +103,12 @@ export class OAuthService implements OnModuleInit, OnModuleDestroy {
     await this.database.query("SELECT id,grant_hash FROM oauth_connections LIMIT 0");
     await this.database.query(
       "SELECT model,id_hash,consumed_at,expires_at FROM oauth_provider_records LIMIT 0",
+    );
+    await this.database.query(
+      "SELECT grant_hash,request_digest,expires_at FROM oauth_renewal_receipts LIMIT 0",
+    );
+    await this.database.query(
+      "SELECT connection_id,outcome,created_at FROM oauth_connection_events LIMIT 0",
     );
   }
 }
@@ -136,9 +155,29 @@ export function createOAuthProvider(
   config: OAuthConfiguration,
   database: Database,
   overrides: Partial<Configuration> = {},
-) {
-  const provider = new Provider(config.issuer, {
-    adapter: providerAdapter(database),
+): Provider {
+  const renewal = new OAuthRenewal(database, config.resource);
+  // The public registration hook wraps the maintained provider's own handler.
+  // Client authentication, duplicate-parameter and scope validation run before it.
+  class RenewalProvider extends Provider {
+    override registerGrantType<Params extends object = UnknownObject>(
+      name: string,
+      handler: (ctx: TokenEndpointGrantContext<Params>) => void | Promise<void>,
+      params?: string | readonly string[] | ReadonlySet<string>,
+      duplicates?: string | readonly string[] | ReadonlySet<string>,
+    ) {
+      super.registerGrantType(
+        name,
+        name === "refresh_token"
+          ? (ctx: TokenEndpointGrantContext<Params>) => renewal.handle(ctx, () => handler(ctx))
+          : handler,
+        params,
+        duplicates,
+      );
+    }
+  }
+  const provider = new RenewalProvider(config.issuer, {
+    adapter: providerAdapter(renewal.storage),
     jwks: config.jwks,
     cookies: {
       keys: config.cookieKeys,
@@ -220,7 +259,8 @@ export function createOAuthProvider(
         `${config.webOrigin}/api/integrations/authorize/${interaction.uid}`,
     },
     findAccount: async (_ctx, id) => {
-      const row = (await database.query("SELECT id FROM app_users WHERE id=$1", [id])).rows[0];
+      const row = (await renewal.storage.query("SELECT id FROM app_users WHERE id=$1", [id]))
+        .rows[0];
       return row ? { accountId: row.id, claims: async () => ({ sub: row.id }) } : undefined;
     },
     renderError: async (ctx) => {

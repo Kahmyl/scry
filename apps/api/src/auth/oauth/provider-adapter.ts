@@ -7,7 +7,9 @@ import { testingScope } from "./config.js";
 export const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Provider protocol state is encrypted by Veil; PostgreSQL owns expiry and consumption. */
-export function providerAdapter(database: Database): AdapterConstructor {
+export function providerAdapter(
+  database: Pick<Database, "query" | "transaction">,
+): AdapterConstructor {
   return class PostgreSqlOAuthAdapter {
     private readonly cipher = new BrowserProtectedValueCipher();
     constructor(private readonly model: string) {}
@@ -136,6 +138,9 @@ export function providerAdapter(database: Database): AdapterConstructor {
           [digest(grantId)],
         );
         await client.query("DELETE FROM oauth_provider_records WHERE grant_hash=$1", [
+          digest(grantId),
+        ]);
+        await client.query("DELETE FROM oauth_renewal_receipts WHERE grant_hash=$1", [
           digest(grantId),
         ]);
       });

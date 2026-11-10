@@ -5,7 +5,13 @@ import { mkdtemp, readFile, rm, mkdir, writeFile, symlink, stat } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { authorize, codexCommand, install, validatePackage } from "./desktop-installer.mjs";
+import {
+  authorize,
+  codexCommand,
+  install,
+  validatePackage,
+  requiresAuthorization,
+} from "./desktop-installer.mjs";
 import { createSetupCommand } from "./desktop-bootstrap.mjs";
 
 let data;
@@ -309,6 +315,78 @@ test("stored OAuth and a successful login never count as ready when discovery fa
     signIn,
   });
   expect(noCatalog.status).toBe("needs_attention");
+});
+
+test("reconnects a rejected stored OAuth credential once, only for the attributed plugin", async () => {
+  const server = {
+    name: "scry_beta",
+    pluginId: "scry@scry-beta",
+    httpOrigin: "https://scry.giize.com",
+    authStatus: "oAuth",
+    discoveryFailed: true,
+    projectListingAvailable: false,
+    authorizationRequired: true,
+  };
+  let reads = 0,
+    logins = 0;
+  const result = await authorize({
+    inventory: async () => [
+      {
+        ...server,
+        ...(++reads > 1
+          ? { authorizationRequired: false, discoveryFailed: false, projectListingAvailable: true }
+          : {}),
+      },
+    ],
+    signIn: async (name) => {
+      expect(name).toBe("scry_beta");
+      logins++;
+      return true;
+    },
+  });
+  expect(result.status).toBe("authorized");
+  expect(logins).toBe(1);
+  expect(reads).toBe(2);
+  logins = 0;
+  expect(
+    (
+      await authorize({
+        inventory: async () => [server],
+        signIn: async () => {
+          logins++;
+          return true;
+        },
+      })
+    ).status,
+  ).toBe("needs_attention");
+  expect(logins).toBe(1);
+  expect(
+    (
+      await authorize({
+        inventory: async () => [{ ...server, pluginId: null }],
+        signIn: async () => {
+          logins++;
+          return true;
+        },
+      })
+    ).status,
+  ).toBe("needs_attention");
+  expect(logins).toBe(1);
+});
+
+test("only classifies an explicit host authorization-required result as reconnectable", () => {
+  expect(requiresAuthorization("MCP startup failed: OAuth authorization required")).toBe(true);
+  expect(requiresAuthorization("OAuth authorization required")).toBe(true);
+  for (const value of [
+    undefined,
+    null,
+    {},
+    "network error",
+    "HTTP 401",
+    "OAuth metadata discovery failed",
+    "OAuth authorization required: private diagnostic",
+  ])
+    expect(requiresAuthorization(value)).toBe(false);
 });
 
 test("Windows uses native executables or the npm Node entry point without a shell", () => {

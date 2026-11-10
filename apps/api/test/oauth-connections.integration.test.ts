@@ -1,6 +1,10 @@
 import "reflect-metadata";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 import { mkdtemp, mkdir, readdir, copyFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +27,7 @@ import { ConnectionsRepository } from "../src/auth/oauth/connections.repository.
 import { OAuthService } from "../src/auth/oauth/oauth.service.js";
 import { mountOAuth } from "../src/auth/oauth/mount.js";
 import { providerAdapter } from "../src/auth/oauth/provider-adapter.js";
+import { BrowserProtectedValueCipher } from "@scry/veil";
 import { BrowserProjectController } from "../src/browser-execution/controllers/browser-project.controller.js";
 import { BrowserProjectRepository } from "../src/browser-execution/repositories/browser-project.repository.js";
 
@@ -193,22 +198,31 @@ live("workspace-bound OAuth account linking", () => {
     Object.assign(process.env, savedEnv);
   });
 
-  async function begin(scope = "scry:testing offline_access") {
-    const registered = await fetch(`${base}/oauth/register`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_name: "Fictional test assistant",
-        redirect_uris: ["http://127.0.0.1:49199/callback"],
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-        // Standard MCP SDK clients include the discovered/requested scope in DCR.
-        scope: "scry:testing offline_access",
-      }),
-    });
-    const client = (await registered.json()) as { client_id: string };
-    expect(registered.status, JSON.stringify(client)).toBe(201);
+  let renewalClient: { client_id: string; client_secret?: string } | undefined;
+  async function begin(
+    scope = "scry:testing offline_access",
+    authentication = "none",
+    reuseRenewalClient = false,
+  ) {
+    let client = reuseRenewalClient ? renewalClient : undefined;
+    if (!client) {
+      const registered = await fetch(`${base}/oauth/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "Fictional test assistant",
+          redirect_uris: ["http://127.0.0.1:49199/callback"],
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: authentication,
+          // Standard MCP SDK clients include the discovered/requested scope in DCR.
+          scope: "scry:testing offline_access",
+        }),
+      });
+      client = (await registered.json()) as { client_id: string; client_secret?: string };
+      expect(registered.status).toBe(201);
+      if (reuseRenewalClient) renewalClient = client;
+    }
     const verifier = randomBytes(32).toString("base64url");
     const params = new URLSearchParams({
       client_id: client.client_id,
@@ -239,7 +253,7 @@ live("workspace-bound OAuth account linking", () => {
     expect(details.status, await details.clone().text()).toBe(200);
     const info = (await details.json()) as { workspaces: { id: string }[] };
     expect(info.workspaces.map((item) => item.id)).toEqual([workspaceId]);
-    return { client, verifier, uid, browser };
+    return { client, verifier, uid, browser, authentication };
   }
   async function approve(flow: Awaited<ReturnType<typeof begin>>, workspace = workspaceId) {
     const response = await flow.browser.fetch(`/api/integrations/authorize/${flow.uid}/decision`, {
@@ -277,6 +291,103 @@ live("workspace-bound OAuth account linking", () => {
       code,
       code_verifier: verifier,
       resource: `${base}/mcp`,
+      ...(flow.authentication === "client_secret_post"
+        ? { client_secret: flow.client.client_secret! }
+        : {}),
+    });
+
+  async function linked(reuseClient = true) {
+    // One actual registration can own many independent consent grants. Reuse
+    // it for renewal experiments; do not weaken the production DCR rate limit.
+    const flow = await begin("scry:testing", "none", reuseClient);
+    const { code } = await approve(flow);
+    const response = await exchange(flow, code);
+    expect(response.status).toBe(200);
+    const issued = await response.json();
+    const fields = {
+      grant_type: "refresh_token",
+      client_id: flow.client.client_id,
+      refresh_token: issued.refresh_token,
+      resource: `${base}/mcp`,
+    };
+    const renew = (patch: Record<string, string> = {}) => token({ ...fields, ...patch });
+    const refresh = await app.get(OAuthService).provider!.RefreshToken.find(issued.refresh_token);
+    const connection = (
+      await database.query(
+        "SELECT id,grant_hash,user_id,workspace_id FROM oauth_connections WHERE grant_hash=$1",
+        [createHash("sha256").update(refresh!.grantId!).digest("hex")],
+      )
+    ).rows[0]!;
+    return { flow, issued, fields, renew, connection };
+  }
+
+  const projectStatus = async (access: string) =>
+    (await fetch(`${base}/api/projects`, { headers: { authorization: `Bearer ${access}` } }))
+      .status;
+
+  async function renewalProcess(crash: boolean | "after_commit_drop" = false) {
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        fileURLToPath(new URL("./fixtures/oauth-renewal-process.ts", import.meta.url)),
+      ],
+      {
+        env: {
+          ...process.env,
+          SCRY_OAUTH_FIXTURE_CRASH:
+            crash === true ? "before_receipt" : crash === "after_commit_drop" ? crash : "",
+        },
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    const lines = createInterface({ input: child.stdout });
+    try {
+      const port = await new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("FICTIONAL_PROCESS_TIMEOUT")), 10000);
+        child.once("exit", () => {
+          clearTimeout(timer);
+          reject(new Error("FICTIONAL_PROCESS_EXITED"));
+        });
+        child.once("error", () => {
+          clearTimeout(timer);
+          reject(new Error("FICTIONAL_PROCESS_FAILED"));
+        });
+        lines.once("line", (line) => {
+          clearTimeout(timer);
+          try {
+            resolve(JSON.parse(line).port);
+          } catch {
+            reject(new Error("FICTIONAL_PROCESS_OUTPUT"));
+          }
+        });
+      });
+      return {
+        child,
+        endpoint: `http://127.0.0.1:${port}/oauth/token`,
+        async close() {
+          lines.close();
+          if (child.exitCode === null && child.signalCode === null) {
+            const closed = once(child, "exit");
+            child.kill("SIGTERM");
+            await closed;
+          }
+        },
+      };
+    } catch (error) {
+      lines.close();
+      child.kill("SIGKILL");
+      throw error;
+    }
+  }
+
+  const postRenewal = (endpoint: string, fields: Record<string, string>) =>
+    fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(fields),
+      signal: AbortSignal.timeout(10000),
     });
 
   it("advertises the resource scope for standard registration and refuses unrelated scopes", async () => {
@@ -783,6 +894,500 @@ live("workspace-bound OAuth account linking", () => {
       ).status,
     ).toBe(400);
   }, 20000);
+  it("recovers a lost refresh response using the identical bounded receipt", async () => {
+    const flow = await begin();
+    const { code } = await approve(flow);
+    const issued = await (await exchange(flow, code)).json();
+    const renew = () =>
+      token({
+        grant_type: "refresh_token",
+        client_id: flow.client.client_id,
+        refresh_token: issued.refresh_token,
+        resource: `${base}/mcp`,
+      });
+    const first = await renew();
+    const replacement = await first.json();
+    expect(first.status).toBe(200);
+    // A client loses this response and retries the same request.
+    const retried = await renew();
+    expect(retried.status).toBe(200);
+    const retriedBody = await retried.json();
+    expect(retriedBody.refresh_token === replacement.refresh_token).toBe(true);
+    expect(retriedBody.access_token === replacement.access_token).toBe(true);
+    expect(retriedBody.expires_in).toBeGreaterThan(290);
+    expect(retriedBody.expires_in).toBeLessThanOrEqual(replacement.expires_in);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const later = await renew();
+    expect(later.status).toBe(200);
+    const laterBody = await later.json();
+    expect(laterBody.expires_in).toBeGreaterThan(0);
+    expect(laterBody.expires_in).toBeLessThan(replacement.expires_in);
+    expect(laterBody.refresh_token === replacement.refresh_token).toBe(true);
+    expect(
+      (
+        await fetch(`${base}/api/projects`, {
+          headers: { authorization: `Bearer ${replacement.access_token}` },
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it("gives concurrent refresh consumers one usable successor without family revocation", async () => {
+    const flow = await begin();
+    const { code } = await approve(flow);
+    const issued = await (await exchange(flow, code)).json();
+    const outcomes = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        token({
+          grant_type: "refresh_token",
+          client_id: flow.client.client_id,
+          refresh_token: issued.refresh_token,
+          resource: `${base}/mcp`,
+        }),
+      ),
+    );
+    const winners = outcomes.filter((r) => r.status === 200);
+    expect(winners.length).toBe(6);
+    const bodies = await Promise.all(outcomes.map((r) => r.json()));
+    expect(new Set(bodies.map((b) => b.refresh_token)).size).toBe(1);
+    expect(new Set(bodies.map((b) => b.access_token)).size).toBe(1);
+    if (winners.length) {
+      const replacement = bodies[0];
+      const followup = await token({
+        grant_type: "refresh_token",
+        client_id: flow.client.client_id,
+        refresh_token: replacement.refresh_token,
+        resource: `${base}/mcp`,
+      });
+      expect(followup.status).toBe(200);
+    }
+    expect(
+      (
+        await fetch(`${base}/api/projects`, {
+          headers: {
+            authorization: `Bearer ${issued.access_token}`,
+          },
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it("rejects a second-oldest refresh token even inside the retry window", async () => {
+    const s = await linked();
+    const a = await (await s.renew()).json();
+    expect((await s.renew({ refresh_token: a.refresh_token })).status).toBe(200);
+    expect((await s.renew()).status).toBe(400);
+    expect(await projectStatus(a.access_token)).toBe(401);
+    expect(
+      (
+        await database.query(
+          "SELECT outcome FROM oauth_connection_events WHERE connection_id=$1 ORDER BY id DESC LIMIT 1",
+          [s.connection.id],
+        )
+      ).rows[0]!.outcome,
+    ).toBe("replay_refused");
+  });
+
+  it.each([{ scope: "scry:testing" }, { resource: "https://wrong-resource.example/mcp" }])(
+    "never reuses a receipt for altered effective request parameters %j",
+    async (patch) => {
+      const s = await linked();
+      const a = await (await s.renew()).json();
+      expect((await s.renew(patch)).status).toBe(400);
+      expect(await projectStatus(a.access_token)).toBe(401);
+    },
+  );
+
+  it("refuses wrong-client replay without revoking the legitimate connection", async () => {
+    const s = await linked(),
+      other = await linked(false);
+    const a = await (await s.renew()).json();
+    expect((await s.renew({ client_id: other.flow.client.client_id })).status).toBe(400);
+    expect(await projectStatus(a.access_token)).toBe(200);
+    expect((await s.renew()).status).toBe(200);
+  });
+
+  it("rechecks expiry, disconnect and membership before returning a retry receipt", async () => {
+    for (const mode of ["expiry", "disconnect", "membership"]) {
+      const s = await linked();
+      expect((await s.renew()).status).toBe(200);
+      if (mode === "expiry")
+        await database.query(
+          "UPDATE oauth_provider_records SET expires_at=clock_timestamp()-interval '1 second' WHERE model='Grant' AND id_hash=$1",
+          [s.connection.grant_hash],
+        );
+      if (mode === "disconnect")
+        await app
+          .get(ConnectionsRepository)
+          .revoke(
+            { kind: "user", credentialKind: "user", userId: s.connection.user_id } as any,
+            s.connection.id,
+          );
+      if (mode === "membership")
+        await database.query(
+          "DELETE FROM workspace_memberships WHERE user_id=$1 AND workspace_id=$2",
+          [s.connection.user_id, s.connection.workspace_id],
+        );
+      try {
+        expect((await s.renew()).status).toBe(400);
+      } finally {
+        if (mode === "membership")
+          await database.query(
+            "INSERT INTO workspace_memberships(user_id,workspace_id,role) VALUES($1,$2,'owner')",
+            [s.connection.user_id, s.connection.workspace_id],
+          );
+      }
+    }
+  });
+
+  it("does not extend the fixed retry deadline or expose plaintext provider receipts", async () => {
+    const s = await linked();
+    const a = await (await s.renew()).json();
+    const read = async () =>
+      (
+        await database.query(
+          "SELECT *,expires_at-created_at AS duration FROM oauth_renewal_receipts WHERE grant_hash=$1",
+          [s.connection.grant_hash],
+        )
+      ).rows[0]!;
+    const before = await read();
+    for (let i = 0; i < 36; i++) expect((await s.renew()).status).toBe(200);
+    const after = await read();
+    expect(after.expires_at.getTime()).toBe(before.expires_at.getTime());
+    expect(after.duration.seconds).toBe(10);
+    const safe = JSON.stringify(after);
+    expect(safe.includes(a.access_token)).toBe(false);
+    expect(safe.includes(a.refresh_token)).toBe(false);
+    expect(
+      (
+        await database.query(
+          "SELECT count(*)::int AS n FROM oauth_connection_events WHERE connection_id=$1",
+          [s.connection.id],
+        )
+      ).rows[0]!.n,
+    ).toBeLessThanOrEqual(32);
+    const facts = await app
+      .get(ConnectionsRepository)
+      .diagnostics(
+        { kind: "user", credentialKind: "user", userId: s.connection.user_id } as any,
+        s.connection.id,
+      );
+    expect(facts.connection?.lastRenewalEvent.outcome).toBe("retry_recovered");
+    expect(JSON.stringify(facts)).not.toMatch(
+      /ciphertext|nonce|authentication_tag|predecessor_hash|successor_hash/,
+    );
+  });
+
+  it("rolls back token consumption and issuance when receipt persistence fails", async () => {
+    const s = await linked();
+    const encrypt = BrowserProtectedValueCipher.prototype.encrypt;
+    const fail = vi
+      .spyOn(BrowserProtectedValueCipher.prototype, "encrypt")
+      .mockImplementation(function (this: BrowserProtectedValueCipher, value, context) {
+        if (context.purpose === "oauth-renewal")
+          throw new Error("fictional receipt storage unavailable");
+        return encrypt.call(this, value, context);
+      });
+    try {
+      const result = await s.renew();
+      expect(result.status).toBe(400);
+      expect((await result.json()).error).toBe("temporarily_unavailable");
+    } finally {
+      fail.mockRestore();
+    }
+    expect(
+      (
+        await database.query(
+          "SELECT consumed_at FROM oauth_provider_records WHERE model='RefreshToken' AND id_hash=$1",
+          [createHash("sha256").update(s.issued.refresh_token).digest("hex")],
+        )
+      ).rows[0]!.consumed_at,
+    ).toBeNull();
+    expect(
+      (
+        await database.query(
+          "SELECT count(*)::int AS n FROM oauth_provider_records WHERE grant_hash=$1 AND model='RefreshToken'",
+          [s.connection.grant_hash],
+        )
+      ).rows[0]!.n,
+    ).toBe(1);
+    expect(await projectStatus(s.issued.access_token)).toBe(200);
+    expect((await s.renew()).status).toBe(200);
+  });
+
+  it("fails closed on a corrupt receipt without invalidating the current successor", async () => {
+    const s = await linked();
+    const a = await (await s.renew()).json();
+    await database.query(
+      "UPDATE oauth_renewal_receipts SET ciphertext=decode('00','hex') WHERE grant_hash=$1",
+      [s.connection.grant_hash],
+    );
+    const result = await s.renew();
+    expect(result.status).toBe(400);
+    expect((await result.json()).error).toBe("temporarily_unavailable");
+    expect(await projectStatus(a.access_token)).toBe(200);
+    expect((await s.renew({ refresh_token: a.refresh_token })).status).toBe(200);
+  });
+
+  it("recovers the same receipt after a full provider process restart", async () => {
+    const s = await linked();
+    const a = await (await s.renew()).json();
+    const process = await renewalProcess();
+    try {
+      const response = await postRenewal(process.endpoint, s.fields);
+      expect(response.status).toBe(200);
+      const b = await response.json();
+      expect(a.refresh_token === b.refresh_token).toBe(true);
+      expect(a.access_token === b.access_token).toBe(true);
+    } finally {
+      await process.close();
+    }
+  }, 20000);
+
+  it("serializes renewal across independent provider processes", async () => {
+    const s = await linked();
+    const first = await renewalProcess(),
+      second = await renewalProcess();
+    try {
+      const responses = await Promise.all(
+        Array.from({ length: 18 }, (_, i) =>
+          postRenewal([`${base}/oauth/token`, first.endpoint, second.endpoint][i % 3]!, s.fields),
+        ),
+      );
+      expect(responses.every((r) => r.status === 200)).toBe(true);
+      const bodies = await Promise.all(responses.map((r) => r.json()));
+      expect(new Set(bodies.map((b) => b.refresh_token)).size).toBe(1);
+      expect(new Set(bodies.map((b) => b.access_token)).size).toBe(1);
+      expect(await projectStatus(bodies[0].access_token)).toBe(200);
+      expect(
+        (
+          await database.query(
+            "SELECT count(*)::int AS n FROM oauth_renewal_receipts WHERE grant_hash=$1",
+            [s.connection.grant_hash],
+          )
+        ).rows[0]!.n,
+      ).toBe(1);
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  }, 20000);
+
+  it("survives a killed issuance process without consuming the original credential", async () => {
+    const s = await linked();
+    const process = await renewalProcess(true);
+    try {
+      await expect(postRenewal(process.endpoint, s.fields)).rejects.toThrow();
+      expect((await s.renew()).status).toBe(200);
+      expect(await projectStatus(s.issued.access_token)).toBe(200);
+    } finally {
+      await process.close();
+    }
+  }, 20000);
+
+  it("cleans expired receipts without changing live grant authority", async () => {
+    const s = await linked();
+    const a = await (await s.renew()).json();
+    await database.query(
+      "UPDATE oauth_renewal_receipts SET expires_at=clock_timestamp()-interval '1 second' WHERE grant_hash=$1",
+      [s.connection.grant_hash],
+    );
+    await app.get(OAuthService).sweepExpired();
+    expect(
+      (
+        await database.query(
+          "SELECT count(*)::int AS n FROM oauth_renewal_receipts WHERE grant_hash=$1",
+          [s.connection.grant_hash],
+        )
+      ).rows[0]!.n,
+    ).toBe(0);
+    expect(await projectStatus(a.access_token)).toBe(200);
+    expect((await s.renew({ refresh_token: a.refresh_token })).status).toBe(200);
+  });
+
+  it("authenticates confidential clients again before returning a receipt", async () => {
+    const flow = await begin("scry:testing", "client_secret_post");
+    const { code } = await approve(flow);
+    const exchangeResponse = await exchange(flow, code);
+    expect(exchangeResponse.status).toBe(200);
+    const issued = await exchangeResponse.json();
+    const fields = {
+      grant_type: "refresh_token",
+      client_id: flow.client.client_id,
+      client_secret: flow.client.client_secret!,
+      refresh_token: issued.refresh_token,
+      resource: `${base}/mcp`,
+    };
+    const first = await postRenewal(`${base}/oauth/token`, fields);
+    expect(first.status).toBe(200);
+    const a = await first.json();
+    const refused = await postRenewal(`${base}/oauth/token`, {
+      ...fields,
+      client_secret: "wrong-fictional-client-secret",
+    });
+    expect([400, 401]).toContain(refused.status);
+    expect((await refused.json()).error).toBe("invalid_client");
+    const retry = await postRenewal(`${base}/oauth/token`, fields);
+    expect(retry.status).toBe(200);
+    expect((await retry.json()).refresh_token === a.refresh_token).toBe(true);
+    expect(await projectStatus(a.access_token)).toBe(200);
+  });
+
+  it("rejects malformed duplicate parameters before receipt recovery", async () => {
+    const s = await linked();
+    expect((await s.renew()).status).toBe(200);
+    const body = new URLSearchParams(s.fields);
+    body.append("client_id", s.fields.client_id);
+    const result = await fetch(`${base}/oauth/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    expect(result.status).toBe(400);
+    expect((await result.json()).error).toBe("invalid_request");
+    expect((await s.renew()).status).toBe(200);
+  });
+
+  it("recovers a lost commit acknowledgement without issuing a competing successor", async () => {
+    const s = await linked();
+    const original = database.boundedTransaction.bind(database);
+    let lost = false;
+    const fail = vi.spyOn(database, "boundedTransaction").mockImplementation(async (work) => {
+      const result = await original(work);
+      if (!lost) {
+        lost = true;
+        throw new Error("fictional lost commit acknowledgement");
+      }
+      return result;
+    });
+    try {
+      const result = await s.renew();
+      expect(result.status).toBe(400);
+      expect((await result.json()).error).toBe("temporarily_unavailable");
+    } finally {
+      fail.mockRestore();
+    }
+    const retry = await s.renew();
+    expect(retry.status).toBe(200);
+    const a = await retry.json();
+    const repeated = await s.renew();
+    expect(repeated.status).toBe(200);
+    expect((await repeated.json()).refresh_token === a.refresh_token).toBe(true);
+    expect(
+      (
+        await database.query(
+          "SELECT count(*)::int AS n FROM oauth_provider_records WHERE grant_hash=$1 AND model='RefreshToken'",
+          [s.connection.grant_hash],
+        )
+      ).rows[0]!.n,
+    ).toBe(2);
+  });
+
+  it("bounds lock contention without blocking other grants or consuming a credential", async () => {
+    const blocked = await linked(),
+      independent = await linked(),
+      holder = await database.pool.connect();
+    await holder.query("BEGIN");
+    await holder.query("SELECT pg_advisory_xact_lock(hashtextextended($1,731927))", [
+      blocked.connection.grant_hash,
+    ]);
+    try {
+      const waiting = blocked.renew();
+      expect((await independent.renew()).status).toBe(200);
+      const result = await waiting;
+      expect(result.status).toBe(400);
+      expect((await result.json()).error).toBe("temporarily_unavailable");
+    } finally {
+      await holder.query("ROLLBACK");
+      holder.release();
+    }
+    expect((await blocked.renew()).status).toBe(200);
+  }, 15000);
+
+  it("does not resurrect credentials when disconnect races renewal", async () => {
+    const s = await linked();
+    expect((await s.renew()).status).toBe(200);
+    const outcomes = await Promise.all([
+      ...Array.from({ length: 8 }, () => s.renew()),
+      app
+        .get(ConnectionsRepository)
+        .revoke(
+          { kind: "user", credentialKind: "user", userId: s.connection.user_id } as any,
+          s.connection.id,
+        ),
+    ]);
+    for (const response of outcomes.slice(0, -1) as Response[]) {
+      expect([200, 400]).toContain(response.status);
+      const body = await response.json();
+      if (body.access_token) expect(await projectStatus(body.access_token)).toBe(401);
+    }
+    expect((await s.renew()).status).toBe(400);
+    expect(
+      (
+        await database.query(
+          "SELECT count(*)::int AS n FROM oauth_renewal_receipts WHERE grant_hash=$1",
+          [s.connection.grant_hash],
+        )
+      ).rows[0]!.n,
+    ).toBe(0);
+  });
+
+  it("recovers after the actual HTTP response socket is lost following commit", async () => {
+    const s = await linked(),
+      process = await renewalProcess("after_commit_drop");
+    try {
+      await expect(postRenewal(process.endpoint, s.fields)).rejects.toThrow();
+      const retry = await s.renew();
+      expect(retry.status).toBe(200);
+      const a = await retry.json();
+      expect(await projectStatus(a.access_token)).toBe(200);
+      expect(
+        (
+          await database.query(
+            "SELECT count(*)::int AS n FROM oauth_provider_records WHERE grant_hash=$1 AND model='RefreshToken'",
+            [s.connection.grant_hash],
+          )
+        ).rows[0]!.n,
+      ).toBe(2);
+    } finally {
+      await process.close();
+    }
+  }, 20000);
+
+  it("enforces the actual ten-second wall-clock retry limit", async () => {
+    const s = await linked();
+    const a = await (await s.renew()).json();
+    await new Promise((resolve) => setTimeout(resolve, 10_050));
+    expect((await s.renew()).status).toBe(400);
+    expect(await projectStatus(a.access_token)).toBe(401);
+  }, 15000);
+
+  it("characterizes access-token revocation independently from refresh-token revocation", async () => {
+    const flow = await begin();
+    const { code } = await approve(flow);
+    const issued = await (await exchange(flow, code)).json();
+    const revoked = await fetch(`${base}/oauth/revoke`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: flow.client.client_id,
+        token: issued.access_token,
+        token_type_hint: "access_token",
+      }),
+    });
+    expect(revoked.status).toBe(200);
+    expect(
+      (
+        await token({
+          grant_type: "refresh_token",
+          client_id: flow.client.client_id,
+          refresh_token: issued.refresh_token,
+          resource: `${base}/mcp`,
+        })
+      ).status,
+    ).toBe(400);
+  });
+
   it("revokes a rotated refresh-token family on reuse and gives a new connection independent access", async () => {
     const flow = await begin();
     const { code } = await approve(flow);
@@ -798,6 +1403,10 @@ live("workspace-bound OAuth account linking", () => {
     });
     const rotated = (await first.json()) as typeof issued;
     expect(first.status).toBe(200);
+    await database.query(
+      "UPDATE oauth_renewal_receipts SET expires_at=created_at-interval '1 second' WHERE predecessor_hash=$1",
+      [createHash("sha256").update(issued.refresh_token).digest("hex")],
+    );
     expect(
       (
         await token({
