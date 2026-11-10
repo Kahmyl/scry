@@ -48,14 +48,17 @@ const INSTRUCTIONS =
 export function createBrowserMcpServer(client = new BrowserApiClient()) {
   const native = resolveBrowserRuntime(process.env) === "playwright_mcp";
   const navigation = reportNavigation();
+  const workflowGuidance = `${customerWorkflowInstructions}\n\n${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${testResourceInstructions}\n\n${reportingInstructions}`;
   const server = new McpServer(
     { name: "scry-browser", version: "baseline" },
     {
-      instructions: `${customerWorkflowInstructions}\n\n${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${testResourceInstructions}\n\n${reportingInstructions}`,
+      // Codex charges namespace instructions per tool against a shared plugin budget.
+      // Deliver complete guidance through discovery/preflight instead of repeating it per tool.
+      instructions: "Use list_projects.",
     },
   );
-  registerLifecycleTools(server, client, native, navigation);
-  registerAgentWorkflowTools(server, client, native);
+  registerLifecycleTools(server, client, native, navigation, workflowGuidance);
+  registerAgentWorkflowTools(server, client, native, workflowGuidance);
   registerSavedReportTools(server, client, navigation);
   registerBrowserCommandTools(server, client, native);
   if (native) {
@@ -152,21 +155,29 @@ function registerLifecycleTools(
   client: BrowserApiClient,
   native: boolean,
   navigation: ReturnType<typeof reportNavigation>,
+  workflowGuidance: string,
 ): void {
   server.registerTool(
     "list_projects",
     {
       title: "List Projects",
       description:
-        "List Projects visible to the current MCP identity before choosing Mission scope.",
+        "Discover accessible Projects and required workflowGuidance, even with no Projects. Follow that guidance for Scry requests; use get_testing_context before testing.",
       inputSchema: {},
-      outputSchema: { message, projects: z.array(z.record(z.string(), z.unknown())) },
+      outputSchema: {
+        message,
+        projects: z.array(z.record(z.string(), z.unknown())),
+        workflowGuidance: z.string(),
+      },
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
     async () =>
       toolResult(
-        { projects: await client.get<Array<Record<string, unknown>>>("/projects") },
+        {
+          projects: await client.get<Array<Record<string, unknown>>>("/projects"),
+          workflowGuidance,
+        },
         "Projects loaded.",
       ),
   );

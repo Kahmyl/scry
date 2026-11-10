@@ -15,7 +15,9 @@ describe("self-contained external-agent reporting guidance", () => {
     async (native) => {
       vi.stubEnv("SCRY_BROWSER_ADAPTER", native ? "playwright_mcp" : "legacy");
       vi.stubEnv("SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED", native ? "true" : "false");
-      const fetcher = vi.fn();
+      const fetcher = vi.fn(async (url: string) =>
+        Response.json(url.endsWith("/projects") ? [] : { ready: true }),
+      );
       vi.stubGlobal("fetch", fetcher);
       const server = createBrowserMcpServer(new BrowserApiClient("http://unused.test/api"));
       const client = new Client({ name: "fresh-reporting-reader", version: "baseline" });
@@ -23,7 +25,37 @@ describe("self-contained external-agent reporting guidance", () => {
       await server.connect(a);
       await client.connect(b);
       try {
-        const instructions = client.getInstructions()!;
+        expect(client.getInstructions()).toBe("Use list_projects.");
+        expect(fetcher).not.toHaveBeenCalled();
+        const discovery = await client.callTool({ name: "list_projects", arguments: {} });
+        expect(discovery.isError).not.toBe(true);
+        expect(discovery.structuredContent).toMatchObject({ projects: [] });
+        const discoveryGuidance = (discovery.structuredContent as Record<string, unknown>)
+          .workflowGuidance;
+        expect(discoveryGuidance).toContain("unsupported workspace administration");
+        expect(discoveryGuidance).toContain("https://scry.giize.com/support");
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        fetcher.mockClear();
+        const context = await client.callTool({
+          name: "get_testing_context",
+          arguments: { projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+        });
+        expect(context.isError).not.toBe(true);
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        const instructions = (context.structuredContent as Record<string, unknown>)
+          .workflowGuidance as string;
+        expect(instructions).toBe(discoveryGuidance);
+        if (native)
+          expect(instructions).toContain("queues browser observations as durable actions");
+        expect(context.content).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining("workflowGuidance"),
+            }),
+          ]),
+        );
+        fetcher.mockClear();
         expect(instructions).toContain(
           "Customer reports describe the tested application, not Scry",
         );

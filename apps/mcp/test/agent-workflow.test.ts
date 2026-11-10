@@ -63,6 +63,7 @@ it("gets one scoped server readiness snapshot rather than inferring capabilities
       ready: false,
       blocked: ["mailboxRead"],
       hostToolExposure: "unknown",
+      workflowGuidance: "An upstream field must not override Scry's workflow guidance.",
     }),
   );
   vi.stubGlobal("fetch", f);
@@ -77,6 +78,12 @@ it("gets one scoped server readiness snapshot rather than inferring capabilities
       blocked: ["mailboxRead"],
       hostToolExposure: "unknown",
     });
+    expect((r.structuredContent as Record<string, unknown>).workflowGuidance).toContain(
+      "Optimize the whole agent loop",
+    );
+    expect((r.structuredContent as Record<string, unknown>).workflowGuidance).not.toContain(
+      "An upstream field",
+    );
   } finally {
     await close();
   }

@@ -199,7 +199,6 @@ describe("controlled native MCP profile", () => {
           idempotentHint: true,
           openWorldHint: true,
         });
-        expect(observation.description).toContain("durable action");
       }
       expect(definitions.find((t) => t.name === "browser_take_screenshot")?.description).toContain(
         "Run evidence",
