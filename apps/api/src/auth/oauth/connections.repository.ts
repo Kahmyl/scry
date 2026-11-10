@@ -3,6 +3,7 @@ import type { Principal, UserPrincipal } from "../auth.types.js";
 import { Database } from "../../infrastructure/database.js";
 import { digest } from "./provider-adapter.js";
 import { testingScope } from "./config.js";
+import { recordConnectionEvent } from "./connection-events.js";
 
 export function requireDashboardUser(principal: Principal): UserPrincipal {
   if (
@@ -108,6 +109,11 @@ export class ConnectionsRepository {
             );
             rows.rows[0].clientRegistrationAvailable = client.rows[0]?.ready === true;
             delete rows.rows[0].client_id;
+            const event = await c.query(
+              "SELECT outcome,created_at AS at FROM oauth_connection_events WHERE connection_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1",
+              [connectionId],
+            );
+            rows.rows[0].lastRenewalEvent = event.rows[0] ?? null;
           }
           return rows;
         }, 2000)
@@ -134,6 +140,10 @@ export class ConnectionsRepository {
       await client.query("DELETE FROM oauth_provider_records WHERE grant_hash=$1", [
         result.rows[0]!.grant_hash,
       ]);
+      await client.query("DELETE FROM oauth_renewal_receipts WHERE grant_hash=$1", [
+        result.rows[0]!.grant_hash,
+      ]);
+      await recordConnectionEvent(client, id, "disconnected");
     });
     return { disconnected: true };
   }

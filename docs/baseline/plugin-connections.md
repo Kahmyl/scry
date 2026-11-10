@@ -48,6 +48,15 @@ Use the standards library with existing identity and a narrow Scry grant instead
   grant expiry, explicit revocation and current membership remain authoritative.
 - MCP sessions bind stable authorized identity, not the current token bytes.
   Every HTTP request revalidates access; each tool uses that request's credential.
+- Refresh issuance and its encrypted retry receipt commit atomically under a
+  PostgreSQL grant-family lock shared by API processes. For ten seconds, an
+  identically authenticated request may retrieve the same immediately succeeding,
+  unused refresh credential. A later successor, changed effective parameters,
+  expired window, removed membership or revoked grant cannot use this receipt.
+  Access-token expiry is not extended. Older replay retains family revocation.
+  This deliberately permits brief identical bearer replay; it does not make a
+  stolen bearer credential safe during that interval or repair arbitrary stale
+  host caches. Revoked connections require a fresh explicit connection.
 - Existing evidence, workers and customer records stay unchanged. OAuth storage
   is additive. Signing/cookie keys persist across restarts; no generated runtime
   fallback keys or development login views may activate in deployment.
@@ -88,6 +97,16 @@ Only API receives `SCRY_OAUTH_COOKIE_KEYS_JSON` and `SCRY_OAUTH_JWKS_JSON`.
 Compose defaults remain disabled. API startup refuses incomplete key/schema
 configuration. Public issuer and resource must share one HTTPS origin. The
 local exception is loopback HTTP; local web proxy routes preserve that origin.
+
+Renewal retry handling requires additive migration `0021-oauth-renewal-receipts.sql`
+before enabling the new API release. OAuth startup checks both new tables. Retry
+receipts use the existing Veil keyring, one receipt per connection and a fixed
+ten-second validity; the bounded minute sweeper removes expired ciphertext. Safe
+connection events retain at most 32 entries per connection and expire after 30
+days. Diagnostics expose finite outcomes and dates, never provider credentials.
+Deploy matching API instances together. An old API does not honor the receipt:
+rolling back to strict single-use behavior can invalidate a client retrying during
+that interval. Keep schema/key material on rollback and do not revive old grants.
 
 Deploy matching API, MCP and web artifacts. The reverse proxy routes `/oauth/*`
 and authorization-server discovery to API, protected-resource discovery and
@@ -143,6 +162,10 @@ installation confirmation instead of treating an empty successful exit as a pass
 
 The installer uses a dedicated local marketplace, preserves existing configuration,
 and leaves OAuth consent to the customer through the host's plugin Connect action.
+An explicit host result of `OAuth authorization required` allows one supported
+login attempt even when credential inventory still says `oAuth`. Network, server
+and generic discovery failures do not trigger sign-in or repeated consent. A
+successful login still requires a new tool-discovery check before success.
 Do not use a bare-name `codex mcp login scry` as proof of plugin authorization: it
 can authenticate an unrelated pre-existing direct MCP configuration. Verify access
 using the actual plugin's tools. Installation time, agent response time, host

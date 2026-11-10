@@ -1,5 +1,11 @@
 import { useState } from "react";
 import { api } from "../../infrastructure/api/client.js";
+const renewalLabels = new Map([
+  ["renewed", "Account access renewed."],
+  ["retry_recovered", "An interrupted renewal was recovered."],
+  ["replay_refused", "An older renewal credential was reused; reconnect Scry in your assistant."],
+  ["disconnected", "This connection was disconnected."],
+]);
 type Facts = {
   oauthDiscoveryConfigured: boolean;
   hostToolExposure: string;
@@ -10,6 +16,7 @@ type Facts = {
     clientRegistrationAvailable: boolean;
     grantExpiresAt?: string;
     lastAuthenticatedUse?: string;
+    lastRenewalEvent?: { outcome: string; at: string } | null;
   };
 };
 export function ConnectionDiagnostics({ connectionId }: { connectionId: string }) {
@@ -72,6 +79,12 @@ function Checks({ id }: { id: string }) {
               {c.lastAuthenticatedUse && (
                 <li>
                   Last authenticated request: {new Date(c.lastAuthenticatedUse).toLocaleString()}
+                </li>
+              )}
+              {c.lastRenewalEvent && (
+                <li>
+                  {renewalLabels.get(c.lastRenewalEvent.outcome) ?? "Renewal status unavailable."}{" "}
+                  {new Date(c.lastRenewalEvent.at).toLocaleString()}
                 </li>
               )}
             </ul>

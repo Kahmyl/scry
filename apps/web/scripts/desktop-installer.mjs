@@ -342,6 +342,7 @@ export async function pluginInventory() {
           httpOrigin,
           authStatus,
           discoveryFailed: Boolean(toolsError),
+          authorizationRequired: requiresAuthorization(toolsError),
           projectListingAvailable: Object.values(tools ?? {}).some(
             (tool) => tool?.name === "list_projects",
           ),
@@ -385,6 +386,15 @@ export function login(name) {
   return !result.error && result.status === 0;
 }
 
+export function requiresAuthorization(error) {
+  // Only the host's explicit authentication classification permits a new login.
+  // Never expose raw discovery errors or turn a network/500 failure into consent.
+  return (
+    typeof error === "string" &&
+    /^(?:MCP startup failed: )?OAuth authorization required$/.test(error.trim())
+  );
+}
+
 export async function authorize({ inventory = pluginInventory, signIn = login } = {}) {
   const fallback = {
     status: "needs_attention",
@@ -416,7 +426,7 @@ export async function authorize({ inventory = pluginInventory, signIn = login } 
   try {
     const server = select(await inventory());
     if (!server) return fallback;
-    if (server.authStatus === "oAuth")
+    if (server.authStatus === "oAuth" && !server.authorizationRequired)
       return ready(server)
         ? {
             status: "authorized",

@@ -9,6 +9,26 @@ Agent-loop efficiency is a primary acceptance criterion: calls, observations,
 output size, decisions and recovery handoffs per verified business journey.
 Request latency alone does not establish an efficient workflow.
 
+### S01 reopened after production deployment — 10 November 2026
+
+The original blind chat again exposed zero Scry tools after an explicit plugin
+mention. Read-only Desktop logs establish rejected saved OAuth refresh credentials,
+followed by tool omission. The server retains the client registrations; two recently
+used Codex grants were revoked at approximately 01:20Z, before release 88ccf8e.
+Isolated characterizations reproduce whole-family invalidation after a lost refresh
+response is retried, concurrent refresh consumption, and access-token revocation.
+The historical initiating event is not proven: the replaced server's old error logs
+and revocation reasons were not retained. The owner selected bounded retry handling.
+The repair preserves provider validation and serializes issuance plus one encrypted
+ten-second receipt per grant in one database transaction. It rechecks authentication,
+membership, grant expiry, the exact request and the unused immediate successor;
+older replay still revokes the family. Safe renewal events and explicit setup
+reconnection recovery are included. Native Desktop acceptance still requires a
+legitimate reconnect for already-revoked credentials and an idle/restart check.
+No existing grants or host configuration were changed during isolated testing. Evidence:
+`artifacts/assurance/desktop-tool-loss-20261110/`. Earlier release success does not
+close customer OAuth or actual Desktop acceptance.
+
 ## Complete issue register
 
 | ID  | Required correction                                                                                      | Verification                                                                   |
