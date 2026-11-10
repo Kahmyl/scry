@@ -13,6 +13,12 @@ must come from the same immutable release. The web build now copies Contracts
 source into its build stage; a successful host build alone does not prove that
 the container contains those types.
 
+Package version 0.1.5 identifies the revised bundled skills. Existing clients
+load those files through their normal plugin update/reload flow; a server
+deployment alone does not rewrite a host's cached skills. The plugin identity,
+connection configuration and permissions are unchanged. Preserve the existing
+connection rather than requiring new consent just for this instruction update.
+
 Apply the additive migrations 0018 (workflow identity), 0019 (deployment
 admission) and 0020 (cleanup decisions and scoped playback grants). Current
 readiness requires their actual capabilities. Historical migration rehearsals
