@@ -218,9 +218,10 @@ Codex applies a shared 64,000-byte agent-plugin tool budget and an 8,000-byte
 per-tool budget; its serialized namespace instructions are charged for each tool.
 See the [public exposure implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/mcp_tool_exposure.rs).
 Do not repeat the complete Scry workflow in initialization instructions. The
-short bootstrap directs the agent to `list_projects`, which returns full
-`workflowGuidance` even when no Project exists. `get_testing_context` also returns
-that guidance with its normal readiness snapshot. Both continue to use the
+short bootstrap directs the agent to `list_projects`, which returns full guidance
+in its existing message field even when no Project exists. This preserves the
+strict output schema already cached by older clients. `get_testing_context` also
+returns `workflowGuidance` with its normal readiness snapshot. Both use the
 existing scoped API and normal authorization; guidance never grants permission.
 
 The MCP compatibility check measures the whole native and retained catalogs,
