@@ -8,12 +8,15 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
 } from "@nestjs/common";
 import {
   createTestResourceSchema,
   connectTestMailboxSchema,
   type ConnectTestMailboxInput,
   refreshTestResourceSchema,
+  cleanupDecisionSchema,
+  type CleanupDecision,
   useTestSecretSchema,
   type CreateTestResourceInput,
   type RefreshTestResourceInput,
@@ -23,10 +26,31 @@ import type { Principal } from "../auth/auth.types.js";
 import { ZodValidationPipe } from "../common/validation.pipe.js";
 import { TestResourcesService } from "./test-resources.service.js";
 import { withProviderBudget } from "./provider-http.js";
+import { CleanupService } from "./cleanup.service.js";
+import { TestingOperations } from "../auth/auth.guard.js";
 
 @Controller("api")
+@TestingOperations()
 export class TestResourcesController {
-  constructor(@Inject(TestResourcesService) readonly service: TestResourcesService) {}
+  constructor(
+    @Inject(TestResourcesService) readonly service: TestResourcesService,
+    @Inject(CleanupService) readonly cleanup: CleanupService,
+  ) {}
+  @Get("missions/:missionId/cleanup")
+  @Header("Cache-Control", "private, no-store")
+  ledger(@CurrentPrincipal() p: Principal, @Param("missionId", new ParseUUIDPipe()) id: string) {
+    return this.cleanup.list(scope(p), id);
+  }
+  @Post("missions/:missionId/cleanup")
+  @Header("Cache-Control", "private, no-store")
+  decideCleanup(
+    @CurrentPrincipal() p: Principal,
+    @Param("missionId", new ParseUUIDPipe()) id: string,
+    @Body(new ZodValidationPipe(cleanupDecisionSchema)) input: CleanupDecision,
+  ) {
+    write(p);
+    return withProviderBudget(() => this.cleanup.decide(scope(p), id, input), 10000);
+  }
   @Get("missions/:missionId/test-resources")
   @Header("Cache-Control", "private, no-store")
   list(@CurrentPrincipal() p: Principal, @Param("missionId", new ParseUUIDPipe()) id: string) {
@@ -56,6 +80,16 @@ export class TestResourcesController {
   @Header("Cache-Control", "private, no-store")
   events(@CurrentPrincipal() p: Principal, @Param("id", new ParseUUIDPipe()) id: string) {
     return this.service.repository.events(scope(p), id);
+  }
+  @Get("test-resources/:id/observations")
+  @Header("Cache-Control", "private, no-store")
+  observations(
+    @CurrentPrincipal() p: Principal,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Query(new ZodValidationPipe(refreshTestResourceSchema.pick({ afterEventId: true })))
+    input: Pick<RefreshTestResourceInput, "afterEventId">,
+  ) {
+    return this.service.read(scope(p), id, { ...input, refresh: false, waitSeconds: 0 });
   }
   @Post("test-resources/:id/refresh")
   @Header("Cache-Control", "private, no-store")

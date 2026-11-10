@@ -10,6 +10,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { finalizationBrowserErrorCode } from "@scry/veil";
 import {
   createBrowserFlowSchema,
@@ -22,6 +23,8 @@ import {
   startBrowserMissionSchema,
   startBrowserRunSchema,
   submitBrowserCommandSchema,
+  prepareBrowserJourneySchema,
+  type PrepareBrowserJourneyInput,
   type CreateBrowserFlowInput,
   type BindBrowserProtectedInputsInput,
   type CreateBrowserEnvironmentInput,
@@ -35,7 +38,7 @@ import {
 } from "@scry/contracts";
 
 import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
-import { Public } from "../../auth/auth.guard.js";
+import { Public, TestingOperations } from "../../auth/auth.guard.js";
 import type { Principal } from "../../auth/auth.types.js";
 import { ZodValidationPipe } from "../../common/validation.pipe.js";
 import { BrowserExecutionRepository } from "../repositories/browser-execution.repository.js";
@@ -46,6 +49,7 @@ import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js"
 import { selectedBrowserAdapter } from "../browser-adapter-selection.js";
 
 @Controller("api")
+@TestingOperations()
 export class BrowserLifecycleController {
   constructor(
     @Inject(BrowserLifecycleRepository) private readonly lifecycle: BrowserLifecycleRepository,
@@ -200,11 +204,33 @@ export class BrowserLifecycleController {
     return this.lifecycle.startRun(workspace(principal), input);
   }
 
+  @Post("journeys")
+  prepareJourney(
+    @CurrentPrincipal() principal: Principal,
+    @Body(new ZodValidationPipe(prepareBrowserJourneySchema)) input: PrepareBrowserJourneyInput,
+  ) {
+    this.enabled();
+    if (principal.kind === "user" && principal.role === "viewer")
+      throw new ForbiddenException("SCRY_BROWSER_JOURNEY_FORBIDDEN");
+    if (process.env.SCRY_BROWSER_WORKFLOW_V1_ENABLED !== "true")
+      throw new ServiceUnavailableException("SCRY_BROWSER_WORKFLOW_DISABLED");
+    return this.lifecycle.prepareJourney(workspace(principal), input);
+  }
+
   @Post("runs/:runId/finalize")
   async finalizeRun(
     @Param("runId") runId: string,
     @CurrentPrincipal() principal: Principal,
     @Body(new ZodValidationPipe(finalizeBrowserRunSchema)) input: FinalizeBrowserRunInput,
+  ) {
+    return this.finalizeRunWithClosure(runId, principal, input, false);
+  }
+
+  private async finalizeRunWithClosure(
+    runId: string,
+    principal: Principal,
+    input: FinalizeBrowserRunInput,
+    followClosureOwner: boolean,
   ) {
     this.enabled();
     const session = await this.lifecycle.executionSessionForRun(workspace(principal), runId);
@@ -224,10 +250,15 @@ export class BrowserLifecycleController {
         });
       }
     }
+    // Only the explicitly authorized incomplete-stop path follows a recovered
+    // closure owner. Ordinary finalization keeps the caller's fencing token.
+    const ownerGeneration = followClosureOwner
+      ? (await this.lifecycle.executionSessionForRun(workspace(principal), runId)).ownerGeneration
+      : input.ownerGeneration;
     try {
       if (failureFinalization)
-        await this.execution.finalizeFailedSession(session.id, input.ownerGeneration);
-      else await this.execution.finalizeSession(session.id, input.ownerGeneration);
+        await this.execution.finalizeFailedSession(session.id, ownerGeneration);
+      else await this.execution.finalizeSession(session.id, ownerGeneration);
     } catch (error) {
       const code = finalizationBrowserErrorCode(error);
       const safeActions =
@@ -247,6 +278,41 @@ export class BrowserLifecycleController {
       runId,
       input.outcome,
       input.conclusion,
+    );
+  }
+
+  @Post("runs/:runId/stop")
+  async stopRun(
+    @Param("runId") runId: string,
+    @CurrentPrincipal() principal: Principal,
+    @Body(
+      new ZodValidationPipe(
+        z.strictObject({ confirmed: z.literal(true), conclusion: z.string().min(1).max(4000) }),
+      ),
+    )
+    input: { confirmed: true; conclusion: string },
+  ) {
+    this.enabled();
+    if (principal.kind === "user" && principal.role === "viewer")
+      throw new ForbiddenException("Stopping an attempt requires testing access");
+    const session = await this.lifecycle.executionSessionForRun(workspace(principal), runId);
+    if (["passed", "failed", "cancelled", "infrastructure_error"].includes(session.runState)) {
+      if (!["completed", "failed", "cancelled"].includes(session.browserState))
+        throw new ConflictException("Terminal attempt release needs operator reconciliation");
+      return { replay: true };
+    }
+    // The existing fenced finalizer owns closure, evidence and uncertainty.
+    // Never dispatch application actions or silently upgrade an incomplete Run.
+    await this.commands.requestStop(session.id, workspace(principal));
+    return this.finalizeRunWithClosure(
+      runId,
+      principal,
+      {
+        ownerGeneration: session.ownerGeneration,
+        outcome: "blocked",
+        conclusion: input.conclusion,
+      },
+      true,
     );
   }
 

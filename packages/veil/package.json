@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@scry/contracts": "workspace:*"
+    "@scry/contracts": "workspace:*",
+    "parse5": "7.3.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

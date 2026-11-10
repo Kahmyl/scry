@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy } from "@nestjs/common";
 import pg, { type PoolClient, type QueryResultRow } from "pg";
+import { performance } from "node:perf_hooks";
 
 @Injectable()
 export class Database implements OnModuleDestroy {
@@ -33,6 +34,79 @@ export class Database implements OnModuleDestroy {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  /** Short metadata transactions only. No browser/provider awaits under this budget.
+   * A lost COMMIT acknowledgement is recovered by the caller's durable receipt. */
+  async boundedTransaction<T>(
+    work: (client: PoolClient) => Promise<T>,
+    timeoutMs = 5000,
+  ): Promise<T> {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000)
+      throw new Error("SCRY_BROWSER_TRANSACTION_BUDGET_INVALID");
+    const end = performance.now() + timeoutMs;
+    const remaining = () => {
+      const ms = Math.ceil(end - performance.now());
+      if (ms <= 0) throw new Error("SCRY_BROWSER_TRANSACTION_DEADLINE_EXCEEDED");
+      return ms;
+    };
+    let timer: NodeJS.Timeout | undefined;
+    const pending = this.pool.connect();
+    let client: PoolClient;
+    try {
+      client = await Promise.race([
+        pending,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("SCRY_BROWSER_TRANSACTION_DEADLINE_EXCEEDED")),
+            remaining(),
+          );
+        }),
+      ]);
+    } catch (error) {
+      void pending.then((late) => late.release()).catch(() => {});
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+    let destroyed = false;
+    const query = async (text: string, values: unknown[] = []) => {
+      const config: pg.QueryConfig & { query_timeout: number } = {
+        text,
+        values,
+        query_timeout: remaining(),
+      };
+      return client.query(config);
+    };
+    const scoped = new Proxy(client, {
+      get(target, property) {
+        if (property === "query")
+          return async (text: string, values: unknown[] = []) => {
+            await query(
+              "SELECT set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)",
+              [String(remaining())],
+            );
+            return query(text, values);
+          };
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    try {
+      await query("BEGIN");
+      const result = await work(scoped);
+      await scoped.query("SELECT 1"); // refresh the server bound before COMMIT
+      await query("COMMIT");
+      return result;
+    } catch (error) {
+      // Destroying the connection also cancels/rolls back late server work. Do
+      // not return it to the pool after a caller deadline or ambiguous COMMIT.
+      destroyed = true;
+      client.release(true);
+      throw error;
+    } finally {
+      if (!destroyed) client.release();
     }
   }
 

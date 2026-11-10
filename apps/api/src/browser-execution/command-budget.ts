@@ -4,10 +4,10 @@ import type { BrowserCommand } from "@scry/contracts";
  * Legacy synchronous replay closure gets a separate finite budget until native
  * encoding is independent. An existing command's selected budget never renews.
  */
-export function commandExecutionBudgetMs(kind: BrowserCommand["kind"]): number {
+export function commandExecutionBudgetMs(kind: BrowserCommand["kind"], tool?: string): number {
   switch (kind) {
     case "browser_tool":
-      return 60_000;
+      return tool === "browser_sequence" ? 25_000 : 60_000;
     case "close":
     case "close_for_failure":
       return 900_000;

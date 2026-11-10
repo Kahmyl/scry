@@ -1,6 +1,17 @@
 import path from "node:path";
 import ts from "typescript";
 
+/** Veil owns message interpretation; this pinned, deterministic HTML parser
+ * brings no Scry runtime/transport/storage authority into that boundary. */
+export function unsupportedVeilDependencies(dependencies = {}) {
+  return Object.entries(dependencies)
+    .filter(
+      ([name, version]) =>
+        name !== "@scry/contracts" && !(name === "parse5" && version === "7.3.0"),
+    )
+    .map(([name]) => name);
+}
+
 /** Runtime tooling is explicit; adding the private TS custodian loader does not
  * permit another implementation owner or arbitrary new runtime dependencies. */
 export function unsupportedPraxisDependencies(dependencies = {}) {

@@ -1,8 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { boundaryViolations, unsupportedPraxisDependencies } from "../boundary-ownership-rules.mjs";
+import {
+  boundaryViolations,
+  unsupportedPraxisDependencies,
+  unsupportedVeilDependencies,
+} from "../boundary-ownership-rules.mjs";
 
 const consumer = "apps/api/src/browser-execution/example.ts";
+
+test("Veil admits only the pinned parser without accepting another implementation owner", () => {
+  assert.deepEqual(
+    unsupportedVeilDependencies({ "@scry/contracts": "workspace:*", parse5: "7.3.0" }),
+    [],
+  );
+  for (const dependency of [
+    "@scry/praxis",
+    "@scry/chronicle",
+    "@scry/assurance",
+    "pg",
+    "playwright",
+    "unreviewed-parser",
+  ])
+    assert.deepEqual(unsupportedVeilDependencies({ [dependency]: "fixture" }), [dependency]);
+  for (const version of ["^7.3.0", "7.3.1", "*"])
+    assert.deepEqual(unsupportedVeilDependencies({ parse5: version }), ["parse5"]);
+});
 
 test("admits the explicit private custodian TS loader without admitting other runtime owners", () => {
   assert.deepEqual(

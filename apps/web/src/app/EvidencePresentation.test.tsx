@@ -3,8 +3,13 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RunEvidence } from "./RunEvidence.js";
 import { ReportNarrative, reportNarrative } from "./ReportNarrative.js";
-import { api, apiBlob } from "../infrastructure/api/client.js";
-vi.mock("../infrastructure/api/client.js", () => ({ api: vi.fn(), apiBlob: vi.fn() }));
+import { api, apiBlob, videoPlayback } from "../infrastructure/api/client.js";
+vi.mock("../infrastructure/api/client.js", () => ({
+  api: vi.fn(),
+  apiBlob: vi.fn(),
+  videoPlayback: vi.fn(),
+  API_BASE: "/api",
+}));
 const media = [
   {
     index: 0,
@@ -28,6 +33,10 @@ beforeEach(() => {
     items: media,
     warning: "Best effort masking; review before sharing.",
   });
+  vi.mocked(videoPlayback).mockResolvedValue({
+    id: "fixture-grant",
+    path: "/media-playback/fixture-grant",
+  });
   vi.mocked(apiBlob).mockResolvedValue(new Blob(["fictional media"]));
   Object.defineProperty(URL, "createObjectURL", {
     configurable: true,
@@ -40,6 +49,45 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe("human-readable evidence and report presentation", () => {
+  it("renews a narrow playback lease without replacing the video URL or buffering a Blob", async () => {
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        render(<RunEvidence runId="renewed" />);
+      });
+      const source = screen.getByLabelText("Browser recording").getAttribute("src");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50000);
+      });
+      expect(videoPlayback).toHaveBeenCalledWith(
+        "/media-playback/fixture-grant/renew",
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(document.querySelector("video")!.getAttribute("src")).toBe(source);
+      expect(apiBlob).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("stops playback visibly when its lease cannot renew, without inventing fresh access", async () => {
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        render(<RunEvidence runId="expired-lease" />);
+      });
+      expect(screen.getByLabelText("Browser recording")).toBeTruthy();
+      vi.mocked(videoPlayback).mockRejectedValueOnce(Error("expired lease"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50000);
+      });
+      expect(screen.getByRole("alert").textContent).toContain(
+        "authorization could not be refreshed",
+      );
+      expect(document.querySelector("video")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("shows an obvious library placeholder while the media list is pending", () => {
     vi.mocked(api).mockReturnValueOnce(new Promise(() => {}));
     render(<RunEvidence runId="pending-list" />);
@@ -50,16 +98,16 @@ describe("human-readable evidence and report presentation", () => {
     expect(apiBlob).not.toHaveBeenCalled();
   });
   it("shows download, browser preparation and buffering states, then clears them on ready or error", async () => {
-    let finish: (blob: Blob) => void = () => {};
-    vi.mocked(apiBlob).mockReturnValueOnce(
-      new Promise<Blob>((resolve) => {
+    let finish: (grant: unknown) => void = () => {};
+    vi.mocked(videoPlayback).mockReturnValueOnce(
+      new Promise<any>((resolve) => {
         finish = resolve;
       }),
     );
     render(<RunEvidence runId="pending-video" />);
     expect(await screen.findByText("Loading recording…")).toBeTruthy();
     expect(document.querySelector(".ev-loading-spinner")).toBeTruthy();
-    await act(async () => finish(new Blob(["fictional media"])));
+    await act(async () => finish({ id: "fixture-grant", path: "/media-playback/fixture-grant" }));
     const video = await screen.findByLabelText("Browser recording");
     expect(screen.getByText("Preparing recording…")).toBeTruthy();
     fireEvent.loadedData(video);
@@ -113,7 +161,11 @@ describe("human-readable evidence and report presentation", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /Recordings/ }));
     await waitFor(() => expect(document.querySelector("video")).not.toBeNull());
-    expect(apiBlob).toHaveBeenLastCalledWith("/runs/many/media/0", expect.any(AbortSignal));
+    expect(videoPlayback).toHaveBeenCalledWith(
+      "/runs/many/media/0/playback",
+      expect.objectContaining({ method: "POST", signal: expect.any(AbortSignal) }),
+    );
+    expect(apiBlob).not.toHaveBeenCalledWith("/runs/many/media/0", expect.anything());
   });
   it("retries a media-list failure without dropping the warning or inventing a result", async () => {
     vi.mocked(api).mockRejectedValueOnce(new Error("PRIVATE_PROVIDER_ERROR"));
@@ -198,7 +250,9 @@ describe("human-readable evidence and report presentation", () => {
   it("defaults to original timing without autoplay and releases replaced media", async () => {
     const view = render(<RunEvidence runId="run-one" />);
     await waitFor(() =>
-      expect(document.querySelector("video")?.getAttribute("src")).toBe("blob:fictional-evidence"),
+      expect(document.querySelector("video")?.getAttribute("src")).toBe(
+        "/api/media-playback/fixture-grant",
+      ),
     );
     const video = document.querySelector("video")!;
     expect(video.autoplay).toBe(false);
@@ -211,10 +265,12 @@ describe("human-readable evidence and report presentation", () => {
     const fullSize = screen.getByRole("link", { name: "Open full-size screenshot" });
     expect(fullSize.getAttribute("href")).toBe("blob:fictional-evidence");
     expect(fullSize.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(URL.revokeObjectURL).toHaveBeenCalled();
+    expect(videoPlayback).toHaveBeenCalledWith("/media-playback/fixture-grant", {
+      method: "DELETE",
+    });
     expect(document.querySelector("video")).toBeNull();
     view.unmount();
-    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
   });
   it("opens exactly the referenced artifact and never substitutes another when it is missing", async () => {
     const view = render(<RunEvidence runId="run-one" initialArtifactId={"f".repeat(64)} />);
@@ -232,9 +288,9 @@ describe("human-readable evidence and report presentation", () => {
   });
   it("aborts a pending media request when another item is selected", async () => {
     let signal: AbortSignal | undefined;
-    vi.mocked(apiBlob).mockImplementationOnce(async (_path, input) => {
-      signal = input;
-      return await new Promise<Blob>(() => {});
+    vi.mocked(videoPlayback).mockImplementationOnce(async (_path, input) => {
+      signal = input.signal as AbortSignal;
+      return await new Promise<any>(() => {});
     });
     render(<RunEvidence runId="run-one" />);
     await waitFor(() => expect(signal).toBeTruthy());

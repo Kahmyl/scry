@@ -29,10 +29,13 @@ export function resultLabel(value: string): string {
   return resultCategories.find((item) => item.value === checkGroup(value))!.label;
 }
 
-export type CheckFilter = "all" | "different" | "expected" | "uncertain" | "not-tested";
+export type CheckFilter =
+  "all" | "different" | "expected" | "uncertain" | "not-tested" | "blocked" | "excluded";
 export function checkGroup(label: string): Exclude<CheckFilter, "all"> {
   if (["Different from expected", "Didn’t work as expected"].includes(label)) return "different";
   if (["As expected", "Worked as expected"].includes(label)) return "expected";
+  if (label === "Blocked") return "blocked";
+  if (label === "Excluded") return "excluded";
   return label === "Not tested" ? "not-tested" : "uncertain";
 }
 export const resultCategories: Array<{
@@ -40,6 +43,17 @@ export const resultCategories: Array<{
   label: string;
   description: string;
 }> = [
+  {
+    value: "blocked",
+    label: "Blocked",
+    description:
+      "These checks could not proceed. Read the missing prerequisite and what is needed to finish.",
+  },
+  {
+    value: "excluded",
+    label: "Excluded",
+    description: "These checks were deliberately outside the authorized scope.",
+  },
   {
     value: "expected",
     label: "Worked as expected",

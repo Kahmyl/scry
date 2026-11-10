@@ -21,6 +21,9 @@ const connection = {
   id: "00000000-0000-4000-8000-000000000001",
   clientName: "Fictional assistant",
   workspaceName: "Studio workspace",
+  workspaceId: "00000000-0000-4000-8000-000000000002",
+  workspaceAccess: true,
+  expired: false,
   createdAt: "2026-11-02T10:00:00Z",
   lastUsedAt: null,
   revokedAt: null,
@@ -38,6 +41,40 @@ afterEach(() => {
 });
 
 describe("guided account connections", () => {
+  it("renders one card for multiple Codex sign-ins and disconnects only the selected grant", async () => {
+    vi.mocked(api).mockResolvedValue({
+      available: true,
+      connections: [1, 2, 3, 4].map((i) => ({
+        ...connection,
+        id: String(i),
+        clientName: "Codex",
+        createdAt: `2026-11-0${i}T10:00:00Z`,
+      })),
+    });
+    vi.mocked(remove).mockResolvedValue({ disconnected: true });
+    render(<Connections />);
+    expect(await screen.findAllByRole("heading", { name: "Codex" })).toHaveLength(1);
+    const details = screen.getByText("4 sign-ins · Manage connections").closest("details")!;
+    expect(details.open).toBe(false);
+    fireEvent.click(screen.getByText("4 sign-ins · Manage connections"));
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect Codex sign-in 3" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/Selected sign-in approved/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("/integrations/connections/3"));
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+  it("shows unknown access honestly even with a historical successful use", async () => {
+    vi.mocked(api).mockResolvedValueOnce({
+      available: true,
+      connections: [
+        { ...connection, workspaceAccess: undefined, lastUsedAt: "2026-11-01T10:00:00Z" },
+      ],
+    });
+    render(<Connections />);
+    expect(await screen.findByText("Access not confirmed")).toBeTruthy();
+    expect(screen.queryByText("Connected · authenticated access verified")).toBeNull();
+  });
   it("explains where to add Claude and visibly confirms the all-client refresh", async () => {
     render(<Connections />);
     fireEvent.click(await screen.findByRole("radio", { name: /^Claude$/ }));

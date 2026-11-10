@@ -11,8 +11,15 @@ import type {
   StartBrowserMissionInput,
   StartBrowserRunInput,
   VeilReportSanitizer,
+  PrepareBrowserJourneyInput,
+  PreparedBrowserJourney,
 } from "@scry/contracts";
-import { browserProtectionSinkSchema, VeilReportProtectionPort } from "@scry/contracts";
+import {
+  browserProtectionSinkSchema,
+  VeilReportProtectionPort,
+  prepareBrowserJourneySchema,
+  preparedBrowserJourneySchema,
+} from "@scry/contracts";
 import type { PoolClient, QueryResultRow } from "pg";
 
 import { Database } from "../../infrastructure/database.js";
@@ -22,6 +29,7 @@ import {
 } from "../protected-value-cipher.js";
 import { BROWSER_RUNTIME_CAPABILITY_ID } from "../browser-runtime-capability.js";
 import { admitBrowserSession } from "./browser-session-capacity.js";
+import { immutableWorkflowInput, workflowDigest } from "../workflow-input.js";
 
 interface IdRow extends QueryResultRow {
   id: string;
@@ -36,6 +44,89 @@ export class BrowserLifecycleRepository {
     @Inject(BrowserProtectedValueCipher)
     private readonly cipher: BrowserProtectedValueCipher = new BrowserProtectedValueCipher(),
   ) {}
+
+  async prepareJourney(
+    workspaceId: string | undefined,
+    requested: PrepareBrowserJourneyInput,
+  ): Promise<PreparedBrowserJourney> {
+    // Normalize defaults and snapshot before the first await: caller mutation
+    // must not change the semantics protected by the durable digest.
+    const input = immutableWorkflowInput(prepareBrowserJourneySchema.parse(requested));
+    const digest = workflowDigest(input);
+    return this.database.boundedTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        `journey:${input.missionId}:${input.attemptId}`,
+      ]);
+      await this.requireMissionAgent(
+        client,
+        workspaceId,
+        input.missionId,
+        input.agentSessionId,
+        input.projectId,
+      );
+      const found = await client.query<{ input_digest: string; result: Record<string, unknown> }>(
+        "SELECT input_digest,result FROM browser_journey_receipts WHERE mission_id=$1 AND attempt_id=$2",
+        [input.missionId, input.attemptId],
+      );
+      if (found.rows[0]) {
+        if (found.rows[0].input_digest !== digest)
+          throw new Error("SCRY_BROWSER_JOURNEY_ATTEMPT_CONFLICT");
+        return preparedBrowserJourneySchema.parse({ ...found.rows[0].result, replay: true });
+      }
+      const key = `journey-v1:${input.attemptId}`;
+      const objective = await this.createObjectiveInTransaction(
+        client,
+        workspaceId,
+        input.missionId,
+        {
+          agentSessionId: input.agentSessionId,
+          title: input.title,
+          description: input.purpose,
+          completionCriteria: input.completionCriteria,
+          objectiveOrder: input.objectiveOrder,
+          idempotencyKey: key + ":objective",
+        },
+      );
+      const flow = await this.createFlowInTransaction(client, workspaceId, input.missionId, {
+        agentSessionId: input.agentSessionId,
+        name: input.title,
+        purpose: input.purpose,
+        definition: {},
+        idempotencyKey: key + ":flow",
+      });
+      const run = await this.startRunInTransaction(client, workspaceId, {
+        projectId: input.projectId,
+        missionId: input.missionId,
+        agentSessionId: input.agentSessionId,
+        environmentId: input.environmentId,
+        ...objective,
+        ...flow,
+        protectedInputIds: input.protectedInputIds,
+        authenticationCommitLimit: input.authenticationCommitLimit,
+        businessCommitLimit: input.businessCommitLimit,
+        idempotencyKey: key + ":run",
+      });
+      const result = preparedBrowserJourneySchema.parse({
+        ...objective,
+        ...flow,
+        ...run,
+        contractVersion: 1,
+        replay: false,
+      });
+      await client.query(
+        "INSERT INTO browser_journey_receipts(mission_id,attempt_id,project_id,agent_session_id,input_digest,result) VALUES($1,$2,$3,$4,$5,$6::jsonb)",
+        [
+          input.missionId,
+          input.attemptId,
+          input.projectId,
+          input.agentSessionId,
+          digest,
+          JSON.stringify(result),
+        ],
+      );
+      return result;
+    });
+  }
 
   async listEnvironments(workspaceId: string | undefined, projectId: string) {
     return this.database.transaction(async (client) => {
@@ -148,35 +239,44 @@ export class BrowserLifecycleRepository {
     missionId: string,
     input: CreateBrowserObjectiveInput,
   ) {
-    return this.database.transaction(async (client) => {
-      const mission = await this.requireMissionAgent(
-        client,
-        workspaceId,
-        missionId,
-        input.agentSessionId,
-      );
-      const existing = await client.query<IdRow>(
-        "SELECT id FROM mission_objectives WHERE mission_id=$1 AND idempotency_key=$2 FOR UPDATE",
-        [missionId, input.idempotencyKey],
-      );
-      if (existing.rows[0]) return { objectiveId: existing.rows[0].id, replay: true };
-      const objectiveId = randomUUID();
-      await client.query(
-        `INSERT INTO mission_objectives(id,mission_id,project_id,title,description,completion_criteria,objective_order,idempotency_key)
+    return this.database.transaction((client) =>
+      this.createObjectiveInTransaction(client, workspaceId, missionId, input),
+    );
+  }
+
+  private async createObjectiveInTransaction(
+    client: PoolClient,
+    workspaceId: string | undefined,
+    missionId: string,
+    input: CreateBrowserObjectiveInput,
+  ) {
+    const mission = await this.requireMissionAgent(
+      client,
+      workspaceId,
+      missionId,
+      input.agentSessionId,
+    );
+    const existing = await client.query<IdRow>(
+      "SELECT id FROM mission_objectives WHERE mission_id=$1 AND idempotency_key=$2 FOR UPDATE",
+      [missionId, input.idempotencyKey],
+    );
+    if (existing.rows[0]) return { objectiveId: existing.rows[0].id, replay: true };
+    const objectiveId = randomUUID();
+    await client.query(
+      `INSERT INTO mission_objectives(id,mission_id,project_id,title,description,completion_criteria,objective_order,idempotency_key)
          VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`,
-        [
-          objectiveId,
-          missionId,
-          mission.projectId,
-          input.title,
-          input.description,
-          JSON.stringify(input.completionCriteria),
-          input.objectiveOrder,
-          input.idempotencyKey,
-        ],
-      );
-      return { objectiveId, replay: false };
-    });
+      [
+        objectiveId,
+        missionId,
+        mission.projectId,
+        input.title,
+        input.description,
+        JSON.stringify(input.completionCriteria),
+        input.objectiveOrder,
+        input.idempotencyKey,
+      ],
+    );
+    return { objectiveId, replay: false };
   }
 
   async createFlow(
@@ -184,164 +284,181 @@ export class BrowserLifecycleRepository {
     missionId: string,
     input: CreateBrowserFlowInput,
   ) {
-    return this.database.transaction(async (client) => {
-      const mission = await this.requireMissionAgent(
-        client,
-        workspaceId,
-        missionId,
-        input.agentSessionId,
-      );
-      const existing = await client.query<{ flowId: string; flowRevisionId: string }>(
-        `SELECT f.id AS "flowId",r.id AS "flowRevisionId" FROM flows f
+    return this.database.transaction((client) =>
+      this.createFlowInTransaction(client, workspaceId, missionId, input),
+    );
+  }
+
+  private async createFlowInTransaction(
+    client: PoolClient,
+    workspaceId: string | undefined,
+    missionId: string,
+    input: CreateBrowserFlowInput,
+  ) {
+    const mission = await this.requireMissionAgent(
+      client,
+      workspaceId,
+      missionId,
+      input.agentSessionId,
+    );
+    const existing = await client.query<{ flowId: string; flowRevisionId: string }>(
+      `SELECT f.id AS "flowId",r.id AS "flowRevisionId" FROM flows f
          JOIN flow_revisions r ON r.flow_id=f.id AND r.state='active'
          WHERE f.mission_id=$1 AND f.idempotency_key=$2 FOR UPDATE`,
-        [missionId, input.idempotencyKey],
-      );
-      if (existing.rows[0]) return { ...existing.rows[0], replay: true };
-      const flowId = randomUUID();
-      const flowRevisionId = randomUUID();
-      await client.query(
-        `INSERT INTO flows(id,project_id,mission_id,created_by_agent_session_id,name,purpose,idempotency_key)
+      [missionId, input.idempotencyKey],
+    );
+    if (existing.rows[0]) return { ...existing.rows[0], replay: true };
+    const flowId = randomUUID();
+    const flowRevisionId = randomUUID();
+    await client.query(
+      `INSERT INTO flows(id,project_id,mission_id,created_by_agent_session_id,name,purpose,idempotency_key)
          VALUES($1,$2,$3,$4,$5,$6,$7)`,
-        [
-          flowId,
-          mission.projectId,
-          missionId,
-          input.agentSessionId,
-          input.name,
-          input.purpose,
-          input.idempotencyKey,
-        ],
-      );
-      await client.query(
-        `INSERT INTO flow_revisions(id,flow_id,mission_id,project_id,revision,state,definition,created_by_agent_session_id,activated_at)
+      [
+        flowId,
+        mission.projectId,
+        missionId,
+        input.agentSessionId,
+        input.name,
+        input.purpose,
+        input.idempotencyKey,
+      ],
+    );
+    await client.query(
+      `INSERT INTO flow_revisions(id,flow_id,mission_id,project_id,revision,state,definition,created_by_agent_session_id,activated_at)
          VALUES($1,$2,$3,$4,1,'active',$5::jsonb,$6,now())`,
-        [
-          flowRevisionId,
-          flowId,
-          missionId,
-          mission.projectId,
-          JSON.stringify(input.definition),
-          input.agentSessionId,
-        ],
-      );
-      return { flowId, flowRevisionId, replay: false };
-    });
+      [
+        flowRevisionId,
+        flowId,
+        missionId,
+        mission.projectId,
+        JSON.stringify(input.definition),
+        input.agentSessionId,
+      ],
+    );
+    return { flowId, flowRevisionId, replay: false };
   }
 
   async startRun(workspaceId: string | undefined, input: StartBrowserRunInput) {
-    return this.database.transaction(async (client) => {
-      await this.requireMissionAgent(
-        client,
-        workspaceId,
-        input.missionId,
-        input.agentSessionId,
-        input.projectId,
-      );
-      return admitBrowserSession(
-        client,
-        async () => {
-          const existing = await client.query<{ runId: string; browserSessionId: string }>(
-            `SELECT r.id AS "runId",s.id AS "browserSessionId" FROM runs r
+    return this.database.transaction((client) =>
+      this.startRunInTransaction(client, workspaceId, input),
+    );
+  }
+
+  private async startRunInTransaction(
+    client: PoolClient,
+    workspaceId: string | undefined,
+    input: StartBrowserRunInput,
+  ) {
+    await this.requireMissionAgent(
+      client,
+      workspaceId,
+      input.missionId,
+      input.agentSessionId,
+      input.projectId,
+    );
+    return admitBrowserSession(
+      client,
+      async () => {
+        const existing = await client.query<{ runId: string; browserSessionId: string }>(
+          `SELECT r.id AS "runId",s.id AS "browserSessionId" FROM runs r
          JOIN browser_execution_sessions s ON s.run_id=r.id
          WHERE r.mission_id=$1 AND r.idempotency_key=$2 FOR UPDATE`,
-            [input.missionId, input.idempotencyKey],
-          );
-          return existing.rows[0] ? { ...existing.rows[0], replay: true } : undefined;
-        },
-        async () => {
-          const environment = await client.query<{
-            base_origin: string;
-            allowed_service_origins: unknown;
-            disclosure_mode: "confidential" | "trusted_application_output";
-          }>(
-            "SELECT base_origin,allowed_service_origins,disclosure_mode FROM environments WHERE id=$1 AND project_id=$2 AND state='active'",
-            [input.environmentId, input.projectId],
-          );
-          if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
-          const protectedInputIds = [...new Set(input.protectedInputIds)];
-          if (protectedInputIds.length !== input.protectedInputIds.length)
-            throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
-          if (protectedInputIds.length > 0) {
-            const available = await client.query<{ id: string }>(
-              `SELECT id FROM protected_values
+          [input.missionId, input.idempotencyKey],
+        );
+        return existing.rows[0] ? { ...existing.rows[0], replay: true } : undefined;
+      },
+      async () => {
+        const environment = await client.query<{
+          base_origin: string;
+          allowed_service_origins: unknown;
+          disclosure_mode: "confidential" | "trusted_application_output";
+        }>(
+          "SELECT base_origin,allowed_service_origins,disclosure_mode FROM environments WHERE id=$1 AND project_id=$2 AND state='active'",
+          [input.environmentId, input.projectId],
+        );
+        if (!environment.rows[0]) throw new Error("SCRY_BROWSER_ENVIRONMENT_NOT_FOUND");
+        const protectedInputIds = [...new Set(input.protectedInputIds)];
+        if (protectedInputIds.length !== input.protectedInputIds.length)
+          throw new Error("SCRY_BROWSER_PROTECTED_INPUT_DUPLICATE");
+        if (protectedInputIds.length > 0) {
+          const available = await client.query<{ id: string }>(
+            `SELECT id FROM protected_values
            WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
              AND (mission_id IS NULL OR mission_id=$3)
              AND (expires_at IS NULL OR expires_at>now()) FOR UPDATE`,
-              [protectedInputIds, input.projectId, input.missionId],
-            );
-            if (available.rowCount !== protectedInputIds.length)
-              throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
-          }
-          const runId = randomUUID();
-          const browserSessionId = randomUUID();
-          await client.query(
-            `INSERT INTO runs(id,project_id,mission_id,objective_id,agent_session_id,flow_id,flow_revision_id,environment_id,idempotency_key,state,started_at)
+            [protectedInputIds, input.projectId, input.missionId],
+          );
+          if (available.rowCount !== protectedInputIds.length)
+            throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
+        }
+        const runId = randomUUID();
+        const browserSessionId = randomUUID();
+        await client.query(
+          `INSERT INTO runs(id,project_id,mission_id,objective_id,agent_session_id,flow_id,flow_revision_id,environment_id,idempotency_key,state,started_at)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'running',now())`,
-            [
-              runId,
-              input.projectId,
-              input.missionId,
-              input.objectiveId,
-              input.agentSessionId,
-              input.flowId,
-              input.flowRevisionId,
-              input.environmentId,
-              input.idempotencyKey,
-            ],
-          );
-          // The Objective is the current assessment, not the last failed attempt.
-          // Individual conclusions remain immutable on their respective Runs.
-          await client.query(
-            "UPDATE mission_objectives SET state='running',conclusion=NULL,updated_at=now() WHERE id=$1",
-            [input.objectiveId],
-          );
-          await client.query(
-            `INSERT INTO browser_execution_sessions(id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
+          [
+            runId,
+            input.projectId,
+            input.missionId,
+            input.objectiveId,
+            input.agentSessionId,
+            input.flowId,
+            input.flowRevisionId,
+            input.environmentId,
+            input.idempotencyKey,
+          ],
+        );
+        // The Objective is the current assessment, not the last failed attempt.
+        // Individual conclusions remain immutable on their respective Runs.
+        await client.query(
+          "UPDATE mission_objectives SET state='running',conclusion=NULL,updated_at=now() WHERE id=$1",
+          [input.objectiveId],
+        );
+        await client.query(
+          `INSERT INTO browser_execution_sessions(id,run_id,project_id,mission_id,objective_id,environment_id,agent_session_id,
            state,authentication_commit_limit,business_commit_limit,allowed_first_party_origins,allowed_service_origins,
            runtime_capability_id,protection_key_id,disclosure_mode,idempotency_key,runtime_adapter)
          VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15,$16)`,
-            [
-              browserSessionId,
-              runId,
-              input.projectId,
-              input.missionId,
-              input.objectiveId,
-              input.environmentId,
-              input.agentSessionId,
-              input.authenticationCommitLimit,
-              input.businessCommitLimit,
-              JSON.stringify([environment.rows[0].base_origin]),
-              JSON.stringify(environment.rows[0].allowed_service_origins),
-              BROWSER_RUNTIME_CAPABILITY_ID,
-              this.cipher.activeKeyId(),
-              environment.rows[0].disclosure_mode,
-              `browser:${input.idempotencyKey}`,
-              selectedBrowserAdapter(),
-            ],
-          );
+          [
+            browserSessionId,
+            runId,
+            input.projectId,
+            input.missionId,
+            input.objectiveId,
+            input.environmentId,
+            input.agentSessionId,
+            input.authenticationCommitLimit,
+            input.businessCommitLimit,
+            JSON.stringify([environment.rows[0].base_origin]),
+            JSON.stringify(environment.rows[0].allowed_service_origins),
+            BROWSER_RUNTIME_CAPABILITY_ID,
+            this.cipher.activeKeyId(),
+            environment.rows[0].disclosure_mode,
+            `browser:${input.idempotencyKey}`,
+            selectedBrowserAdapter(),
+          ],
+        );
+        await client.query(
+          "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
+          [browserSessionId, BROWSER_RUNTIME_CAPABILITY_ID],
+        );
+        for (const protectedValueId of protectedInputIds) {
           await client.query(
-            "INSERT INTO browser_execution_outbox(session_id,runtime_capability_id) VALUES($1,$2)",
-            [browserSessionId, BROWSER_RUNTIME_CAPABILITY_ID],
+            "INSERT INTO browser_session_protected_inputs(session_id,protected_value_id,project_id) VALUES($1,$2,$3)",
+            [browserSessionId, protectedValueId, input.projectId],
           );
-          for (const protectedValueId of protectedInputIds) {
-            await client.query(
-              "INSERT INTO browser_session_protected_inputs(session_id,protected_value_id,project_id) VALUES($1,$2,$3)",
-              [browserSessionId, protectedValueId, input.projectId],
-            );
-          }
-          await client.query(
-            "UPDATE missions SET state='running',updated_at=now(),revision=revision+1,current_objective_id=$2 WHERE id=$1",
-            [input.missionId, input.objectiveId],
-          );
-          await client.query(
-            "UPDATE mission_objectives SET state='running',updated_at=now() WHERE id=$1 AND state='pending'",
-            [input.objectiveId],
-          );
-          return { runId, browserSessionId, replay: false };
-        },
-      );
-    });
+        }
+        await client.query(
+          "UPDATE missions SET state='running',updated_at=now(),revision=revision+1,current_objective_id=$2 WHERE id=$1",
+          [input.missionId, input.objectiveId],
+        );
+        await client.query(
+          "UPDATE mission_objectives SET state='running',updated_at=now() WHERE id=$1 AND state='pending'",
+          [input.objectiveId],
+        );
+        return { runId, browserSessionId, replay: false };
+      },
+    );
   }
 
   async observeMission(workspaceId: string | undefined, missionId: string) {
@@ -439,14 +556,23 @@ export class BrowserLifecycleRepository {
   async executionSessionForRun(
     workspaceId: string | undefined,
     runId: string,
-  ): Promise<{ id: string }> {
-    const result = await this.database.query<{ id: string }>(
-      `SELECT s.id FROM browser_execution_sessions s JOIN runs r ON r.id=s.run_id
+  ): Promise<{ id: string; ownerGeneration: number; browserState: string; runState: string }> {
+    const result = await this.database.query<{
+      id: string;
+      ownerGeneration: number;
+      browserState: string;
+      runState: string;
+    }>(
+      `SELECT s.id,s.active_owner_generation AS "ownerGeneration",s.state AS "browserState",r.state AS "runState" FROM browser_execution_sessions s JOIN runs r ON r.id=s.run_id
        JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [runId, workspaceId ?? null],
     );
     if (!result.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
-    return result.rows[0];
+    const row = result.rows[0];
+    const ownerGeneration = Number(row.ownerGeneration);
+    if (!Number.isSafeInteger(ownerGeneration) || ownerGeneration < 0)
+      throw new Error("SCRY_BROWSER_OWNER_FENCED");
+    return { ...row, ownerGeneration };
   }
 
   async publishReport(
@@ -455,7 +581,14 @@ export class BrowserLifecycleRepository {
     input: PublishBrowserMissionReportInput,
   ) {
     return this.database.transaction(async (client) => {
-      await this.requireMissionAgent(client, workspaceId, missionId, input.agentSessionId);
+      await this.requireMissionAgent(
+        client,
+        workspaceId,
+        missionId,
+        input.agentSessionId,
+        undefined,
+        true,
+      );
       const existing = await client.query<IdRow>(
         "SELECT id FROM mission_reports WHERE mission_id=$1 FOR UPDATE",
         [missionId],
@@ -634,13 +767,14 @@ export class BrowserLifecycleRepository {
     missionId: string,
     agentSessionId: string,
     projectId?: string,
+    completedReportReplay = false,
   ): Promise<{ projectId: string }> {
     const result = await client.query<{ projectId: string }>(
       `SELECT m.project_id AS "projectId" FROM missions m JOIN projects p ON p.id=m.project_id
        JOIN agent_sessions s ON s.mission_id=m.id AND s.project_id=m.project_id
-       WHERE m.id=$1 AND s.id=$2 AND s.state='active' AND ($3::uuid IS NULL OR p.workspace_id=$3)
+       WHERE m.id=$1 AND s.id=$2 AND (s.state='active' OR ($5::boolean AND s.state='completed' AND m.final_report_id IS NOT NULL)) AND ($3::uuid IS NULL OR p.workspace_id=$3)
          AND ($4::uuid IS NULL OR m.project_id=$4)`,
-      [missionId, agentSessionId, workspaceId ?? null, projectId ?? null],
+      [missionId, agentSessionId, workspaceId ?? null, projectId ?? null, completedReportReplay],
     );
     if (!result.rows[0]) throw new Error("SCRY_BROWSER_MISSION_AGENT_CONTEXT_INVALID");
     return result.rows[0];

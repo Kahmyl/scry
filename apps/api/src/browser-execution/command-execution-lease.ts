@@ -6,6 +6,7 @@ import type {
 type LeaseFailure =
   | "SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED"
   | "SCRY_BROWSER_COMMAND_CLAIM_FENCED"
+  | "SCRY_BROWSER_COMMAND_STOP_REQUESTED"
   | "SCRY_BROWSER_COMMAND_CLAIM_UNAVAILABLE";
 
 /** One private process-local mirror of database authority. Execution can only
@@ -148,6 +149,7 @@ export class CommandExecutionLease {
     const code = error instanceof Error ? error.message : "";
     this.abort(
       code === "SCRY_BROWSER_COMMAND_CLAIM_FENCED" ||
+        code === "SCRY_BROWSER_COMMAND_STOP_REQUESTED" ||
         code === "SCRY_BROWSER_COMMAND_DEADLINE_EXCEEDED"
         ? code
         : "SCRY_BROWSER_COMMAND_CLAIM_UNAVAILABLE",

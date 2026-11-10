@@ -4,16 +4,24 @@ import {
   Inject,
   Param,
   ParseIntPipe,
-  StreamableFile,
   Header,
   ForbiddenException,
+  Req,
+  Res,
 } from "@nestjs/common";
+import type { FastifyRequest, FastifyReply } from "fastify";
+import { sendNativeVideo } from "../media-stream-response.js";
 
 import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
 import type { Principal } from "../../auth/auth.types.js";
 import { BrowserDashboardRepository } from "../repositories/browser-dashboard.repository.js";
 import { BrowserLifecycleRepository } from "../repositories/browser-lifecycle.repository.js";
-import { customerMission, customerReport, customerRun } from "../customer-reporting.js";
+import {
+  customerMission,
+  customerReport,
+  customerRun,
+  runRecoveryStatus,
+} from "../customer-reporting.js";
 
 @Controller("api")
 export class BrowserDashboardController {
@@ -30,6 +38,12 @@ export class BrowserDashboardController {
   @Get("runs/:runId")
   async getRun(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
     return customerRun(await this.dashboard.getRun(workspace(principal), runId));
+  }
+
+  @Get("runs/:runId/status")
+  @Header("Cache-Control", "private, no-store")
+  async getRunStatus(@Param("runId") runId: string, @CurrentPrincipal() principal: Principal) {
+    return runRecoveryStatus(await this.dashboard.recoveryStatus(workspace(principal), runId));
   }
 
   @Get("dashboard/missions/:missionId")
@@ -53,9 +67,17 @@ export class BrowserDashboardController {
     @Param("runId") runId: string,
     @Param("index", ParseIntPipe) index: number,
     @CurrentPrincipal() principal: Principal,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
   ) {
-    const media = await this.dashboard.getMedia(workspace(principal), runId, index);
-    return new StreamableFile(media.bytes, { type: media.type, disposition: "inline" });
+    const media = await this.dashboard.getMedia(workspace(principal), runId, index, true);
+    if ("receipt" in media) return sendNativeVideo(media, request, reply);
+    return reply
+      .header("Cache-Control", "private, no-store")
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Content-Disposition", "inline")
+      .header("Content-Type", media.type)
+      .send(media.bytes);
   }
 
   @Get("projects/:projectId/reports")

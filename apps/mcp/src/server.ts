@@ -24,6 +24,8 @@ import {
 } from "./saved-report-tools.js";
 import { reportingInstructions } from "./reporting-guidance.js";
 import { customerWorkflowInstructions } from "./customer-workflow.js";
+import { registerAgentWorkflowTools } from "./agent-workflow-tools.js";
+import { registerBrowserSequence } from "./browser-sequence.js";
 import { registerTestResourceTools, testResourceInstructions } from "./test-resource-tools.js";
 import {
   nativeBrowserInstructions,
@@ -53,9 +55,13 @@ export function createBrowserMcpServer(client = new BrowserApiClient()) {
     },
   );
   registerLifecycleTools(server, client, native, navigation);
+  registerAgentWorkflowTools(server, client, native);
   registerSavedReportTools(server, client, navigation);
   registerBrowserCommandTools(server, client, native);
-  if (native) registerNativeBrowserTools(server, client, awaitCommand);
+  if (native) {
+    registerNativeBrowserTools(server, client, awaitCommand);
+    registerBrowserSequence(server, client, awaitCommand);
+  }
   registerTestResourceTools(server, client);
   return server;
 }

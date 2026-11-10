@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "scry",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Test web applications and review reports, recordings and screenshots in your Scry workspace.",
   "author": { "name": "Scry", "url": "https://scry.giize.com" },
   "homepage": "https://scry.giize.com",

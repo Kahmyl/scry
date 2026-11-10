@@ -339,6 +339,7 @@ rollback() {
     printf '[scry-deploy] CRITICAL: automatic recovery did not complete; public traffic remains fenced.\n' >&2
     exit 90
   elif [[ "$previous_available" == true ]]; then
+    admission_release_allowed=true
     printf '[scry-deploy] Previous release restored after candidate failure.\n' >&2
   else
     printf '[scry-deploy] No previous release exists; candidate services remain stopped.\n' >&2
@@ -346,18 +347,26 @@ rollback() {
   exit "$original_status"
 }
 
+# Admission is checked while the serving release is untouched. The DB function
+# shares the same authoritative lock and gate as all browser/command admission.
+if [[ "$previous_available" == true ]]; then
+  active_work=$(run_compose "$previous_compose" "$previous_image" "$previous_release" \
+    exec -T postgres psql -U scry -d "$database_name" -Atqc \
+    "SELECT browser_try_deployment('$release_id')")
+  [[ "$active_work" =~ ^[0-9]+$ ]] || fail "deployment admission unavailable or held by another controller"
+  [[ "$active_work" == 0 ]] || fail "deployment refused because $active_work browser work item(s) are nonterminal"
+fi
+admission_release_allowed=false
+release_admission() {
+  [[ "$admission_release_allowed" == true ]] || return 0
+  run_candidate exec -T postgres psql -U scry -d "$database_name" -Atqc \
+    "UPDATE browser_deployment_admission SET held=false,owner=NULL WHERE owner='$release_id'" >/dev/null
+}
+trap release_admission EXIT
 trap 'rollback $?' ERR
-
 if [[ "$previous_available" == true ]]; then
   phase=traffic_fence
   run_compose "$previous_compose" "$previous_image" "$previous_release" stop -t 30 caddy
-  active_work=$(run_compose "$previous_compose" "$previous_image" "$previous_release" \
-    exec -T postgres psql -U scry -d "$database_name" -Atqc \
-    "SELECT (SELECT count(*) FROM browser_execution_sessions WHERE state IN ('starting','active','finalizing')) + (SELECT count(*) FROM browser_commands WHERE state IN ('queued','running'))")
-  if [[ "$active_work" != 0 ]]; then
-    run_compose "$previous_compose" "$previous_image" "$previous_release" start caddy
-    fail "deployment refused because $active_work browser work item(s) are nonterminal"
-  fi
   run_compose "$previous_compose" "$previous_image" "$previous_release" \
     stop -t "$worker_stop_timeout_seconds" web mcp worker api
 
@@ -402,6 +411,7 @@ phase=activation
   printf 'CURRENT_COMPOSE_FILE=%s\n' "$candidate_compose"
 } >"$current_state.pending"
 run_candidate up -d --no-deps --force-recreate --wait --wait-timeout "$health_timeout" caddy
+admission_release_allowed=true
 trap - ERR
 mv "$current_state.pending" "$current_state"
 deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)

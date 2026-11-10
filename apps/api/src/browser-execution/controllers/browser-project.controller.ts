@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Inject, Post } from "@nestjs/common";
+import { TestingOperations } from "../../auth/auth.guard.js";
 import { z } from "zod";
 
 import { CurrentPrincipal } from "../../auth/current-principal.decorator.js";
@@ -12,6 +13,7 @@ const createProjectSchema = z.object({
 });
 
 @Controller("api")
+@TestingOperations()
 export class BrowserProjectController {
   constructor(
     @Inject(BrowserProjectRepository) private readonly projects: BrowserProjectRepository,

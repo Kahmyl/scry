@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { randomBytes, randomUUID } from "node:crypto";
-import type { PoolClient } from "pg";
+import type { PoolClient, QueryResultRow } from "pg";
 import type { CreateTestResourceInput, TestEvent, TestResource } from "@scry/contracts";
 import { protectTestMessage } from "@scry/veil";
 import { Database } from "../infrastructure/database.js";
@@ -8,7 +8,7 @@ import {
   BrowserProtectedValueCipher,
   type EncryptedProtectedValue,
 } from "../browser-execution/protected-value-cipher.js";
-import { resourceError } from "./provider-http.js";
+import { resourceError, providerDatabaseBudget, ProviderDeferred } from "./provider-http.js";
 import type { PrivateResource, ReceivedTestMessage } from "./providers.js";
 
 type Sealed = { [K in keyof EncryptedProtectedValue]: string };
@@ -30,6 +30,25 @@ export class TestResourcesRepository {
     @Inject(BrowserProtectedValueCipher) readonly cipher: BrowserProtectedValueCipher,
   ) {}
 
+  private async transaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
+    try {
+      return await this.db.boundedTransaction(work, providerDatabaseBudget());
+    } catch (error) {
+      const code = (error as { code?: string }).code,
+        message = error instanceof Error ? error.message : "";
+      if (
+        ["55P03", "57014"].includes(code ?? "") ||
+        /TRANSACTION_DEADLINE|Query read timeout|timeout exceeded when trying to connect/i.test(
+          message,
+        )
+      )
+        throw new ProviderDeferred(2, "unavailable");
+      throw error;
+    }
+  }
+  private query<T extends QueryResultRow = any>(sql: string, values: unknown[] = []) {
+    return this.transaction((c) => c.query<T>(sql, values));
+  }
   seal(value: unknown, id: string): Sealed {
     const encrypted = this.cipher.encrypt(JSON.stringify(value), { testResourceId: id });
     return {
@@ -78,7 +97,7 @@ export class TestResourcesRepository {
     };
   }
   async requireMission(workspaceId: string | undefined, missionId: string) {
-    const result = await this.db.query<{ projectId: string }>(
+    const result = await this.query<{ projectId: string }>(
       `SELECT m.project_id AS "projectId" FROM missions m JOIN projects p ON p.id=m.project_id WHERE m.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [missionId, workspaceId ?? null],
     );
@@ -86,7 +105,7 @@ export class TestResourcesRepository {
     return result.rows[0]!;
   }
   async resource(workspaceId: string | undefined, id: string) {
-    const result = await this.db.query<ResourceRow>(
+    const result = await this.query<ResourceRow>(
       `SELECT ${projection} FROM test_resources t JOIN missions m ON m.id=t.mission_id JOIN projects p ON p.id=m.project_id WHERE t.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
       [id, workspaceId ?? null],
     );
@@ -95,7 +114,7 @@ export class TestResourcesRepository {
   }
   async list(workspaceId: string | undefined, missionId: string) {
     await this.requireMission(workspaceId, missionId);
-    const rows = await this.db.query<ResourceRow>(
+    const rows = await this.query<ResourceRow>(
       `SELECT ${projection} FROM test_resources t JOIN missions m ON m.id=t.mission_id WHERE t.mission_id=$1 ORDER BY t.created_at,t.id`,
       [missionId],
     );
@@ -108,7 +127,7 @@ export class TestResourcesRepository {
     connection?: { address: string; passwordCredentialId: string },
   ) {
     await this.requireMission(workspaceId, missionId);
-    const id = await this.db.transaction(async (c) => {
+    const id = await this.transaction(async (c) => {
       // Short allocation lock only; no provider network/file work in this transaction.
       await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [missionId]);
       const prior = await c.query(
@@ -169,14 +188,14 @@ export class TestResourcesRepository {
   }
   async claim(row: ResourceRow, closing = false) {
     const leaseId = randomUUID();
-    const result = await this.db.query(
+    const result = await this.query(
       `UPDATE test_resources SET lease_id=$2,lease_until=now()+interval '120 seconds' ${closing ? ",state='closing'" : ""} WHERE id=$1 AND (lease_until IS NULL OR lease_until<now()) AND state=$3 AND state ${closing ? "IN ('pending','ready','closing')" : "IN ('pending','ready')"} RETURNING id`,
       [row.id, leaseId, row.state],
     );
     return result.rowCount ? leaseId : undefined;
   }
   async mailboxPassword(projectId: string, id: string): Promise<string> {
-    const result = await this.db.query(
+    const result = await this.query(
       `SELECT * FROM protected_values WHERE id=$1 AND project_id=$2 AND source_kind='user_input' AND mission_id IS NULL AND state='active' AND (expires_at IS NULL OR expires_at>now())`,
       [id, projectId],
     );
@@ -199,29 +218,47 @@ export class TestResourcesRepository {
     );
   }
   async savePrivate(id: string, lease: string, state: PrivateResource) {
-    const result = await this.db.query(
+    const result = await this.query(
       "UPDATE test_resources SET private_data=$3::jsonb WHERE id=$1 AND lease_id=$2 AND lease_until>now()",
       [id, lease, JSON.stringify(this.seal(state, id))],
     );
     if (!result.rowCount) resourceError("TEST_RESOURCE_BUSY", 409);
   }
   async ready(id: string, lease: string, address: string, privateData: PrivateResource) {
-    const result = await this.db.query(
+    const result = await this.query(
       `UPDATE test_resources SET state='ready',address=$3,private_data=$4::jsonb WHERE id=$1 AND lease_id=$2 AND lease_until>now() AND state='pending'`,
       [id, lease, address, JSON.stringify(this.seal(privateData, id))],
     );
     if (!result.rowCount) resourceError("TEST_RESOURCE_BUSY", 409);
   }
   async release(id: string, lease: string) {
-    await this.db.query(
-      "UPDATE test_resources SET lease_id=NULL,lease_until=NULL WHERE id=$1 AND lease_id=$2",
+    await this.db.boundedTransaction(
+      (c) =>
+        c.query(
+          "UPDATE test_resources SET lease_id=NULL,lease_until=NULL WHERE id=$1 AND lease_id=$2",
+          [id, lease],
+        ),
+      1000,
+    );
+  }
+  async markClosed(id: string, lease: string) {
+    const result = await this.query(
+      "UPDATE test_resources SET state='closed',address=NULL WHERE id=$1 AND lease_id=$2 AND lease_until>now() RETURNING id",
       [id, lease],
     );
+    if (!result.rowCount) resourceError("TEST_RESOURCE_BUSY", 409);
+  }
+  async expiredForCleanup() {
+    return (
+      await this.query<{ id: string }>(
+        "SELECT id FROM test_resources WHERE expires_at<now() AND state<>'closed' AND (lease_until IS NULL OR lease_until<now()) ORDER BY expires_at LIMIT 10",
+      )
+    ).rows;
   }
   async known(id: string) {
     return new Set(
       (
-        await this.db.query<{ provider_event_id: string }>(
+        await this.query<{ provider_event_id: string }>(
           "SELECT provider_event_id FROM test_resource_events WHERE resource_id=$1",
           [id],
         )
@@ -230,7 +267,7 @@ export class TestResourcesRepository {
   }
 
   async record(row: ResourceRow, lease: string, messages: ReceivedTestMessage[]) {
-    await this.db.transaction(async (c) => {
+    await this.transaction(async (c) => {
       const owner = await c.query(
         "SELECT id FROM test_resources WHERE id=$1 AND lease_id=$2 AND lease_until>now() AND state='ready' FOR UPDATE",
         [row.id, lease],
@@ -336,7 +373,7 @@ export class TestResourcesRepository {
   async events(workspaceId: string | undefined, id: string): Promise<TestEvent[]> {
     await this.resource(workspaceId, id);
     return (
-      await this.db.query<TestEvent>(
+      await this.query<TestEvent>(
         `SELECT id,resource_id AS "resourceId",received_at AS "receivedAt",title,safe_content AS content,protected_refs AS secrets FROM test_resource_events WHERE resource_id=$1 ORDER BY recorded_at,id`,
         [id],
       )
@@ -349,7 +386,7 @@ export class TestResourcesRepository {
     valueId: string,
   ) {
     const resource = await this.resource(workspaceId, resourceId);
-    const result = await this.db.query(
+    const result = await this.query(
       `SELECT r.id FROM runs r JOIN test_resource_events e ON e.resource_id=$1 WHERE r.id=$2 AND r.mission_id=$3 AND e.protected_refs @> $4::jsonb LIMIT 1`,
       [resourceId, runId, resource.missionId, JSON.stringify([{ protectedValueId: valueId }])],
     );

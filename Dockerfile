@@ -22,6 +22,7 @@ RUN --mount=type=cache,id=scry-pnpm,target=/pnpm/store \
 FROM deps AS build
 COPY apps/web apps/web
 COPY plugins plugins
+COPY packages/contracts packages/contracts
 RUN pnpm --filter @scry/web build
 
 FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble AS runner

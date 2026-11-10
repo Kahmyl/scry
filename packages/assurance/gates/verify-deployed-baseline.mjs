@@ -23,7 +23,7 @@ writeFileSync(
   override,
   JSON.stringify({
     services: {
-      api: { environment: { API_CORS_ORIGINS: "http://web:3000" } },
+      api: { environment: { API_CORS_ORIGINS: "http://web:3000,https://fixture:8443" } },
       web: { environment: { SCRY_PUBLIC_API_BASE_URL: "http://api:4000/api" } },
       fixture: {
         image,
@@ -45,7 +45,7 @@ writeFileSync(
           // qualify public failure closure. Never mount customer evidence here.
           "artifacts:/evidence",
         ],
-        ...(visualReview ? { ports: ["127.0.0.1::8080"] } : {}),
+        ...(visualReview ? { ports: ["127.0.0.1::8443"] } : {}),
         environment: {
           FIXTURE_DATABASE_URL: "postgres://scry:isolated-smoke-only@postgres:5432/scry_smoke",
           SCRY_FIXTURE_REVIEW: visualReview ? "true" : "false",
@@ -196,7 +196,7 @@ try {
       throw new Error("SCRY_DEPLOYED_DASHBOARD_IMAGE_MISSING");
   process.stdout.write(`Authenticated dashboard visual proof: ${visualProof}\n`);
   if (visualReview) {
-    const binding = run([...compose, "port", "fixture", "8080"], {
+    const binding = run([...compose, "port", "fixture", "8443"], {
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
     }).trim();
@@ -207,7 +207,7 @@ try {
     if (!reviewPath) throw new Error("SCRY_REVIEW_PATH_MISSING");
     const done = path.join(directory, "review.done");
     process.stdout.write(
-      `DASHBOARD_REVIEW_URL=http://${binding}${reviewPath}\nDASHBOARD_REVIEW_DONE_FILE=${done}\n`,
+      `DASHBOARD_REVIEW_URL=https://${binding}${reviewPath}\nDASHBOARD_REVIEW_DONE_FILE=${done}\nDASHBOARD_REVIEW_TLS=isolated-self-signed-certificate\n`,
     );
     const deadline = Date.now() + 300000;
     while (!existsSync(done) && !reviewCancelled && Date.now() < deadline)

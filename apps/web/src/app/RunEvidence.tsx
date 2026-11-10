@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Film, Image, RefreshCw } from "lucide-react";
-import { api, apiBlob } from "../infrastructure/api/client.js";
+import { api, apiBlob, API_BASE, videoPlayback } from "../infrastructure/api/client.js";
 import "./run-evidence.css";
 import { EvidenceLoading } from "./EvidenceLoading.js";
+import { MaskingReview } from "./MaskingReview.js";
+import type { MaskingDiagnostic } from "@scry/contracts";
 
 type Media = {
   index: number;
@@ -15,6 +17,7 @@ type Media = {
   description?: string;
   artifactId?: string;
   interruptionReason?: string;
+  maskingDiagnostics?: { events: MaskingDiagnostic[]; truncated: boolean };
 };
 type Publication = { warning: string; playbackRate: 1; items: Media[] };
 
@@ -86,6 +89,50 @@ export function RunEvidence({
     setError("");
     const controller = new AbortController();
     let url = "";
+    if (selected.kind === "video") {
+      let grantId: string | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+      const renew = async () => {
+        if (!grantId || controller.signal.aborted) return;
+        try {
+          await videoPlayback(`/media-playback/${grantId}/renew`, {
+            method: "POST",
+            signal: controller.signal,
+          });
+          if (!controller.signal.aborted) timer = setTimeout(() => void renew(), 50000);
+        } catch {
+          if (!controller.signal.aborted) {
+            setMediaSource(undefined);
+            setError(
+              "Playback authorization could not be refreshed. Select the recording again to retry.",
+            );
+          }
+        }
+      };
+      void videoPlayback<{ id: string; path: string }>(
+        `/runs/${runId}/media/${selected.index}/playback`,
+        { method: "POST", signal: controller.signal },
+      )
+        .then((grant) => {
+          grantId = grant.id;
+          if (controller.signal.aborted) {
+            void videoPlayback(`/media-playback/${grantId}`, { method: "DELETE" }).catch(() => {});
+            return;
+          }
+          setMediaSource({ runId, item: selected, url: API_BASE + grant.path });
+          setError("");
+          timer = setTimeout(() => void renew(), 50000);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted)
+            setError("This recording could not be authorized. Select it again to retry.");
+        });
+      return () => {
+        controller.abort();
+        clearTimeout(timer);
+        if (grantId)
+          void videoPlayback(`/media-playback/${grantId}`, { method: "DELETE" }).catch(() => {});
+      };
+    }
     void apiBlob(`/runs/${runId}/media/${selected.index}`, controller.signal)
       .then((blob) => {
         if (controller.signal.aborted) return;
@@ -155,6 +202,22 @@ export function RunEvidence({
           "Automatic redaction is best effort. Sensitive information may remain. Review before sharing."}
       </p>
       {error && <p role="alert">{error}</p>}
+      {selected?.maskingDiagnostics && (
+        <MaskingReview
+          diagnostics={selected.maskingDiagnostics}
+          onSeek={
+            selected.kind === "video"
+              ? (timestamp) => {
+                  if (video.current)
+                    video.current.currentTime = Math.max(
+                      0,
+                      (timestamp - selected.timestamp) / 1000 - 1,
+                    );
+                }
+              : undefined
+          }
+        />
+      )}
       {!publication && !error ? (
         <EvidenceLoading
           layout="library"
@@ -193,6 +256,7 @@ export function RunEvidence({
                     className={`ne-media-frame${!error && (!ready || buffering) ? " is-loading" : ""}`}
                   >
                     <video
+                      crossOrigin="use-credentials"
                       ref={video}
                       key={source}
                       src={source}

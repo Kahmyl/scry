@@ -1,6 +1,39 @@
 import { applicationReportPresentationSchema } from "@scry/contracts";
 
 type Row = Record<string, unknown>;
+/** Factual execution/release state, never an application verdict. */
+export function runRecoveryStatus(row: Row) {
+  const terminal = ["passed", "failed", "cancelled", "infrastructure_error"].includes(
+    String(row.state),
+  );
+  const browserTerminal = ["completed", "failed", "cancelled"].includes(
+    String(row.browserSessionState),
+  );
+  const activity = Array.isArray(row.activity) ? (row.activity as Row[]) : [];
+  const pendingCommands =
+    typeof row.pendingCommandCount === "number"
+      ? row.pendingCommandCount
+      : activity.filter((a) => ["queued", "running"].includes(String(a.state))).length;
+  return {
+    runId: row.id,
+    missionId: row.missionId,
+    state: row.state,
+    outcome: row.outcomeClassification ?? null,
+    terminal,
+    browserReleased:
+      terminal &&
+      browserTerminal &&
+      row.ownerReleased === true &&
+      row.evidenceSealed === true &&
+      pendingCommands === 0,
+    stopRequested: row.stopRequestedAt != null,
+    ownerGeneration:
+      Number.isSafeInteger(Number(row.ownerGeneration)) && Number(row.ownerGeneration) > 0
+        ? Number(row.ownerGeneration)
+        : null,
+    pendingCommands,
+  };
+}
 const pick = (row: Row, keys: string[]) =>
   Object.fromEntries(keys.filter((key) => row[key] !== undefined).map((key) => [key, row[key]]));
 const record = (value: unknown): Row =>

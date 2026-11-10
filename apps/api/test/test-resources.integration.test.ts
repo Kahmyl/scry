@@ -18,6 +18,7 @@ import { seedSession } from "./fixtures/browser-session.js";
 import { TestResourcesRepository } from "../src/test-resources/test-resources.repository.js";
 import { TestResourceProviders } from "../src/test-resources/providers.js";
 import { TestResourcesService } from "../src/test-resources/test-resources.service.js";
+import { CleanupService } from "../src/test-resources/cleanup.service.js";
 import {
   ProviderDeferred,
   ProviderHttp,
@@ -719,6 +720,7 @@ const target = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
         controllers: [TestResourcesController],
         providers: [
           { provide: TestResourcesService, useValue: service },
+          { provide: CleanupService, useValue: new CleanupService(repo, service) },
           { provide: AuthService, useValue: new AuthService(new IdentityRepository(db)) },
           { provide: APP_GUARD, useClass: AuthGuard },
         ],
@@ -785,6 +787,66 @@ const target = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
             })
           ).statusCode,
         ).toBe(200);
+        const recordedResources = await repo.list(scope.workspaceId, scope.missionId);
+        let resource = recordedResources[0]!;
+        for (const candidate of recordedResources) {
+          if ((await repo.events(scope.workspaceId, candidate.id)).length) {
+            resource = candidate;
+            break;
+          }
+        }
+        const cachedEvents = await repo.events(scope.workspaceId, resource.id);
+        expect(cachedEvents.length).toBeGreaterThan(0);
+        const providerCalls = vi.mocked(fetch).mock.calls.length;
+        const cached = await app.inject({
+          method: "GET",
+          url: `/api/test-resources/${resource.id}/observations`,
+          headers,
+        });
+        expect(cached.statusCode).toBe(200);
+        expect(cached.json()).toMatchObject({
+          cached: true,
+          timing: { providerRequests: 0, refreshRequested: false },
+        });
+        if (cachedEvents.length) {
+          const cursor = cachedEvents.at(-1)!.id;
+          const after = await app.inject({
+            method: "GET",
+            url: `/api/test-resources/${resource.id}/observations?afterEventId=${cursor}`,
+            headers,
+          });
+          expect(after.statusCode).toBe(200);
+          expect(after.json().status).toBe("waiting");
+        }
+        expect(
+          (
+            await app.inject({
+              method: "GET",
+              url: `/api/test-resources/${resource.id}/observations?afterEventId=${randomUUID()}`,
+              headers,
+            })
+          ).statusCode,
+        ).toBe(400);
+        expect(
+          (
+            await app.inject({
+              method: "GET",
+              url: `/api/test-resources/${randomUUID()}/observations`,
+              headers,
+            })
+          ).statusCode,
+        ).toBe(404);
+        expect(
+          (
+            await app.inject({
+              method: "POST",
+              url: `/api/test-resources/${resource.id}/refresh`,
+              headers,
+              payload: { refresh: true, waitSeconds: 0 },
+            })
+          ).statusCode,
+        ).toBe(403);
+        expect(vi.mocked(fetch).mock.calls.length).toBe(providerCalls);
         expect(
           (
             await app.inject({

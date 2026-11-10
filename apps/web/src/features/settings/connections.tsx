@@ -21,16 +21,9 @@ import { PageTitle } from "../../shared/components/dashboard-primitives.js";
 import { createSetupCommand } from "../../../scripts/desktop-bootstrap.mjs";
 import type { createSetupCommand as SetupCommandFactory } from "../../../scripts/desktop-bootstrap.d.mts";
 import "./connections.css";
+import { groupConnections, connectionStatus, type Connection } from "./connection-groups.js";
+import { ConnectionDiagnostics } from "./connection-diagnostics.js";
 
-type Connection = {
-  id: string;
-  clientName: string;
-  workspaceName: string;
-  createdAt: string;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-  expired?: boolean;
-};
 type Connections = { available: boolean; connections: Connection[] };
 type Client = "codex" | "claude" | "cursor" | "other";
 
@@ -53,9 +46,7 @@ export function Connections() {
   const connectionsHeading = useRef<HTMLHeadingElement | null>(null);
   const endpoint = new URL(publicConfig.mcpServerUrl, window.location.origin).href;
   const packageSetup = client === "codex" && endpoint === hostedEndpoint;
-  const activeConnections = state?.connections.filter(
-    (connection) => !connection.revokedAt && !connection.expired,
-  );
+  const connectionGroups = state ? groupConnections(state.connections) : undefined;
   const load = async (explicitCheck = false) => {
     setBusy(true);
     setError("");
@@ -388,7 +379,7 @@ export function Connections() {
               <h2 id="connected-heading" ref={connectionsHeading} tabIndex={-1}>
                 Your connections
               </h2>
-              <p>Assistants with active access to your workspace.</p>
+              <p>Sign-ins from the same assistant are grouped. Manage each sign-in below.</p>
             </div>
             <button
               type="button"
@@ -406,7 +397,7 @@ export function Connections() {
               {checkMessage}
             </p>
           )}
-          {activeConnections?.length === 0 && (
+          {connectionGroups?.length === 0 && (
             <div className="panel connection-empty">
               <span className="connection-empty-icon">
                 <PlugZap size={24} />
@@ -418,36 +409,90 @@ export function Connections() {
               </p>
             </div>
           )}
-          {activeConnections?.map((connection) => (
-            <article className="panel connection-row" key={connection.id}>
+          {connectionGroups?.map((group) => (
+            <article className="panel connection-row connection-group" key={group.key}>
               <div>
                 <h3>
                   <span className="connection-row-icon">
                     <PlugZap size={17} />
                   </span>
-                  {connection.clientName}
+                  {group.clientName}
                 </h3>
-                <p>{connection.workspaceName}</p>
-                <span
-                  className={`connection-status ${connection.lastUsedAt ? "connection-confirmed" : ""}`}
-                >
-                  {connection.lastUsedAt ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
-                  {connection.lastUsedAt
-                    ? "Connected · authenticated access verified"
-                    : "Approved · waiting for client verification"}
-                </span>
+                <p>{group.workspaceName}</p>
+                {group.connections.length === 1 && (
+                  <ConnectionDiagnostics connectionId={group.connections[0]!.id} />
+                )}
+                {group.connections.length === 1 &&
+                  (() => {
+                    const connection = group.connections[0]!;
+                    const verified = connectionStatus(connection).startsWith("Connected");
+                    return (
+                      <>
+                        <span
+                          className={`connection-status ${verified ? "connection-confirmed" : ""}`}
+                        >
+                          {verified ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}
+                          {connectionStatus(connection)}
+                        </span>
+                        {connection.lastUsedAt && (
+                          <p className="connection-last-verified">
+                            Last verified: {new Date(connection.lastUsedAt).toLocaleString()}
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                {group.connections.length > 1 && (
+                  <details className="connection-authorizations">
+                    <summary>{group.connections.length} sign-ins · Manage connections</summary>
+                    <p>
+                      These may come from different chats or installations. Disconnect only the
+                      sign-in you intend to remove.
+                    </p>
+                    {group.connections.map((connection, index) => (
+                      <div className="connection-authorization" key={connection.id}>
+                        <div>
+                          <strong>Sign-in {index + 1}</strong>
+                          <p>Approved: {new Date(connection.createdAt).toLocaleString()}</p>
+                          <p>{connectionStatus(connection)}</p>
+                          <ConnectionDiagnostics connectionId={connection.id} />
+                          {connection.lastUsedAt && (
+                            <p>Last verified: {new Date(connection.lastUsedAt).toLocaleString()}</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="connection-secondary"
+                          onClick={(event) => {
+                            disconnectTrigger.current = event.currentTarget;
+                            setDisconnecting(connection);
+                          }}
+                          aria-label={`Disconnect ${group.clientName} sign-in ${index + 1}`}
+                        >
+                          Disconnect
+                        </button>
+                      </div>
+                    ))}
+                  </details>
+                )}
               </div>
-              <button
-                type="button"
-                className="connection-secondary"
-                onClick={(event) => {
-                  disconnectTrigger.current = event.currentTarget;
-                  setDisconnecting(connection);
-                }}
-              >
-                <span aria-hidden="true">Disconnect</span>
-                <span className="connection-sr-only">Disconnect {connection.clientName}</span>
-              </button>
+              {group.connections.length === 1 &&
+                (() => {
+                  const connection = group.connections[0]!;
+                  return (
+                    <button
+                      type="button"
+                      className="connection-secondary"
+                      onClick={(event) => {
+                        disconnectTrigger.current = event.currentTarget;
+                        setDisconnecting(connection);
+                      }}
+                    >
+                      <span aria-hidden="true">Disconnect</span>
+                      <span className="connection-sr-only">Disconnect {connection.clientName}</span>
+                    </button>
+                  );
+                })()}
             </article>
           ))}
           <p className="connection-access-note">
@@ -479,6 +524,12 @@ export function Connections() {
             <AlertDialog.Description>
               This stops its access to {disconnecting?.workspaceName}, including existing tokens.
               Your reports and recordings stay in Scry. Other connections are unchanged.
+              {disconnecting && (
+                <>
+                  {" "}
+                  Selected sign-in approved {new Date(disconnecting.createdAt).toLocaleString()}.
+                </>
+              )}
             </AlertDialog.Description>
             <AlertDialog.Cancel asChild>
               <button type="button" disabled={busy}>

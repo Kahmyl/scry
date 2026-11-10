@@ -12,10 +12,11 @@ import { TestResourcesModule } from "./test-resources/test-resources.module.js";
 import { OAuthService } from "./auth/oauth/oauth.service.js";
 import { ConnectionsRepository } from "./auth/oauth/connections.repository.js";
 import { ConnectionsController } from "./auth/oauth/connections.controller.js";
+import { MediaPlaybackController } from "./auth/media-playback.controller.js";
 
 @Module({
   imports: [BrowserExecutionModule, TestResourcesModule],
-  controllers: [McpTokensController, ConnectionsController],
+  controllers: [McpTokensController, ConnectionsController, MediaPlaybackController],
   providers: [
     IdentityRepository,
     McpTokenRepository,

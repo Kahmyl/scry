@@ -2,6 +2,29 @@ import { describe, expect, it } from "vitest";
 import { protectTestMessage } from "../src/test-message-protection.js";
 
 describe("test-message access-secret protection", () => {
+  it("canonicalizes HTML entities and deduplicates the same text/HTML access link", () => {
+    const link =
+      "https://app.example/invite?token=fictional-invite-123&recipient=test%40example.test";
+    const htmlLink = link.replaceAll("&", "&amp;");
+    const result = protectTestMessage({
+      text: `Accept ${link}`,
+      html: [`<a href="${htmlLink}">Accept invitation</a>`],
+    });
+    expect(result.candidates).toEqual([{ kind: "link", value: link }]);
+    expect(JSON.stringify(result.safe)).not.toContain("fictional-invite-123");
+    expect(JSON.stringify(result.safe)).not.toContain("recipient=test");
+  });
+  it("reads quoted attributes without retaining a truncated HTML alternative", () => {
+    const result = protectTestMessage({
+      html: [
+        "<a href='https://app.example/reset?token=fictional-reset-123&#38;next=%2Fhome'>Reset</a>",
+      ],
+    });
+    expect(result.candidates).toEqual([
+      { kind: "link", value: "https://app.example/reset?token=fictional-reset-123&next=%2Fhome" },
+    ]);
+    expect(JSON.stringify(result.safe)).not.toContain("fictional-reset-123");
+  });
   it("preserves ordinary content and identifies verification codes and access links", () => {
     const input = {
       subject: "Welcome",

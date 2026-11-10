@@ -31,6 +31,8 @@ export function reportNarrative(value: Record<string, unknown> = {}) {
       different_from_expectation: "Different from expected",
       inconclusive: "Could not verify",
       not_tested: "Not tested",
+      blocked: "Blocked",
+      excluded: "Excluded",
     };
     if (
       typeof c.title !== "string" ||
@@ -88,7 +90,22 @@ export function reportNarrative(value: Record<string, unknown> = {}) {
         },
       ];
     });
-  return { scope, checks, verified, limitations, observations };
+  const sections = (Array.isArray(p.sections) ? p.sections : []).slice(0, 20).flatMap((item) => {
+    const s = record(item);
+    if (typeof s.title !== "string" || !Array.isArray(s.items)) return [];
+    return [
+      {
+        title: s.title,
+        items: s.items.slice(0, 200).flatMap((item) => {
+          const r = record(item);
+          return typeof r.title === "string" && typeof r.detail === "string"
+            ? [{ title: r.title, detail: r.detail }]
+            : [];
+        }),
+      },
+    ];
+  });
+  return { scope, checks, verified, limitations, observations, sections };
 }
 export function ReportNarrative({
   value,
