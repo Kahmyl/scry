@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, randomUUID, sign, verify } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, renameSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { createServer } from "node:http";
+import { createServer as createSecureServer } from "node:https";
+import { execFileSync } from "node:child_process";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { handleLoginFixture, startLoginFixture } from "./browser-login-fixture.mjs";
-import { exerciseNativeBrowser, reproduceRetainedLogin } from "./deployed-native-browser.mjs";
+import {
+  deployedUiOrigin,
+  exerciseNativeBrowser,
+  reproduceRetainedLogin,
+} from "./deployed-native-browser.mjs";
 
 // API-owned production-shaped fixture: database fault setup stays outside
 // Assurance analysis. This file is mounted only into the disposable test stack.
@@ -32,7 +40,7 @@ if (process.argv[2] === "serve") {
     identities: [],
     created_at: new Date().toISOString(),
   };
-  createServer(async (request, response) => {
+  const handle = async (request, response) => {
     if (handleLoginFixture(request, response)) return;
     const url = new URL(request.url, "http://fixture:8080");
     response.setHeader("content-type", "application/json");
@@ -121,12 +129,15 @@ if (process.argv[2] === "serve") {
           "</main>",
       );
     }
-    if (process.env.SCRY_FIXTURE_REVIEW === "true" && url.pathname !== "/health") {
+    if (
+      (request.socket.encrypted || process.env.SCRY_FIXTURE_REVIEW === "true") &&
+      url.pathname !== "/health"
+    ) {
       if (url.pathname === "/config.js") {
         response.setHeader("content-type", "text/javascript; charset=utf-8");
         response.setHeader("cache-control", "no-store");
         return response.end(
-          `window.__SCRY_CONFIG__=${JSON.stringify({ apiBaseUrl: "/api", supabaseUrl: `http://${request.headers.host}`, supabasePublishableKey: "isolated-fixture-only", mcpServerUrl: "/mcp" })};`,
+          `window.__SCRY_CONFIG__=${JSON.stringify({ apiBaseUrl: "/api", supabaseUrl: `${request.socket.encrypted ? "https" : "http"}://${request.headers.host}`, supabasePublishableKey: "isolated-fixture-only", mcpServerUrl: "/mcp" })};`,
         );
       }
       try {
@@ -140,7 +151,14 @@ if (process.argv[2] === "serve") {
           chunks.push(chunk);
         }
         const headers = {};
-        for (const key of ["authorization", "content-type"])
+        for (const key of [
+          "authorization",
+          "content-type",
+          "cookie",
+          "range",
+          "if-range",
+          "origin",
+        ])
           if (request.headers[key]) headers[key] = request.headers[key];
         const upstream = await fetch(target, {
           method: request.method,
@@ -148,21 +166,79 @@ if (process.argv[2] === "serve") {
           ...(chunks.length ? { body: Buffer.concat(chunks) } : {}),
           signal: AbortSignal.timeout(30000),
         });
-        const body = Buffer.from(await upstream.arrayBuffer());
-        if (body.length > 8 * 1024 * 1024) throw new Error("fixture_response_limit");
         response.statusCode = upstream.status;
-        response.setHeader(
+        for (const header of [
           "content-type",
-          upstream.headers.get("content-type") ?? "application/octet-stream",
+          "content-length",
+          "content-range",
+          "accept-ranges",
+          "etag",
+          "cache-control",
+          "content-disposition",
+          "referrer-policy",
+          "x-content-type-options",
+        ]) {
+          const value = upstream.headers.get(header);
+          if (value !== null) response.setHeader(header, value);
+        }
+        const cookies = upstream.headers.getSetCookie();
+        if (cookies.length) response.setHeader("set-cookie", cookies);
+        if (!upstream.body) return response.end();
+        let responseBytes = 0;
+        await pipeline(
+          Readable.fromWeb(upstream.body),
+          new Transform({
+            transform(chunk, _encoding, callback) {
+              responseBytes += chunk.length;
+              callback(
+                responseBytes > 128 * 1024 * 1024 ? new Error("fixture_response_limit") : null,
+                chunk,
+              );
+            },
+          }),
+          response,
         );
-        return response.end(body);
+        return;
       } catch {
+        if (response.headersSent) return response.destroy();
         response.writeHead(502);
         return response.end('{"message":"isolated_review_upstream_unavailable"}');
       }
     }
     response.end('{"ready":true}');
-  }).listen(8080, "0.0.0.0");
+  };
+  // Only this fictional controller trusts this ephemeral certificate. Real
+  // production cookie attributes and worker TLS verification stay unchanged.
+  const tlsDirectory = mkdtempSync("/tmp/scry-deployed-fixture-tls-");
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-keyout",
+      path.join(tlsDirectory, "key.pem"),
+      "-out",
+      path.join(tlsDirectory, "certificate.pem"),
+      "-days",
+      "1",
+      "-subj",
+      "/CN=fixture",
+      "-addext",
+      "subjectAltName=DNS:fixture,IP:127.0.0.1",
+    ],
+    { stdio: "ignore" },
+  );
+  createServer(handle).listen(8080, "0.0.0.0");
+  createSecureServer(
+    {
+      key: readFileSync(path.join(tlsDirectory, "key.pem")),
+      cert: readFileSync(path.join(tlsDirectory, "certificate.pem")),
+    },
+    handle,
+  ).listen(8443, "0.0.0.0");
 } else {
   try {
     await exercise();
@@ -629,15 +705,18 @@ async function unavailableDashboardJourney({
     const { chromium } = createRequire("/workspace/packages/praxis/package.json")("playwright");
     const browser = await chromium.launch({ headless: true });
     try {
-      const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-      await page.goto("http://web:3000/");
+      const page = await browser.newPage({
+        ignoreHTTPSErrors: true,
+        viewport: { width: 1280, height: 900 },
+      });
+      await page.goto(deployedUiOrigin + "/");
       await page.getByRole("button", { name: "Sign in", exact: true }).first().click();
       const dialog = page.getByRole("dialog", { name: "Sign in to Scry" });
       await dialog.getByLabel("Work email").fill("fixture-0@example.invalid");
       await dialog.getByLabel("Password", { exact: true }).fill("fixture-ui-signin-only");
       await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
       await page.getByRole("heading", { name: "Dashboard", exact: true }).waitFor();
-      await page.goto(`http://web:3000/dashboard/runs/${availableRunId}`);
+      await page.goto(`${deployedUiOrigin}/dashboard/runs/${availableRunId}`);
       await page.waitForFunction(
         () => document.querySelector(".native-evidence video")?.readyState >= 2,
       );
@@ -709,7 +788,7 @@ async function unavailableDashboardJourney({
         fullPage: true,
       });
       await page.setViewportSize({ width: 1280, height: 900 });
-      await page.goto(`http://web:3000/dashboard/runs/${run.runId}`);
+      await page.goto(`${deployedUiOrigin}/dashboard/runs/${run.runId}`);
       await page.getByText("Recording unavailable", { exact: true }).waitFor();
       await page
         .getByText(

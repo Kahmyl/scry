@@ -1,3 +1,4 @@
+export const deployedUiOrigin = "https://fixture:8443";
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -465,15 +466,18 @@ export async function exerciseNativeBrowser({
       : {}),
   });
   try {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    await page.goto("http://web:3000/");
+    const page = await browser.newPage({
+      ignoreHTTPSErrors: true,
+      viewport: { width: 1280, height: 900 },
+    });
+    await page.goto(deployedUiOrigin + "/");
     await page.getByRole("button", { name: "Sign in", exact: true }).first().click();
     const dialog = page.getByRole("dialog", { name: "Sign in to Scry" });
     await dialog.getByLabel("Work email").fill("fixture-0@example.invalid");
     await dialog.getByLabel("Password", { exact: true }).fill("fixture-ui-signin-only");
     await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.getByRole("heading", { name: "Dashboard", exact: true }).waitFor();
-    await page.goto(`http://web:3000/dashboard/reports/${report.reportId}`);
+    await page.goto(`${deployedUiOrigin}/dashboard/reports/${report.reportId}`);
     await page.getByRole("heading", { name: "Test results", exact: true }).waitFor();
     await page
       .getByRole("navigation", { name: "Report sections" })
@@ -494,10 +498,28 @@ export async function exerciseNativeBrowser({
       "CHECK_LINK_DID_NOT_SELECT_ITS_SCREENSHOT",
     );
     // Recording is a separate evidence type, not another screenshot-list item.
+    const playbackGrant = page.waitForResponse(
+      (response) =>
+        /\/api\/runs\/[^/]+\/media\/\d+\/playback$/.test(new URL(response.url()).pathname) &&
+        response.request().method() === "POST" &&
+        response.status() === 201,
+    );
     await page
       .getByRole("group", { name: "Evidence type" })
       .getByRole("button", { name: /^Recordings/ })
       .click();
+    await (await playbackGrant).finished();
+    const playbackCookies = (await page.context().cookies()).filter(
+      (cookie) => cookie.name === "scry_media",
+    );
+    assert.ok(
+      playbackCookies.length > 0 &&
+        playbackCookies.every(
+          (cookie) => cookie.secure && cookie.httpOnly && cookie.sameSite === "Strict",
+        ),
+      "PRODUCTION_PLAYBACK_COOKIE_POLICY_NOT_EXERCISED",
+    );
+    assert.equal(new URL(page.url()).origin, deployedUiOrigin);
     await page.locator(".native-evidence video").waitFor();
     const codec = await page
       .locator(".native-evidence video")
@@ -535,7 +557,7 @@ export async function exerciseNativeBrowser({
       fullPage: true,
     });
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.goto(`http://web:3000/dashboard/runs/${active.runId}`);
+    await page.goto(`${deployedUiOrigin}/dashboard/runs/${active.runId}`);
     await page.getByText("Recording unavailable", { exact: true }).waitFor();
     assert.equal(await page.locator("video").count(), 0);
     const body = await page.locator("body").innerText();

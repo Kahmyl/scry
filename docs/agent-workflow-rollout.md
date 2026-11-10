@@ -1,7 +1,8 @@
 # Agent workflow integration: review, rollout and recovery
 
-This is a locally qualified review candidate. It has not been pushed, merged or
-deployed. The owner requires review before any push or deployment. The complete
+This is a locally qualified release candidate. The owner reviewed the
+qualification summary and authorized push and deployment through PR #79. The
+guarded release and activation checks below still apply. The complete
 issue register is in `agent-workflow-reliability-plan.md`; current evidence is in
 `artifacts/assurance/remaining-workflow-20261110/`.
 

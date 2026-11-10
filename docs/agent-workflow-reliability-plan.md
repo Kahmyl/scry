@@ -57,8 +57,9 @@ and production-shaped checks are release gates, with unavailable gates explicit.
 
 All identified Scry-owned source corrections are implemented in this local
 candidate. The remaining capability campaign extends the earlier integrated
-workflow; it does not replace or relabel its incomplete Vitract attempts. Nothing
-has been pushed, merged or deployed. See the current
+workflow; it does not replace or relabel its incomplete Vitract attempts. Initial
+qualification made no release changes. The owner subsequently authorized push
+and deployment through [PR #79](https://github.com/Kahmyl/scry/pull/79). See the current
 [qualification report](../artifacts/assurance/remaining-workflow-20261110/report.md),
 the earlier [integration report](../artifacts/assurance/integrated-workflow-20261110/report.md)
 and `agent-workflow-rollout.md`. Local qualification is not live acceptance.
@@ -82,7 +83,7 @@ and `agent-workflow-rollout.md`. Local qualification is not live acceptance.
 | S15 | Ordered discover/preflight/act/verify/reconcile/report guidance, restoration prerequisite checks, protected received-link workflow and reduced routine human offloading                                                             | Real restoration still depends on authorized available access and actual application acceptance. Never invent permissions or retention choices.                         |
 | S16 | Persistent scoped cleanup intent and factual inventory; agent tools, Mission controls and report read-only view; shared credential retention, in-use revoke guards, pending cleanup/retry and customer mailbox disconnect semantics | Retention requires an actual authorized decision. Expiry does not prove external resource deletion. Provider failures remain pending.                                   |
 | S17 | Newly discovered viewer authorization bypass repaired across old testing mutation controllers; cached observation GET and viewer playback remain usable; failing-before/passing-after reproduction                                  | Workspace readers must still be allowed to inspect evidence; denial is not implemented by hiding UI alone.                                                              |
-| S18 | Container build now includes Contracts source required by the new evidence types; reproduced missing-module build failure and qualified corrected frozen-lockfile image                                                             | Cached qualified OS/browser base reused. A fresh remote base and actual deployment are separate acceptance gates.                                                       |
+| S18 | Container build includes Contracts source required by evidence types; the composed dashboard fixture uses same-origin HTTPS and asserts the unchanged Secure/HttpOnly/SameSite cookie policy                                        | Cached qualified OS/browser base reused. A fresh remote base and actual deployment are separate acceptance gates.                                                       |
 | C01 | One presentation group per known workspace/client label, scoped diagnostics and separate underlying grant controls                                                                                                                  | No device identity is inferred; grouping never combines or revokes authorizations.                                                                                      |
 
 ## Qualification and review boundary
