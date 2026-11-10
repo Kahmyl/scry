@@ -12,7 +12,7 @@ import { BrowserApiClient } from "./api-client.js";
 import { uuid } from "./tool-registry.js";
 
 export const nativeBrowserInstructions =
-  "Use one Mission for the user's objective and an Environment containing only the assigned app origins. Resume a matching active Mission when present. Give each Flow a meaningful testing purpose and each Run an accurate conclusion, keeping failed or recovered attempts visible. Use browser tools with the Run's browserSessionId. Each actionId must be unique for a new action; reuse it only to retrieve that same action, never to perform another one. Current snapshots and browser_find provide current element targets. Use screenshots for visual checks; accessibility text alone does not prove layout or edited values. For rich text use browser_edit_text with explicit replace/insert intent and keyboard/paste method. Its readback is input observation, not proof of saved state; verify persistence separately. browser_type with slowly=true inserts rather than clears. Normal browser errors are observations, not successful actions. UNKNOWN means an action may have happened: inspect the app or stop accurately, never repeat it blindly. Request explicit user selection before binding saved credentials; browser_type_secret accepts a bound opaque reference, not plaintext. Automatic opaque frosted masking is best effort for access secrets and financial details, not a guarantee of complete protection. Native video preserves original UI and timing without a fixed journey time cutoff. Capture meaningful changed states, not repeated identical screenshots, and provide evidenceTitle/evidenceDescription when helpful. Finish the Run and publish a factual Mission report with verified scope, observations, evidence references and limitations. The report links the same evidence as the Mission, not a second copy.";
+  "Use one Mission for the user's objective and an Environment containing only the assigned app origins. Resume a matching active Mission when present. Give each Flow a meaningful testing purpose and each Run an accurate conclusion, keeping failed or recovered attempts visible. Use browser tools with the Run's browserSessionId. Each actionId must be unique for a new action; reuse it only to retrieve that same action, never to perform another one. Current snapshots and browser_find provide current element targets. Use screenshots for visual checks; accessibility text alone does not prove layout or edited values. For rich text use browser_edit_text with explicit replace/insert intent and keyboard/paste method. Its readback is input observation, not proof of saved state; verify persistence separately. browser_type with slowly=true inserts rather than clears. Normal browser errors are observations, not successful actions. UNKNOWN means an action may have happened: inspect the app or stop accurately, never repeat it blindly. Request explicit user selection before binding saved credentials; browser_type_secret accepts a bound opaque reference, not plaintext. Automatic opaque frosted masking is best effort for access secrets and financial details, not a guarantee of complete protection. Native video preserves original UI and timing without a fixed journey time cutoff. Capture meaningful changed states, not repeated identical screenshots, and provide evidenceTitle/evidenceDescription when helpful. Finish the Run and publish a factual Mission report with verified scope, observations, evidence references and limitations. The report links the same evidence as the Mission, not a second copy. Scry queues browser observations as durable actions and saves their results.";
 
 export async function nativeCommandResult(
   client: BrowserApiClient,
@@ -116,11 +116,8 @@ export function registerNativeBrowserTools(
       {
         description:
           d.description +
-          (nativeObservationTools.has(d.name)
-            ? " Scry queues this observation as a durable action and saves its result." +
-              (d.name === "browser_take_screenshot"
-                ? " Screenshot images persist as Run evidence."
-                : "")
+          (d.name === "browser_take_screenshot"
+            ? " This durable action saves screenshot images as Run evidence."
             : ""),
         inputSchema: {
           ...d.schema.shape,

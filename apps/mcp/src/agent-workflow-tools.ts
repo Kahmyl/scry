@@ -21,6 +21,7 @@ export function registerAgentWorkflowTools(
   server: McpServer,
   client: BrowserApiClient,
   native: boolean,
+  workflowGuidance: string,
 ) {
   server.registerTool(
     "get_connection_diagnostics",
@@ -93,14 +94,17 @@ export function registerAgentWorkflowTools(
     "get_testing_context",
     {
       description:
-        "Load a selected Project’s Missions, Environments and safe credential metadata in one call. This is the server capability manifest, not proof the host exposes every listed tool. Reuse explicit user credential choices; never infer permission from names.",
+        "After list_projects, call this before testing and follow returned workflowGuidance. Load the Project’s Missions, Environments and safe credential metadata in one call. Server capabilities do not prove host tool exposure. Reuse explicit user credential choices; never infer permission from names.",
       inputSchema: testingContextRequestSchema.shape,
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
     async (input) => {
       return toolResult(
-        await client.post("/testing-context", input),
+        {
+          ...(await client.post<Record<string, unknown>>("/testing-context", input)),
+          workflowGuidance,
+        },
         "Context readiness is a snapshot, not a permission grant or proof of host tool exposure. Resolve blocked prerequisites before dependent work.",
       );
     },

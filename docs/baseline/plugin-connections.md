@@ -210,3 +210,22 @@ References: [OpenAI authentication](https://developers.openai.com/plugins/build/
 [plugin packaging](https://developers.openai.com/plugins/build/plugins),
 [Supabase OAuth limits](https://supabase.com/docs/guides/auth/oauth-server/oauth-flows),
 [provider documentation](https://github.com/panva/node-oidc-provider/tree/main/docs).
+
+### Plugin catalog compatibility
+
+Successful OAuth discovery is distinct from model-visible tool availability.
+Codex applies a shared 64,000-byte agent-plugin tool budget and an 8,000-byte
+per-tool budget; its serialized namespace instructions are charged for each tool.
+See the [public exposure implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/mcp_tool_exposure.rs).
+Do not repeat the complete Scry workflow in initialization instructions. The
+short bootstrap directs the agent to `list_projects`, which returns full
+`workflowGuidance` even when no Project exists. `get_testing_context` also returns
+that guidance with its normal readiness snapshot. Both continue to use the
+existing scoped API and normal authorization; guidance never grants permission.
+
+The MCP compatibility check measures the whole native and retained catalogs,
+including per-tool namespace overhead, and requires every tool to remain visible
+with room below the host limit. Input schemas, validation and permission hints
+must not be loosened to shrink a catalog. Future tools or metadata changes must
+pass this check. Multiple agent plugins share the host budget; successful server
+discovery alone still cannot prove any particular client's final tool exposure.

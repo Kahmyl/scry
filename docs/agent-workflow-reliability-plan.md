@@ -29,6 +29,34 @@ No existing grants or host configuration were changed during isolated testing. E
 `artifacts/assurance/desktop-tool-loss-20261110/`. Earlier release success does not
 close customer OAuth or actual Desktop acceptance.
 
+Post-release acceptance update: PR #80 is merged and production release fc726a35
+passed remote qualification/publication/deployment. The owner completed fresh
+consent in Kamil Chrome; native OAuth discovery returns all 61 tools without error.
+S01 nevertheless remains open: both this chat and the blind qualification chat
+receive only 32 tools, the exact alphabetical prefix in this chat. Required Project,
+Mission, report and finalization tools are absent. The truncating component is not
+proven; another reconnect is not supported by this evidence. Native idle/restart
+acceptance remains unverified. Qualification is paused until the blind agent can
+actually invoke its required lifecycle tools. Evidence and separate release/native
+receipts are in the same assurance directory; no Vitract actions were performed.
+
+Follow-up diagnosis and isolated repair: the public Codex plugin exposure budget
+charges each normalized tool specification, including repeated namespace
+instructions, against an 8,000-byte per-tool and 64,000-byte shared plugin limit.
+The isolated calculation reproduces the exact observed 32 tools. Scry's long
+startup guidance brought the complete catalog to approximately 122 KB. Keep all
+61 native tool names and input schemas; replace the startup text with a short
+discovery instruction and deliver the complete guidance from `list_projects`
+(including empty accounts) and `get_testing_context`. Native observation guidance
+is shared there instead of repeated in each observation description. Current
+native specifications total 61,682 bytes, with no omitted tools; the retained
+profile also fits. A regression gate reserves headroom below 62,000 bytes.
+Input schemas, authorization metadata and annotations compare unchanged against
+the pre-repair wire catalog. Project discovery adds `workflowGuidance` to its
+output; handlers and application effects are otherwise unchanged. Real Desktop
+acceptance and release receipts remain separate gates; another agent plugin can
+also consume the host's shared budget, so this is not an unlimited-client claim.
+
 ## Complete issue register
 
 | ID  | Required correction                                                                                      | Verification                                                                   |

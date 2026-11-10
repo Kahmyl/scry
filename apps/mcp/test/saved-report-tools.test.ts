@@ -85,7 +85,7 @@ describe("saved report review without conversation history", () => {
           reportUrl,
           evidenceUrl: `${reportUrl}#supporting-evidence`,
         });
-        expect(client.getInstructions()).toContain("get_report");
+        expect(client.getInstructions()).toContain("list_projects");
         expect(tools.find((t) => t.name === "get_report")?.description).toContain("not proof");
         expect(fetcher).toHaveBeenCalledTimes(2);
         for (const [, init] of fetcher.mock.calls as unknown as [string, RequestInit][]) {
