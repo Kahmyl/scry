@@ -49,11 +49,13 @@ startup guidance brought the complete catalog to approximately 122 KB. Keep all
 discovery instruction and deliver the complete guidance from `list_projects`
 (including empty accounts) and `get_testing_context`. Native observation guidance
 is shared there instead of repeated in each observation description. Current
-native specifications total 61,682 bytes, with no omitted tools; the retained
+native specifications total 61,677 bytes, with no omitted tools; the retained
 profile also fits. A regression gate reserves headroom below 62,000 bytes.
-Input schemas, authorization metadata and annotations compare unchanged against
-the pre-repair wire catalog. Project discovery adds `workflowGuidance` to its
-output; handlers and application effects are otherwise unchanged. Real Desktop
+Input/output schemas, authorization metadata and annotations compare unchanged
+against the pre-repair wire catalog. Project discovery carries guidance in its
+existing message field, preserving strict cached validators; context reads return
+`workflowGuidance` in their existing untyped result. Application effects are
+unchanged. Real Desktop
 acceptance and release receipts remain separate gates; another agent plugin can
 also consume the host's shared budget, so this is not an unlimited-client claim.
 

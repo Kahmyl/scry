@@ -162,12 +162,11 @@ function registerLifecycleTools(
     {
       title: "List Projects",
       description:
-        "Discover accessible Projects and required workflowGuidance, even with no Projects. Follow that guidance for Scry requests; use get_testing_context before testing.",
+        "Discover accessible Projects, including empty accounts. Read required Scry workflow guidance in the returned message. Use get_testing_context before testing.",
       inputSchema: {},
       outputSchema: {
         message,
         projects: z.array(z.record(z.string(), z.unknown())),
-        workflowGuidance: z.string(),
       },
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
@@ -176,9 +175,8 @@ function registerLifecycleTools(
       toolResult(
         {
           projects: await client.get<Array<Record<string, unknown>>>("/projects"),
-          workflowGuidance,
         },
-        "Projects loaded.",
+        `Projects loaded.\n\n${workflowGuidance}`,
       ),
   );
 

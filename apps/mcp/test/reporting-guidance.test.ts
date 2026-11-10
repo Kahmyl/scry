@@ -4,12 +4,69 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBrowserMcpServer } from "../src/server.js";
 import { BrowserApiClient } from "../src/api-client.js";
 import { publishBrowserMissionReportSchema } from "@scry/contracts";
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 describe("self-contained external-agent reporting guidance", () => {
+  it.each([false, true])(
+    "supports clients caching the original Project output schema (native=%s)",
+    async (native) => {
+      vi.stubEnv("SCRY_BROWSER_ADAPTER", native ? "playwright_mcp" : "legacy");
+      vi.stubEnv("SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED", native ? "true" : "false");
+      const fetcher = vi.fn(async () => Response.json([]));
+      vi.stubGlobal("fetch", fetcher);
+      const server = createBrowserMcpServer(new BrowserApiClient("http://fixture.test/api"));
+      const client = new Client({ name: "cached-project-schema", version: "1" });
+      const [a, b] = InMemoryTransport.createLinkedPair();
+      await server.connect(a);
+      await client.connect(b);
+      try {
+        const { tools } = await client.listTools();
+        // Exact strict output shape advertised by production fc726a35. An old
+        // client's cached validator must accept the new handler's actual result.
+        server.server.setRequestHandler(ListToolsRequestSchema, () => ({
+          tools: tools.map((tool) =>
+            tool.name !== "list_projects"
+              ? tool
+              : {
+                  ...tool,
+                  outputSchema: {
+                    $schema: "http://json-schema.org/draft-07/schema#",
+                    type: "object" as const,
+                    properties: {
+                      message: { type: "string" },
+                      projects: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          propertyNames: { type: "string" },
+                          additionalProperties: {},
+                        },
+                      },
+                    },
+                    required: ["message", "projects"],
+                    additionalProperties: false,
+                  },
+                },
+          ),
+        }));
+        await client.listTools();
+        const result = await client.callTool({ name: "list_projects", arguments: {} });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({ projects: [] });
+        expect((result.structuredContent as Record<string, unknown>).message).toContain(
+          "unsupported workspace administration",
+        );
+        expect(fetcher).toHaveBeenCalledTimes(1);
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    },
+  );
   it.each([false, true])(
     "delivers reporting direction and structured fields on a fresh connection (native=%s)",
     async (native) => {
@@ -30,8 +87,9 @@ describe("self-contained external-agent reporting guidance", () => {
         const discovery = await client.callTool({ name: "list_projects", arguments: {} });
         expect(discovery.isError).not.toBe(true);
         expect(discovery.structuredContent).toMatchObject({ projects: [] });
-        const discoveryGuidance = (discovery.structuredContent as Record<string, unknown>)
-          .workflowGuidance;
+        const discoveryGuidance = (
+          (discovery.structuredContent as Record<string, unknown>).message as string
+        ).slice("Projects loaded.\n\n".length);
         expect(discoveryGuidance).toContain("unsupported workspace administration");
         expect(discoveryGuidance).toContain("https://scry.giize.com/support");
         expect(fetcher).toHaveBeenCalledTimes(1);
