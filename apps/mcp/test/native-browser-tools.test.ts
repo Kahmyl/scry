@@ -48,7 +48,6 @@ describe("controlled native MCP profile", () => {
       try {
         const result = await client.callTool({ name: "get_command", arguments: { commandId: id } });
         expect(result.structuredContent).toMatchObject({
-          message: "Browser command facts loaded.",
           command: { id, state },
         });
         expect(result.isError).toBe(state === "failed");
@@ -127,7 +126,8 @@ describe("controlled native MCP profile", () => {
     };
     const result = await nativeCommandResult(new BrowserApiClient("http://api.test/api"), command);
     expect(result.isError).toBe(false);
-    expect(result.structuredContent.command).toBe(command);
+    expect(result.structuredContent.command).toMatchObject(command);
+    expect(command).not.toHaveProperty("interaction");
     expect(JSON.stringify(result.content)).toContain("do not repeat the action");
   });
   it.each(["tool_error", "unknown"])(
@@ -139,7 +139,8 @@ describe("controlled native MCP profile", () => {
       };
       const result = await nativeCommandResult(new BrowserApiClient("http://unused.test"), command);
       expect(result.isError).toBe(true);
-      expect(result.structuredContent.command).toBe(command);
+      expect(result.structuredContent.command).toMatchObject(command);
+      expect(command).not.toHaveProperty("interaction");
     },
   );
   it("exposes ordinary browser tools only under both explicit flags and returns authorized image bytes", async () => {

@@ -14,14 +14,15 @@ import type {
 import { AuthenticatedEvidenceStore } from "./authenticated-evidence-store.js";
 import { ChronicleRecording } from "./recording.js";
 import { renderSanitizedReplay } from "./offline-replay.js";
+import { hasNativeCaptureFacts } from "./native-capture.js";
 import { durableWrite } from "./durable-file.js";
 import { AdmittedEvidenceReader } from "./admitted-evidence-reader.js";
 import {
   createNativeRecording,
   nativeEvidenceWarning,
   readNativeMedia,
-  nativeMediaReceipts,
   recoverNativeCaptures,
+  nativeEvidenceInventory,
 } from "./native-media.js";
 import {
   EvidenceArtifactFailure,
@@ -48,6 +49,7 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
       generation: this.scope.admission.ownerGeneration,
       recording,
       assertActive: () => this.scope.admission.assertActive(),
+      verify: () => this.store.verify(),
     });
   }
 
@@ -73,8 +75,11 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
     const snapshot = await this.scope.admission.readStream();
     let mediaComplete: boolean;
     try {
-      const media = nativeMediaReceipts((await this.store.verify()).events);
-      mediaComplete = !media.some((item) => item.coverage === "partial");
+      const inventory = nativeEvidenceInventory(await this.store.verify(), snapshot, true);
+      mediaComplete =
+        !inventory.media.some((item) => item.coverage === "partial") &&
+        inventory.recordingAssessment?.state !== "withheld" &&
+        inventory.recordingAssessment?.state !== "pending";
     } catch (error) {
       if (!(error instanceof EvidenceArtifactFailure)) throw error;
       // Missing/unreadable stored content cannot negate a confirmed browser
@@ -93,7 +98,7 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
   }
   async recoverNativeCaptures(
     native: import("@scry/contracts").ChronicleNativeRecordingPort,
-  ): Promise<number> {
+  ): Promise<import("@scry/contracts").NativeCaptureRecovery> {
     const verified = await this.store.verify().catch(async (error: unknown) => {
       if (!(error instanceof EvidenceArtifactFailure)) throw error;
       // No authenticated reservation can be recovered from unavailable events.
@@ -103,8 +108,8 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
       this.scope.admission.assertActive();
       return null;
     });
-    if (!verified) return 0;
-    return recoverNativeCaptures(this.scope.root, verified.events, native);
+    if (!verified) return { admitted: 0 };
+    return recoverNativeCaptures(this.scope.root, native);
   }
 
   async prepareClosure(): Promise<void> {
@@ -187,14 +192,20 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
     const manifestPath = path.join(publicationRoot, "evidence.json");
     let videoObjectKey: string | undefined;
     let issue: EvidenceClosureIssue | undefined;
-    const media = nativeMediaReceipts(verified.events);
+    const { media, recordingAssessment } = nativeEvidenceInventory(verified, snapshot, true);
+    if (recordingAssessment?.state === "withheld") state = "incomplete";
     // Native files are published only when their exact receipts were admitted.
     // Recovered owners read those receipts; orphan files are never promoted.
     for (const item of media) await readNativeMedia(this.scope.root, item);
     const nativeVideo = media.find((item) => item.kind === "video");
     if (nativeVideo)
       videoObjectKey = `local://${path.join(this.scope.root, nativeVideo.objectKey)}`;
-    if (!media.length && options.renderVideo && verified.chunks > 0) {
+    if (
+      !media.length &&
+      !hasNativeCaptureFacts(verified.events) &&
+      options.renderVideo &&
+      verified.chunks > 0
+    ) {
       const ledgerPath = path.join(publicationRoot, "actions.jsonl");
       const ledger = await options.actionLedger();
       this.scope.admission.assertActive();
@@ -237,6 +248,7 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
         ...(media.length
           ? { media, capture: "native", playbackRate: 1, warning: nativeEvidenceWarning }
           : {}),
+        ...(recordingAssessment ? { recordingAssessment } : {}),
         ...(issue ? { issue } : {}),
       }),
     );
@@ -250,6 +262,7 @@ export class ChronicleEvidenceSession implements ChronicleEvidenceSessionPort {
       totalBytes: verified.storedBytes,
       replayObjectKey: `local://${manifestPath}`,
       ...(videoObjectKey ? { videoObjectKey } : {}),
+      ...(recordingAssessment ? { recordingAssessment } : {}),
     };
     if (state === "complete") return { ...facts, state };
     return { ...facts, state: "incomplete", ...(issue ? { issue } : {}) };

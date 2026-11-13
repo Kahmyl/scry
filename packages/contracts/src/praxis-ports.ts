@@ -239,6 +239,7 @@ export interface VeilBrowserCapturePort {
 }
 export interface VeilBrowserSessionPort {
   nativeProtectionScript: string;
+  nativePrivacy: import("./native-protection-port.js").NativeBrowserProtectionPort;
   authority: VeilBrowserAuthorityPort;
   vault: VeilBrowserCapturePort;
   evidenceProtection: EvidenceProtectionPort;
@@ -247,6 +248,14 @@ export interface VeilBrowserSessionPort {
 }
 export interface VeilBrowserProtectionPort {
   nativeEvidence?(scope: PraxisSessionScope): EvidenceProtectionPort;
+  /** Optional synchronous privacy capability for bounded native scope diagnostics.
+   * The caller supplies only already-authorized session policy values. Unknown,
+   * changed or failed output is count-only; raw endpoints must never be fallback.
+   * Hostname canonicalization variants remain Veil-owned policy.
+   */
+  nativeDiagnostics?(protectedValues: Record<string, string>): {
+    sanitize(value: string): unknown;
+  };
   readEvidence(
     scope: Pick<PraxisSessionScope, "runId" | "sessionId" | "protectionKeyId">,
   ): Pick<EvidenceProtectionPort, "decryptCompressed">;

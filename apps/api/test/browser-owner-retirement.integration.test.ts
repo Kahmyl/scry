@@ -45,22 +45,27 @@ live("confirmed native owner retirement", () => {
         enter = resolve;
       });
     const append = AuthenticatedEvidenceStore.prototype.append;
-    const held = vi
-      .spyOn(AuthenticatedEvidenceStore.prototype, "append")
-      .mockImplementationOnce(async function (
-        this: AuthenticatedEvidenceStore<unknown>,
-        payload: unknown,
-      ) {
-        enter();
-        await gate;
-        return append.call(this, payload);
-      });
+    const holdNextAppend = () =>
+      vi
+        .spyOn(AuthenticatedEvidenceStore.prototype, "append")
+        .mockImplementationOnce(async function (
+          this: AuthenticatedEvidenceStore<unknown>,
+          payload: unknown,
+        ) {
+          enter();
+          await gate;
+          return append.call(this, payload);
+        });
+    let held: ReturnType<typeof holdNextAppend> | undefined;
     const retirement = vi.spyOn(effects, "retireOwner");
     const id = await seedSession(database, effects, "https://fixture.example");
     let stopping: Promise<void> | undefined;
     let closing: Promise<unknown> | undefined;
     try {
       const owner = await praxis.openSession(id);
+      // Opening now durably reserves the native capture epoch. Pause only after
+      // startup so this fixture holds a retirement append, not its own startup.
+      held = holdNextAppend();
       // Native capture admits a file at an action checkpoint/close, not a DOM
       // snapshot on startup. Hold that real native receipt's Chronicle append.
       closing = praxis.executeCommand(id, { kind: "close" });
@@ -101,7 +106,7 @@ live("confirmed native owner retirement", () => {
       await stopping?.catch(() => undefined);
       await closing?.catch(() => undefined);
       await praxis.shutdown();
-      held.mockRestore();
+      held?.mockRestore();
       retirement.mockRestore();
     }
   }, 20000);

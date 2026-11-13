@@ -1,5 +1,10 @@
 import { Body, Controller, Header, Inject, Post, NotFoundException } from "@nestjs/common";
-import { testingContextRequestSchema, type TestingContextRequest } from "@scry/contracts";
+import {
+  contextFeedback,
+  projectResume,
+  testingContextRequestSchema,
+  type TestingContextRequest,
+} from "@scry/contracts";
 import { performance } from "node:perf_hooks";
 import { CurrentPrincipal } from "../auth/current-principal.decorator.js";
 import type { Principal } from "../auth/auth.types.js";
@@ -7,6 +12,7 @@ import { ZodValidationPipe } from "../common/validation.pipe.js";
 import { Database } from "../infrastructure/database.js";
 import { TestResourceProviders } from "./providers.js";
 import { selectedBrowserAdapter } from "../browser-execution/browser-adapter-selection.js";
+import { customerReport } from "../browser-execution/customer-reporting.js";
 
 @Controller("api")
 export class TestingContextController {
@@ -34,7 +40,9 @@ export class TestingContextController {
       const mission = input.missionId
         ? (
             await client.query(
-              "SELECT id,title,state FROM missions WHERE id=$1 AND project_id=$2",
+              `SELECT id,project_id AS "projectId",title,state,revision,
+                 LEFT(original_instruction,1001) AS instruction,final_report_id AS "finalReportId"
+               FROM missions WHERE id=$1 AND project_id=$2`,
               [input.missionId, input.projectId],
             )
           ).rows[0]
@@ -66,7 +74,16 @@ export class TestingContextController {
         return { status: "unavailable" as const, rows: null };
       }
     };
-    const [missions, environments, credentials, resources] = await Promise.all([
+    const absent = () => Promise.resolve({ status: "unavailable" as const, rows: null });
+    const [
+      missions,
+      environments,
+      credentials,
+      resources,
+      resumeObjectives,
+      resumeAttempts,
+      resumeReport,
+    ] = await Promise.all([
       metadata(
         "SELECT id,title,state FROM missions WHERE project_id=$1 ORDER BY updated_at DESC,id LIMIT 51",
         [input.projectId],
@@ -86,7 +103,52 @@ export class TestingContextController {
         FROM test_resources t WHERE t.mission_id=$1 ORDER BY t.created_at DESC,t.id LIMIT 51`,
         [scope.mission?.id ?? null],
       ),
+      scope.mission
+        ? metadata(
+            `SELECT id,mission_id AS "missionId",LEFT(title,121) AS title,
+          LEFT(description,241) AS description,state,
+          CASE WHEN octet_length(completion_criteria::text)<=8192 THEN completion_criteria ELSE NULL END AS "completionCriteria",
+          (octet_length(completion_criteria::text)>8192) AS "completionCriteriaTruncated",
+          LEFT(conclusion,241) AS conclusion
+         FROM mission_objectives WHERE mission_id=$1 ORDER BY objective_order,id LIMIT 5`,
+            [scope.mission.id],
+          )
+        : absent(),
+      scope.mission
+        ? metadata(
+            `SELECT id,mission_id AS "missionId",state,LEFT(conclusion,241) AS conclusion
+         FROM runs WHERE mission_id=$1 ORDER BY created_at DESC,id LIMIT 7`,
+            [scope.mission.id],
+          )
+        : absent(),
+      scope.mission?.finalReportId
+        ? metadata(
+            `SELECT mr.id,mr.mission_id AS "missionId",m.project_id AS "projectId",LEFT(mr.summary,361) AS summary,
+          CASE WHEN octet_length((mr.safe_report->'presentation')::text)<=131072
+          THEN jsonb_build_object('presentation',mr.safe_report->'presentation') ELSE NULL END AS "safeReport"
+         FROM mission_reports mr JOIN missions m ON m.id=mr.mission_id
+         WHERE mr.id=$1 AND mr.mission_id=$2 AND m.project_id=$3`,
+            [scope.mission.finalReportId, scope.mission.id, input.projectId],
+          )
+        : absent(),
     ]);
+    // These are existing same-caller task facts, not share-safe output or an
+    // approval record. No protected values are loaded or decrypted. Each part
+    // has an independent bounded read; child provenance does not claim the
+    // Mission revision is a transactionally consistent child-row snapshot.
+    const resume = scope.mission
+      ? projectResume({
+          scope: { projectId: input.projectId, missionId: scope.mission.id },
+          mission: {
+            ...scope.mission,
+            objectives: resumeObjectives.rows,
+            runs: resumeAttempts.rows,
+          },
+          ...(scope.mission.finalReportId
+            ? { report: resumeReport.rows?.[0] ? customerReport(resumeReport.rows[0]) : null }
+            : {}),
+        })
+      : null;
     const configured = this.providers.capabilities(),
       native = selectedBrowserAdapter() === "playwright_mcp",
       enabled = process.env.SCRY_BROWSER_ENABLED === "true";
@@ -159,14 +221,27 @@ export class TestingContextController {
       if (!features[name as keyof typeof features]?.available) blocked.push(name);
     if (!canPrepare && [...required].some((name) => name !== "mailboxRead"))
       blocked.unshift("workspace_read_only");
-    return {
+    const context = {
       contractVersion: 1,
       project: scope.project,
       missions: missions.rows?.slice(0, 50) ?? null,
       environments: environments.rows?.slice(0, 50) ?? null,
       credentials: credentials.rows?.slice(0, 50) ?? null,
       resources: resources.rows?.slice(0, 50) ?? null,
-      selected: { mission: scope.mission ?? null, environment: scope.environment ?? null },
+      selected: {
+        mission: scope.mission
+          ? {
+              id: scope.mission.id,
+              projectId: scope.mission.projectId,
+              title: scope.mission.title,
+              state: scope.mission.state,
+              revision: scope.mission.revision,
+              finalReportId: scope.mission.finalReportId,
+            }
+          : null,
+        environment: scope.environment ?? null,
+      },
+      resume,
       parts: Object.fromEntries(
         Object.entries({ missions, environments, credentials, resources }).map(([name, part]) => [
           name,
@@ -185,5 +260,6 @@ export class TestingContextController {
       hostToolExposure: "unknown",
       readinessSnapshotOnly: true,
     };
+    return { ...context, interaction: contextFeedback(context) };
   }
 }

@@ -1,11 +1,15 @@
-import { applicationReportPresentationSchema } from "@scry/contracts";
+import {
+  applicationReportPresentationSchema,
+  releaseFeedback,
+  canonicalRecordingAssessment,
+} from "@scry/contracts";
 
 type Row = Record<string, unknown>;
+export const isTerminalRunState = (state: unknown): boolean =>
+  ["passed", "failed", "cancelled", "infrastructure_error"].includes(String(state));
 /** Factual execution/release state, never an application verdict. */
 export function runRecoveryStatus(row: Row) {
-  const terminal = ["passed", "failed", "cancelled", "infrastructure_error"].includes(
-    String(row.state),
-  );
+  const terminal = isTerminalRunState(row.state);
   const browserTerminal = ["completed", "failed", "cancelled"].includes(
     String(row.browserSessionState),
   );
@@ -14,7 +18,14 @@ export function runRecoveryStatus(row: Row) {
     typeof row.pendingCommandCount === "number"
       ? row.pendingCommandCount
       : activity.filter((a) => ["queued", "running"].includes(String(a.state))).length;
-  return {
+  const assessment =
+    row.recordingAssessmentAvailability === "unavailable"
+      ? undefined
+      : canonicalRecordingAssessment(row.recordingAssessment);
+  const assessmentUnavailable =
+    row.recordingAssessmentAvailability === "unavailable" ||
+    (row.recordingAssessment !== undefined && !assessment);
+  const status = {
     runId: row.id,
     missionId: row.missionId,
     state: row.state,
@@ -32,7 +43,10 @@ export function runRecoveryStatus(row: Row) {
         ? Number(row.ownerGeneration)
         : null,
     pendingCommands,
+    ...(assessment ? { recordingAssessment: assessment } : {}),
+    ...(assessmentUnavailable ? { recordingAssessmentAvailability: "unavailable" as const } : {}),
   };
+  return { ...status, interaction: releaseFeedback(status) };
 }
 const pick = (row: Row, keys: string[]) =>
   Object.fromEntries(keys.filter((key) => row[key] !== undefined).map((key) => [key, row[key]]));

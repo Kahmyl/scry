@@ -14,6 +14,13 @@ class Helper extends EventEmitter {
   pending = false;
   refresh = false;
   display: unknown = undefined;
+  captureAutomatic = true;
+  captureReceipt: unknown = {
+    coverage: "complete",
+    started: 1000,
+    ended: 2000,
+    timingOrigin: "native_capture",
+  };
   authorities: Array<Record<string, any>> = [];
   browser = { isConnected: vi.fn(() => true), once: vi.fn() };
   challenge() {
@@ -58,6 +65,13 @@ class Helper extends EventEmitter {
             ...(this.display === undefined ? {} : { display: this.display }),
           });
       }
+    } else if (value.kind === "capture_stop") {
+      if (this.captureAutomatic)
+        this.emit("message", {
+          kind: "capture_stopped",
+          requestId: value.requestId,
+          receipt: this.captureReceipt,
+        });
     } else if (value.kind === "setup_complete") this.emit("message", { kind: "setup_completed" });
     else if (value.kind === "stop") this.stopped();
     else if (value.kind === "receipt_acknowledged") this.exit();
@@ -99,6 +113,101 @@ function active(phase = 0): BrowserAuthoritySnapshot {
   };
 }
 describe("bounded parent custodian transport", () => {
+  it("keeps browser custody and heartbeat alive after one immutable finite capture stop", async () => {
+    const owned = await SupervisedBrowser.launch({ sampleAuthority: idle });
+    const first = owned.stopCapture();
+    expect(owned.stopCapture()).toBe(first);
+    expect(await first).toEqual(helper.captureReceipt);
+    expect(Object.isFrozen(await first)).toBe(true);
+    expect(owned.terminationState).toBe("active");
+    expect(owned.exitConfirmed).toBe(false);
+    helper.challenge();
+    await owned.synchronize();
+    expect(helper.kill).not.toHaveBeenCalled();
+    expect(helper.send.mock.calls.filter(([value]) => value.kind === "capture_stop")).toHaveLength(
+      1,
+    );
+    expect((await owned.close()).exitConfirmed).toBe(true);
+  });
+  it("treats unavailable capture as a media fact while preserving confirmed browser release", async () => {
+    const observer = vi.fn();
+    helper.captureReceipt = { coverage: "unavailable", reason: "capture_final_unconfirmed" };
+    const owned = await SupervisedBrowser.launch({
+      sampleAuthority: idle,
+      onUnconfirmedStop: observer,
+    });
+    expect(await owned.stopCapture()).toEqual(helper.captureReceipt);
+    expect((await owned.close()).exitConfirmed).toBe(true);
+    expect(observer).not.toHaveBeenCalled();
+  });
+  it("settles a pending capture as unavailable when complete cleanup wins the race", async () => {
+    helper.captureAutomatic = false;
+    const owned = await SupervisedBrowser.launch({ sampleAuthority: idle });
+    const captured = owned.stopCapture();
+    expect((await owned.close()).exitConfirmed).toBe(true);
+    expect(await captured).toEqual({
+      coverage: "unavailable",
+      reason: "capture_final_unconfirmed",
+    });
+  });
+  it("uses the full cleanup budget instead of an earlier capture timer during retirement", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    helper.captureAutomatic = false;
+    const owned = await SupervisedBrowser.launch({
+      sampleAuthority: idle,
+      captureDirectory: "/fixture",
+    });
+    const stopped = helper.stopped.bind(helper);
+    helper.stopped = vi.fn();
+    const captured = owned.stopCapture();
+    const closing = owned.close();
+    try {
+      await vi.advanceTimersByTimeAsync(22001);
+      expect(helper.kill).not.toHaveBeenCalled();
+      stopped();
+      expect((await closing).exitConfirmed).toBe(true);
+      expect(await captured).toEqual({
+        coverage: "unavailable",
+        reason: "capture_final_unconfirmed",
+      });
+    } finally {
+      helper.exit();
+      vi.useRealTimers();
+    }
+  });
+  it.each([
+    {
+      coverage: "complete",
+      started: 1,
+      ended: 2,
+      timingOrigin: "native_capture",
+      file: "/private",
+    },
+    { coverage: "complete", started: 2, ended: 1, timingOrigin: "native_capture" },
+    { coverage: "complete", started: 1, ended: Infinity, timingOrigin: "native_capture" },
+    { coverage: "unavailable", reason: "raw-diagnostic" },
+    null,
+  ])("rejects a malformed capture receipt without positive release: %j", async (receipt) => {
+    helper.captureReceipt = receipt;
+    const owned = await SupervisedBrowser.launch({ sampleAuthority: idle });
+    await expect(owned.stopCapture()).rejects.toMatchObject({
+      physicalRetirement: "unconfirmed",
+      mayOwnResources: true,
+    });
+    await expect(owned.close()).rejects.toThrow("TERMINATION_UNCONFIRMED");
+  });
+  it("rejects a capture reply for another request and retains ownership uncertainty", async () => {
+    helper.captureAutomatic = false;
+    const owned = await SupervisedBrowser.launch({ sampleAuthority: idle });
+    const captured = owned.stopCapture();
+    helper.emit("message", {
+      kind: "capture_stopped",
+      requestId: 2,
+      receipt: helper.captureReceipt,
+    });
+    await expect(captured).rejects.toMatchObject({ mayOwnResources: true });
+    await expect(owned.close()).rejects.toThrow("TERMINATION_UNCONFIRMED");
+  });
   it("uses the launch budget before the first authority reply, then enforces the active heartbeat", async () => {
     let clock = 0;
     vi.spyOn(performance, "now").mockImplementation(() => clock);
@@ -183,6 +292,14 @@ describe("bounded parent custodian transport", () => {
     helper.stopped();
     connect(helper.browser);
     await expect(opening).rejects.toThrow("PROCESS_CONNECT_FAILED");
+  });
+  it("preserves positively confirmed constructor cleanup even when no browser handle is returned", async () => {
+    f.connect.mockRejectedValueOnce(Error("connection failed"));
+    await expect(SupervisedBrowser.launch({ sampleAuthority: idle })).rejects.toMatchObject({
+      message: "SCRY_BROWSER_PROCESS_CONNECT_FAILED",
+      physicalRetirement: "confirmed",
+      mayOwnResources: false,
+    });
   });
   it("requires a matching phase acknowledgment, not merely a successful send callback", async () => {
     let snapshot = idle();

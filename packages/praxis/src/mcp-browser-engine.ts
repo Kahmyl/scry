@@ -13,6 +13,13 @@ import {
   type MaskingDiagnostic,
   nativeCapabilitySchemas,
   scopedRequestSchema,
+  canonicalRecordingAssessment,
+  nativeImageReasons,
+  type NativeCapturePort,
+  type NativeCaptureEpoch,
+  type NativeCaptureSample,
+  type NativeImageEvidence,
+  type RecordingAssessment,
   type BrowserSequenceInput,
   type BrowserCommand,
   type ChronicleEvidencePort,
@@ -29,6 +36,11 @@ import { CommandLane, type CommandAttempt } from "./command-lane.js";
 import { ExecutionSupervision } from "./execution-supervision.js";
 import { PraxisOwnerLease } from "./owner-lease.js";
 import { SupervisedBrowser } from "./supervised-browser.js";
+import {
+  createSessionDenials,
+  type DenialCursor,
+  type DenialSnapshot,
+} from "./mcp-native/scope-denials.js";
 
 const failure = (code: string) => new Error(`SCRY_BROWSER_${code}`);
 function privateNetworkOrigins(): string[] {
@@ -57,6 +69,14 @@ type Content = { type: string; text?: string; data?: string; mimeType?: string }
 type ToolResult = {
   content: Content[];
   observationId?: string;
+  /** Private adapter admission fact; no new public response member. */
+  observationAvailable?: boolean;
+  observationIssue?:
+    | "native_protection_capacity"
+    | "native_protection_refresh_incomplete"
+    | "native_protection_classification_failed";
+  diagnosticDetailAllowed?: boolean;
+  imageEvidence?: NativeImageEvidence;
   isError?: boolean;
   interaction?: {
     status: string;
@@ -86,10 +106,15 @@ type Cell = {
   retired: boolean;
   opening?: Promise<void>;
   stopping?: Promise<void>;
+  escalateStop?: () => void;
   scope?: PraxisSessionScope;
   lease?: PraxisOwnerLease;
   evidence?: ChronicleEvidenceSessionPort;
   native?: ChronicleNativeRecordingPort;
+  capture?: NativeCapturePort;
+  capturePolicyGeneration: number;
+  recordingAssessment?: RecordingAssessment;
+  forceStopRequested: boolean;
   launch?: Promise<SupervisedBrowser>;
   custody?: SupervisedBrowser;
   worker?: AdapterWorker;
@@ -97,23 +122,40 @@ type Cell = {
   downloadDirectory?: string;
   policyDigest?: string;
   maskingPartial: boolean;
+  diagnosticDetailAllowed: boolean;
+  diagnosticDetailSuppressed: boolean;
+  denials: ReturnType<typeof createSessionDenials>;
+  lastPublishedDenialCursor: DenialCursor;
+  denialsDisposed: boolean;
+  captureDenials?: () => void;
   sealed?: Record<string, unknown>;
 };
 
 /** An IPC-only official adapter. No API credentials, database, lease, or
  * encryption key enters this process. Its browser is independently supervised. */
-class AdapterWorker {
+export class AdapterWorker {
   readonly child: ChildProcess;
   #sequence = 0;
+  #captureTasks = new Set<Promise<void>>();
+  #captureFailed = false;
+  #stopping = false;
+  #stopPromise: Promise<void> | undefined;
+  #tools = new Set<string>();
   #pending = new Map<
     number,
-    { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timer: NodeJS.Timeout;
+      initializes: boolean;
+    }
   >();
   constructor(
     directory: string,
     entrypoint: string,
     onWarning: (event?: MaskingDiagnostic) => void,
     onLost: () => void,
+    onCapture: (event: Record<string, unknown>) => Promise<void>,
   ) {
     const env: NodeJS.ProcessEnv = {};
     for (const key of ["PATH", "TMPDIR", "TEMP", "LANG", "PLAYWRIGHT_BROWSERS_PATH"])
@@ -129,6 +171,27 @@ class AdapterWorker {
     this.child.on("message", (raw: unknown) => {
       if (!raw || typeof raw !== "object") return;
       const m = raw as { id?: number; ok?: boolean; data?: unknown; type?: string; code?: string };
+      if (m.type === "capture_sample" || m.type === "capture_gap") {
+        if (this.#captureTasks.size >= 128) {
+          this.#captureFailed = true;
+          onLost();
+          return;
+        }
+        let task: Promise<void>;
+        try {
+          // Invoke/register the producer operation synchronously at IPC receipt,
+          // before any final barrier can await a reply from this same channel.
+          task = Promise.resolve(onCapture(raw as Record<string, unknown>));
+        } catch (error) {
+          task = Promise.reject(error);
+        }
+        const tracked = task.catch(() => {
+          this.#captureFailed = true;
+        });
+        this.#captureTasks.add(tracked);
+        void tracked.finally(() => this.#captureTasks.delete(tracked));
+        return;
+      }
       if (m.type === "masking") {
         const parsed = maskingDiagnosticSchema.safeParse((raw as { event?: unknown }).event);
         onWarning(parsed.success ? parsed.data : undefined);
@@ -139,8 +202,13 @@ class AdapterWorker {
       if (!call) return;
       clearTimeout(call.timer);
       this.#pending.delete(m.id);
-      if (m.ok) call.resolve(m.data);
-      else
+      if (m.ok) {
+        if (call.initializes && Array.isArray(m.data))
+          for (const tool of m.data.slice(0, 512))
+            if (tool && typeof tool === "object" && typeof tool.name === "string")
+              this.#tools.add(tool.name);
+        call.resolve(m.data);
+      } else
         call.reject(
           failure(m.code && adapterFailureCodes.has(m.code) ? m.code : "ADAPTER_CALL_FAILED"),
         );
@@ -151,7 +219,7 @@ class AdapterWorker {
         p.reject(failure("ADAPTER_LOST"));
       }
       this.#pending.clear();
-      onLost();
+      if (!this.#stopping) onLost();
     };
     this.child.on("exit", lost);
     this.child.on("error", lost);
@@ -164,7 +232,7 @@ class AdapterWorker {
         this.#pending.delete(id);
         reject(failure("ADAPTER_TIMEOUT"));
       }, timeout);
-      this.#pending.set(id, { resolve, reject, timer });
+      this.#pending.set(id, { resolve, reject, timer, initializes: message.type === "init" });
       this.child.send({ ...message, id }, (error) => {
         if (error) {
           clearTimeout(timer);
@@ -174,16 +242,94 @@ class AdapterWorker {
       });
     });
   }
-  async stop(): Promise<void> {
-    if (this.child.exitCode !== null || this.child.signalCode !== null) return;
-    const exit = new Promise<void>((resolve) => this.child.once("exit", () => resolve()));
-    this.child.kill("SIGTERM");
-    const timer = setTimeout(() => this.child.kill("SIGKILL"), 3000);
-    try {
-      await exit;
-    } finally {
-      clearTimeout(timer);
-    }
+  get alive(): boolean {
+    return (
+      !this.#stopping &&
+      this.child.connected &&
+      this.child.exitCode === null &&
+      this.child.signalCode === null
+    );
+  }
+  get supportsReadOnlyImages(): boolean {
+    return this.alive && this.#tools.has("browser_take_screenshot");
+  }
+  async drainCapture(timeout = 5000): Promise<void> {
+    await boundedCapture(
+      (async () => {
+        while (this.#captureTasks.size) await Promise.all([...this.#captureTasks]);
+        if (this.#captureFailed) throw failure("CAPTURE_PRODUCER_FAILED");
+      })(),
+      timeout,
+    );
+  }
+  stop(): Promise<void> {
+    return (this.#stopPromise ??= (async () => {
+      this.#stopping = true;
+      if (this.child.exitCode !== null || this.child.signalCode !== null) return;
+      const exit = new Promise<void>((resolve) => this.child.once("exit", () => resolve()));
+      this.child.kill("SIGTERM");
+      const timer = setTimeout(() => this.child.kill("SIGKILL"), 3000);
+      let confirmation: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([
+          exit,
+          new Promise<never>((_resolve, reject) => {
+            confirmation = setTimeout(() => reject(failure("ADAPTER_STOP_UNCONFIRMED")), 5000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+        clearTimeout(confirmation);
+      }
+    })());
+  }
+}
+
+async function boundedCapture<T>(operation: Promise<T>, ms = 5000): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(failure("CAPTURE_DRAIN_TIMEOUT")), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function sameEpoch(value: unknown, expected: NativeCaptureEpoch): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const epoch = value as Record<string, unknown>;
+  return (
+    Object.keys(epoch).length === 3 &&
+    epoch.captureId === expected.captureId &&
+    epoch.originalWriterGeneration === expected.originalWriterGeneration &&
+    epoch.assessmentPolicyVersion === expected.assessmentPolicyVersion
+  );
+}
+function finiteImageEvidence(value: unknown): NativeImageEvidence | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const image = value as Record<string, unknown>;
+  if (
+    Object.keys(image).length === 2 &&
+    image.state === "available" &&
+    image.assessment === "best_effort_known_candidates"
+  )
+    return { state: "available", assessment: "best_effort_known_candidates" };
+  if (
+    Object.keys(image).length === 3 &&
+    image.state === "withheld" &&
+    typeof image.reason === "string" &&
+    Object.hasOwn(nativeImageReasons, image.reason)
+  ) {
+    const reason = image.reason as keyof typeof nativeImageReasons;
+    if (image.recovery === nativeImageReasons[reason])
+      return {
+        state: "withheld",
+        reason,
+        recovery: nativeImageReasons[reason],
+      } as NativeImageEvidence;
   }
 }
 
@@ -203,12 +349,20 @@ export class PraxisMcpBrowserEngine {
   private cell(id: string): Cell {
     let c = this.#cells.get(id);
     if (!c) {
+      const denials = createSessionDenials();
       c = {
         id,
         lane: new CommandLane(),
         supervision: new ExecutionSupervision(),
         retired: false,
+        capturePolicyGeneration: 1,
+        forceStopRequested: false,
         maskingPartial: false,
+        diagnosticDetailAllowed: false,
+        diagnosticDetailSuppressed: false,
+        denials,
+        lastPublishedDenialCursor: denials.cursor(),
+        denialsDisposed: false,
       };
       this.#cells.set(id, c);
     }
@@ -217,6 +371,22 @@ export class PraxisMcpBrowserEngine {
   private active(c: Cell): void {
     if (this.#stopping || c.retired) throw failure("SESSION_CLOSING");
     c.lease?.assertActive();
+  }
+  private diagnosticPolicy(c: Cell, values: Record<string, string>): void {
+    try {
+      const protection = this.protection.nativeDiagnostics?.(values);
+      c.denials.setCleaner(
+        protection
+          ? (value) =>
+              c.diagnosticDetailAllowed && !c.diagnosticDetailSuppressed
+                ? protection.sanitize(value)
+                : undefined
+          : undefined,
+      );
+    } catch {
+      // Diagnostics never acquire a raw fallback or fail application execution.
+      c.denials.setCleaner(undefined);
+    }
   }
   private root(id: string): string {
     return path.resolve(process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser", id);
@@ -266,14 +436,18 @@ export class PraxisMcpBrowserEngine {
     });
     c.native = await c.evidence.createNativeRecording();
     this.active(c);
-    if (!c.native.reserveCapture) throw failure("ADAPTER_CAPTURE_UNAVAILABLE");
     await c.evidence.startCapture();
-    const captureDirectory = await c.native.reserveCapture();
+    c.capture = await c.native.reserveCaptureV2({ kind: "display", policyGeneration: 1 });
+    c.recordingAssessment = { state: "pending" };
+    const captureDirectory = c.capture.directory;
     c.downloadDirectory = path.join(captureDirectory, "downloads");
     this.active(c);
     // @ts-expect-error Private JavaScript transport, characterized by proxy contract tests.
     const { originProxy } = await import("./mcp-native/proxy.mjs");
-    c.proxy = (await originProxy(scope.allowedOrigins ?? [scope.baseOrigin])) as Proxy;
+    c.proxy = (await originProxy(
+      scope.allowedOrigins ?? [scope.baseOrigin],
+      c.denials.record,
+    )) as Proxy;
     this.active(c);
     c.launch = SupervisedBrowser.launch({
       runtime: "playwright_mcp",
@@ -313,9 +487,29 @@ export class PraxisMcpBrowserEngine {
       () => {
         void this.stop(c, true).catch(() => this.runtimeOptions.onUnconfirmedRuntime?.());
       },
+      (event) => {
+        const capture = c.capture;
+        if (
+          !capture ||
+          !sameEpoch(event.epoch, capture.epoch) ||
+          !Number.isSafeInteger(event.sequence) ||
+          (event.sequence as number) < 1
+        )
+          throw failure("CAPTURE_IDENTITY_MISMATCH");
+        return event.type === "capture_sample"
+          ? capture.graphSample({
+              sequence: event.sequence as number,
+              sample: event.sample as NativeCaptureSample,
+            })
+          : capture.graphGap({
+              sequence: event.sequence as number,
+              reason: event.reason as keyof typeof nativeImageReasons,
+            });
+      },
     );
     const secrets = await this.commands.protectedValuesForSession(c.id);
     this.active(c);
+    this.diagnosticPolicy(c, secrets);
     c.policyDigest = createHash("sha256").update(JSON.stringify(secrets)).digest("hex");
     await c.worker.call(
       {
@@ -329,6 +523,7 @@ export class PraxisMcpBrowserEngine {
         privateOrigins:
           process.env.SCRY_BROWSER_WORKFLOW_V2_ENABLED === "true" ? privateNetworkOrigins() : [],
         capabilitiesEnabled: process.env.SCRY_BROWSER_WORKFLOW_V2_ENABLED === "true",
+        captureEpoch: c.capture.epoch,
       },
       15000,
     );
@@ -354,20 +549,178 @@ export class PraxisMcpBrowserEngine {
   /** Retire admission synchronously before waiting for a late launch. The
    * exact acquisition remains owned until browser exit AND encoder drain. */
   private stop(c: Cell, force: boolean): Promise<void> {
+    c.forceStopRequested ||= force;
+    if (force) c.escalateStop?.();
     c.retired = true;
+    // Preserve only the active command's safe windows before releasing raw
+    // endpoints and the Veil policy closure, even if physical stop later fails.
+    if (!c.denialsDisposed) {
+      c.diagnosticDetailAllowed = false;
+      c.captureDenials?.();
+      c.denials.dispose();
+      c.denialsDisposed = true;
+    }
     return (c.stopping ??= (async () => {
       await c.opening?.catch(() => undefined);
+      let custody = c.custody;
+      let acquisitionFailed = false;
+      let acquisitionFailure: unknown;
       try {
-        const custody = c.custody ?? (await c.launch);
-        if (custody) await (force ? custody.terminate() : custody.close());
-        await c.worker?.stop();
-        await c.proxy?.close();
-        if (c.downloadDirectory) await rm(c.downloadDirectory, { recursive: true, force: true });
+        custody ??= await c.launch;
       } catch (error) {
+        if (
+          !error ||
+          typeof error !== "object" ||
+          (error as { physicalRetirement?: unknown }).physicalRetirement !== "confirmed" ||
+          (error as { mayOwnResources?: unknown }).mayOwnResources !== false
+        ) {
+          acquisitionFailed = true;
+          acquisitionFailure = error;
+        }
+      }
+      let custodyStopping: Promise<unknown> | undefined;
+      let escalation: Promise<unknown> | undefined;
+      let custodyStarted = false,
+        custodySettled = false,
+        custodyForced = false;
+      const stopCustody = (requestForce: boolean): Promise<unknown> => {
+        const promote = requestForce && !custodyForced;
+        custodyForced ||= requestForce;
+        if (!custodyStopping) {
+          // Publish the promise before invoking a resource that may reenter stop.
+          custodyStopping = Promise.resolve().then(async () => {
+            custodyStarted = true;
+            try {
+              const receipt = custody
+                ? await (custodyForced ? custody.terminate() : custody.close())
+                : undefined;
+              if (escalation) await escalation;
+              return receipt;
+            } finally {
+              custodySettled = true;
+            }
+          });
+        } else if (promote && custodyStarted && !custodySettled && custody) {
+          escalation = Promise.resolve().then(() => custody!.terminate());
+          void escalation.catch(() => undefined);
+        }
+        return custodyStopping;
+      };
+      let workerStopping: Promise<void> | undefined;
+      const stopWorker = () => (workerStopping ??= Promise.resolve().then(() => c.worker?.stop()));
+      c.escalateStop = () => {
+        void stopCustody(true).catch(() => undefined);
+        void stopWorker().catch(() => undefined);
+      };
+      if (c.forceStopRequested) c.escalateStop();
+      try {
+        await this.finalizeCapture(c, custody);
+      } finally {
+        // Metadata failure cannot strand physical resources. Every exact owner
+        // gets a cleanup attempt even if a sibling cleanup rejects.
+        const cleanups = [
+          stopWorker,
+          () => stopCustody(c.forceStopRequested),
+          () => c.proxy?.close(),
+          () =>
+            c.downloadDirectory
+              ? rm(c.downloadDirectory, { recursive: true, force: true })
+              : undefined,
+        ];
+        const results = await Promise.allSettled(
+          cleanups.map((cleanup) => Promise.resolve().then<unknown>(cleanup)),
+        );
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") {
+          acquisitionFailed = true;
+          acquisitionFailure ??= failed.reason;
+        }
+      }
+      if (acquisitionFailed) {
         this.runtimeOptions.onUnconfirmedRuntime?.();
-        throw error;
+        throw Object.assign(
+          new Error(
+            acquisitionFailure instanceof Error
+              ? acquisitionFailure.message
+              : "SCRY_BROWSER_OWNER_RETIREMENT_UNCONFIRMED",
+            { cause: acquisitionFailure },
+          ),
+          {
+            code: "RECORDER_RETIREMENT_UNCONFIRMED",
+            physicalRetirement: "unconfirmed",
+            mayOwnResources: true,
+          },
+        );
       }
     })());
+  }
+  private async finalizeCapture(c: Cell, custody: SupervisedBrowser | undefined): Promise<void> {
+    const capture = c.capture;
+    if (!capture) return;
+    try {
+      if (c.forceStopRequested || !custody || !c.worker) throw failure("CAPTURE_FINAL_UNAVAILABLE");
+      c.lease!.assertActive();
+      const receipt = await custody.stopCapture();
+      if (receipt.coverage === "unavailable" || c.forceStopRequested)
+        throw failure("CAPTURE_FINAL_UNAVAILABLE");
+      const challenge = await boundedCapture(
+        capture.physicalStopped({
+          epoch: capture.epoch,
+          started: receipt.started,
+          ended: receipt.ended,
+          physicalCoverage: receipt.coverage,
+        }),
+      );
+      c.lease!.assertActive();
+      if (c.forceStopRequested) throw failure("CAPTURE_FINAL_UNAVAILABLE");
+      const reply = (await c.worker.call(
+        { type: "close_capture_producer", epoch: capture.epoch, challenge: challenge.challenge },
+        5000,
+      )) as Record<string, unknown>;
+      await c.worker.drainCapture();
+      if (
+        !reply ||
+        !sameEpoch(reply.epoch, capture.epoch) ||
+        !Number.isSafeInteger(reply.lastSequence) ||
+        (reply.lastSequence as number) < 1 ||
+        !reply.finalSample
+      )
+        throw failure("CAPTURE_FINAL_UNAVAILABLE");
+      c.lease!.assertActive();
+      if (c.forceStopRequested) throw failure("CAPTURE_FINAL_UNAVAILABLE");
+      await boundedCapture(
+        capture.graphSample({
+          sequence: reply.lastSequence as number,
+          sample: reply.finalSample as NativeCaptureSample,
+        }),
+      );
+      c.lease!.assertActive();
+      if (c.forceStopRequested) throw failure("CAPTURE_FINAL_UNAVAILABLE");
+      await boundedCapture(capture.graphClosed({ lastSequence: reply.lastSequence as number }));
+    } catch {
+      // Missing physical/final/producer proof stays unclosed in Chronicle. It
+      // withholds this capture without inventing physical-release uncertainty.
+    }
+    try {
+      await c.worker?.drainCapture();
+    } catch {
+      /* No graph-close acknowledgment on a failed producer. */
+    }
+    try {
+      const assessment = await boundedCapture(capture.seal());
+      const recordingAssessment = canonicalRecordingAssessment({
+        ...assessment,
+        warning: "automatic_redaction_best_effort",
+      });
+      if (recordingAssessment) c.recordingAssessment = recordingAssessment;
+      else delete c.recordingAssessment;
+    } catch {
+      c.recordingAssessment = {
+        state: "withheld",
+        reason: "native_capture_final_assessment_missing",
+        warning: "automatic_redaction_best_effort",
+      };
+    }
   }
   private async phase<T>(
     c: Cell,
@@ -387,10 +740,22 @@ export class PraxisMcpBrowserEngine {
   }
   /** Explicit tools and independent observations share one native-call policy.
    * Neither path may extend the exact command's remaining lifetime. */
-  private nativeCall(c: Cell, attempt: CommandAttempt, message: Record<string, unknown>) {
-    return this.phase(c, attempt, 30000, () =>
-      c.worker!.call(message, attempt.remainingMs(29000)),
-    ) as Promise<ToolResult>;
+  private async nativeCall(c: Cell, attempt: CommandAttempt, message: Record<string, unknown>) {
+    // Parent diagnostics cannot classify child-learned values. At publication,
+    // use only this private finite admission fact, never transfer raw values.
+    c.diagnosticDetailAllowed = false;
+    try {
+      const result = (await this.phase(c, attempt, 30000, () =>
+        c.worker!.call(message, attempt.remainingMs(29000)),
+      )) as ToolResult;
+      if (result.diagnosticDetailAllowed !== true) c.diagnosticDetailSuppressed = true;
+      c.diagnosticDetailAllowed = result.diagnosticDetailAllowed === true;
+      return result;
+    } catch (error) {
+      // Missing/failed child knowledge can never be repaired by a later boolean.
+      c.diagnosticDetailSuppressed = true;
+      throw error;
+    }
   }
   /** One durable command owns the plan; every prefix precedes later effects. */
   private async executeSequence(
@@ -473,7 +838,9 @@ export class PraxisMcpBrowserEngine {
         tool: "browser_snapshot",
         args: {},
       });
-      if (!observation.isError) {
+      if (observation.observationAvailable === false && observation.observationIssue)
+        outcome.observationIssue = observation.observationIssue;
+      if (!observation.isError && observation.observationAvailable !== false) {
         outcome.observation = "available";
         outcome.content = observation.content.filter((v) => v.type === "text");
         if (observation.observationId) outcome.observationId = observation.observationId;
@@ -492,7 +859,7 @@ export class PraxisMcpBrowserEngine {
     options: PraxisCommandOptions = { remainingMs: 60000 },
   ): Promise<Record<string, unknown>> {
     const c = this.cell(id);
-    return c.lane.run(options, async (attempt) => {
+    const result = await c.lane.run(options, async (attempt) => {
       attempt.bind({ stop: () => this.stop(c, true) });
       if (c.retired && (command.kind === "close" || command.kind === "close_for_failure")) {
         // A failed phase stays terminal for browser interactions. Only confirmed
@@ -501,6 +868,62 @@ export class PraxisMcpBrowserEngine {
         c.supervision = new ExecutionSupervision();
       }
       c.supervision.begin(attempt, options.sampleAuthority);
+      const admission = c.denials.cursor();
+      // Validation can fail before this action's existing policy read. A prior
+      // command's classifier may be stale; preserve counts until fresh policy is
+      // already available rather than adding a query or disclosing with it.
+      c.denials.setCleaner(undefined);
+      c.diagnosticDetailAllowed = false;
+      const priorCursor = c.lastPublishedDenialCursor;
+      type SafeSnapshot = Omit<DenialSnapshot, "cursor">;
+      let windows: { prior?: SafeSnapshot; current?: SafeSnapshot } = {};
+      let publication = admission;
+      let captured = false;
+      const safe = (snapshot: DenialSnapshot): SafeSnapshot | undefined => {
+        if (snapshot.denialCount === 0 && snapshot.countsExact) return;
+        const { cursor: _cursor, ...value } = snapshot;
+        return value;
+      };
+      const captureDenials = () => {
+        publication = c.denials.cursor();
+        const prior = safe(c.denials.snapshot(priorCursor, admission));
+        const current = safe(c.denials.snapshot(admission, publication));
+        windows = { ...(prior ? { prior } : {}), ...(current ? { current } : {}) };
+        captured = true;
+      };
+      c.captureDenials = captureDenials;
+      const contextual = (result: Record<string, unknown>): Record<string, unknown> => {
+        if (!c.retired || !captured) captureDenials();
+        return Object.keys(windows).length
+          ? { ...result, scopeRestrictionObserved: true, scopeDiagnostics: windows }
+          : { ...result };
+      };
+      let lastAction: Record<string, unknown> | undefined;
+      let checkpoint: Record<string, unknown> | undefined;
+      let checkpointFailed = false;
+      const commandOptions: PraxisCommandOptions = {
+        ...options,
+        persistAction: async (result) => {
+          lastAction = result;
+          // Every new dispatch prefix precedes fresh child privacy admission,
+          // including later steps sharing this durable sequence command.
+          if (result.reason === "dispatch_started") c.diagnosticDetailAllowed = false;
+          checkpoint = { ...contextual(result), readOnlyImageInspectionSupported: false };
+          try {
+            await options.persistAction?.(checkpoint);
+          } catch (error) {
+            checkpointFailed = true;
+            throw error;
+          }
+        },
+      };
+      const published = (result: Record<string, unknown>) => {
+        const value = lastAction === result && checkpoint ? checkpoint : contextual(result);
+        // Publication advances once per final outcome, never at a dispatch or
+        // step prefix. Replay returns the persisted value, not later activity.
+        c.lastPublishedDenialCursor = c.retired ? c.denials.cursor() : publication;
+        return value;
+      };
       try {
         // Even a fail-fast validation refusal is an admitted command. Publish
         // its active sequence before it can finish, otherwise idle skips an
@@ -508,7 +931,7 @@ export class PraxisMcpBrowserEngine {
         if (c.custody && !c.retired) await c.custody.synchronize();
         await options.assertCurrent?.();
         if (command.kind === "close" || command.kind === "close_for_failure")
-          return await this.finish(c, command.kind === "close_for_failure");
+          return published(await this.finish(c, command.kind === "close_for_failure"));
         if (command.kind !== "browser_tool") throw failure("ADAPTER_COMMAND_MISMATCH");
         await this.ensure(c);
         await c.lease!.checkpoint();
@@ -571,22 +994,56 @@ export class PraxisMcpBrowserEngine {
         }
         // Origin proxy enforces redirects, popups and ordinary app traffic too.
         const values = await this.commands.protectedValuesForSession(id);
+        this.diagnosticPolicy(c, values);
         const revision = createHash("sha256").update(JSON.stringify(values)).digest("hex");
         if (revision !== c.policyDigest) {
-          await this.phase(c, attempt, 5000, () =>
-            c.worker!.call({ type: "policy", secrets: values }, 4000),
-          );
+          try {
+            const reply = (await this.phase(c, attempt, 5000, () =>
+              c.worker!.call({ type: "policy", secrets: values }, 4000),
+            )) as { policyGeneration?: unknown; policyAckRequired?: unknown } | undefined;
+            if (c.capture) {
+              if (!reply || typeof reply.policyAckRequired !== "boolean")
+                throw failure("CAPTURE_POLICY_UNCONFIRMED");
+              if (reply.policyAckRequired) {
+                if (reply.policyGeneration !== c.capturePolicyGeneration + 1)
+                  throw failure("CAPTURE_POLICY_UNCONFIRMED");
+                await c.worker!.drainCapture();
+                await this.phase(c, attempt, 5000, () =>
+                  boundedCapture(
+                    c.capture!.policyTransition({
+                      from: c.capturePolicyGeneration,
+                      to: reply.policyGeneration as number,
+                      acknowledged: true,
+                    }),
+                  ),
+                );
+                await this.phase(c, attempt, 5000, () =>
+                  c.worker!.call(
+                    { type: "policy_ack", policyGeneration: reply.policyGeneration },
+                    4000,
+                  ),
+                );
+                c.capturePolicyGeneration = reply.policyGeneration as number;
+              } else if (reply.policyGeneration !== c.capturePolicyGeneration)
+                throw failure("CAPTURE_POLICY_UNCONFIRMED");
+            }
+          } catch (error) {
+            await this.stop(c, true);
+            throw error;
+          }
           c.policyDigest = revision;
         }
         if (tool === "browser_sequence")
-          return await this.executeSequence(
-            c,
-            attempt,
-            browserSequenceInputSchema.parse(args),
-            options,
+          return published(
+            await this.executeSequence(
+              c,
+              attempt,
+              browserSequenceInputSchema.parse(args),
+              commandOptions,
+            ),
           );
         const mutating = !nativeObservationTools.has(tool);
-        await options.persistAction?.({
+        await commandOptions.persistAction?.({
           execution: "unknown",
           businessOutcome: mutating ? "unknown" : "not_dispatched",
           observation: "unavailable",
@@ -615,17 +1072,28 @@ export class PraxisMcpBrowserEngine {
                 : mutating
                   ? "unverified"
                   : "not_dispatched",
-          observation: "available",
+          observation: response.observationAvailable === false ? "unavailable" : "available",
           content: [],
           masking: c.maskingPartial ? "best_effort_partial" : "best_effort",
         };
+        if (response.observationAvailable === false && response.observationIssue)
+          outcome.observationIssue = response.observationIssue;
         if (response.interaction) outcome.inputObservation = response.interaction;
         if (response.observationId) outcome.observationId = response.observationId;
+        const imageEvidence = finiteImageEvidence(response.imageEvidence);
+        if (imageEvidence) outcome.imageEvidence = imageEvidence;
+        else if (response.content.some((item) => item.type === "image"))
+          outcome.imageEvidence = {
+            state: "withheld",
+            reason: "native_protection_attestation_invalid",
+            recovery: "preserve_gap",
+          };
         // Action truth is durable before independent observation or media IO.
         outcome.content = response.content.filter((v) => v.type === "text");
-        await options.persistAction?.(outcome);
+        await commandOptions.persistAction?.(outcome);
         const media: Array<{ artifactId: string }> = [];
         for (const image of response.content.filter((v) => v.type === "image")) {
+          if (imageEvidence?.state !== "available") continue;
           if (
             !image.data ||
             !["image/png", "image/jpeg", "image/webp"].includes(image.mimeType ?? "")
@@ -644,9 +1112,9 @@ export class PraxisMcpBrowserEngine {
             mode: 0o600,
             flag: "wx",
           });
-          await c.native!.admit({
+          await c.native!.admitStill({
             filename,
-            kind: "screenshot",
+            imageEvidence,
             timestamp: Date.now(),
             label: "page",
             ...response.evidence,
@@ -667,12 +1135,17 @@ export class PraxisMcpBrowserEngine {
               tool: "browser_snapshot",
               args: {},
             });
-            outcome.observation = observation.isError ? "unavailable" : "available";
-            if (!observation.isError)
+            outcome.observation =
+              observation.isError || observation.observationAvailable === false
+                ? "unavailable"
+                : "available";
+            if (!observation.isError && observation.observationAvailable !== false)
               outcome.content = [
                 ...(outcome.content as Content[]),
                 ...observation.content.filter((v) => v.type === "text"),
               ];
+            if (observation.observationAvailable === false && observation.observationIssue)
+              outcome.observationIssue = observation.observationIssue;
             if (observation.observationId) outcome.observationId = observation.observationId;
           } catch (error) {
             outcome.observation = "unavailable";
@@ -695,22 +1168,80 @@ export class PraxisMcpBrowserEngine {
                 : "SCRY_BROWSER_OBSERVATION_UNAVAILABLE";
           }
         }
-        await options.persistAction?.(outcome);
-        return outcome;
+        await commandOptions.persistAction?.(outcome);
+        return published(outcome);
       } catch (error) {
-        if (
-          error instanceof Error &&
-          /ADAPTER_(?:TIMEOUT|LOST|COMMAND_CONCURRENT)|COMMAND_PHASE_EXPIRED/u.test(error.message)
-        )
-          await this.stop(c, true);
+        try {
+          if (
+            error instanceof Error &&
+            /ADAPTER_(?:TIMEOUT|LOST|COMMAND_CONCURRENT)|COMMAND_PHASE_EXPIRED/u.test(error.message)
+          )
+            await this.stop(c, true);
+        } finally {
+          const preserved = contextual(
+            lastAction
+              ? {
+                  ...lastAction,
+                  ...(lastAction.execution === "unknown" &&
+                  lastAction.businessOutcome !== "not_dispatched"
+                    ? { businessOutcome: "unknown" }
+                    : {}),
+                }
+              : // No action checkpoint means this command never reached native
+                // dispatch. Context from an idle denial must not invent an
+                // uncertain effect and quarantine otherwise valid successors.
+                {
+                  execution: "not_dispatched",
+                  businessOutcome: "not_dispatched",
+                  observation: "unavailable",
+                },
+          );
+          if (preserved.scopeDiagnostics && !checkpointFailed) {
+            // Existing claim-bound persistence only; no diagnostic query, IPC,
+            // extra observation, retry budget or dependency request is added.
+            await options
+              .persistAction?.(preserved)
+              .then(() => {
+                c.lastPublishedDenialCursor = c.retired ? c.denials.cursor() : publication;
+              })
+              .catch(() => undefined);
+          }
+        }
         throw error;
       } finally {
+        if (c.captureDenials === captureDenials) delete c.captureDenials;
         c.supervision.finish(c.retired);
         // Ending a local attempt is not an acknowledged custodian transition.
         // Publish idle before the lane can admit a different command sequence.
         if (c.custody && !c.retired) await c.custody.synchronize();
       }
     });
+    // Publication occurs only after CommandLane has completely settled. A tool
+    // catalog, run ID, in-flight checkpoint, or former owner is not capability.
+    let readOnlyImageInspectionSupported = false;
+    try {
+      c.lease?.assertActive();
+      readOnlyImageInspectionSupported =
+        !!c.lease &&
+        !this.#stopping &&
+        !c.retired &&
+        !c.stopping &&
+        c.lane.available &&
+        c.custody?.terminationState === "active" &&
+        c.custody.exitConfirmed === false &&
+        c.worker?.alive === true &&
+        c.worker.supportsReadOnlyImages === true;
+    } catch {
+      /* A revoked/expired lease cannot advertise a recovery capability. */
+    }
+    const recordingAssessment = canonicalRecordingAssessment(
+      result.recordingAssessment ?? c.recordingAssessment,
+    );
+    return {
+      ...result,
+      ...(recordingAssessment ? { recordingAssessment } : {}),
+      readOnlyImageInspectionSupported,
+    };
   }
   private async finish(c: Cell, forFailure: boolean): Promise<Record<string, unknown>> {
     if (c.sealed) return c.sealed;
@@ -720,12 +1251,17 @@ export class PraxisMcpBrowserEngine {
       if (c.launch) await this.stop(c, true);
       c.retired = false;
       delete c.stopping;
+      delete c.escalateStop;
       delete c.evidence;
       delete c.native;
+      delete c.capture;
+      delete c.recordingAssessment;
       delete c.launch;
       delete c.custody;
       delete c.worker;
       delete c.proxy;
+      c.forceStopRequested = false;
+      c.capturePolicyGeneration = 1;
       await this.claim(c);
     }
     const lease = c.lease!,
@@ -765,8 +1301,14 @@ export class PraxisMcpBrowserEngine {
       await c.evidence.stopCapture({
         browserStopped: true,
         recordingDrained: true,
-        recordingComplete: healthy && recovered > 0,
+        recordingComplete:
+          healthy &&
+          recovered.admitted > 0 &&
+          recovered.recordingAssessment?.state === "best_effort_assessed",
       });
+      const recordingAssessment = canonicalRecordingAssessment(recovered.recordingAssessment);
+      if (recordingAssessment) c.recordingAssessment = recordingAssessment;
+      else delete c.recordingAssessment;
     }
     const completion = await c.evidence.seal({
       failureClosure: forFailure,
@@ -785,6 +1327,13 @@ export class PraxisMcpBrowserEngine {
       ownerGeneration: lease.ownerGeneration,
       evidenceState: completion.state,
       ...(completion.issue ? { evidenceIssue: completion.issue } : {}),
+      ...(canonicalRecordingAssessment(completion.recordingAssessment ?? c.recordingAssessment)
+        ? {
+            recordingAssessment: canonicalRecordingAssessment(
+              completion.recordingAssessment ?? c.recordingAssessment,
+            ),
+          }
+        : {}),
     };
     // Keep only a small idempotent tombstone. A completed Run must not retain
     // child transports, browser channels, recorder stores or secret policy state.
@@ -794,9 +1343,11 @@ export class PraxisMcpBrowserEngine {
     delete c.proxy;
     delete c.evidence;
     delete c.native;
+    delete c.capture;
     delete c.lease;
     delete c.opening;
     delete c.stopping;
+    delete c.escalateStop;
     delete c.policyDigest;
     return c.sealed;
   }

@@ -74,6 +74,7 @@ export class LegacyEvidenceReader<T> {
     const partials = names.filter((name) => name.includes(".partial-"));
     return {
       events,
+      eventOwnerGenerations: [],
       chunks: files.length,
       complete: !partials.length,
       gaps: partials.map((name) => ({ type: "partial_chunk", name })),

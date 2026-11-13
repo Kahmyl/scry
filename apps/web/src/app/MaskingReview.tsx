@@ -1,4 +1,19 @@
 import type { MaskingDiagnostic } from "@scry/contracts";
+const reasonLabels = new Map<string, string>([
+  ["installation_pending", "Masking was still being installed"],
+  ["installation_failed", "Masking could not be installed"],
+  ["maintenance_timeout", "A masking refresh did not finish in time"],
+  ["maintenance_failed", "A masking refresh could not be confirmed"],
+  ["dialog_refresh_deferred", "Masking refresh paused while a dialog was open"],
+  ["refresh_confirmed", "Masking refresh was confirmed"],
+  ["page_closed", "The page closed"],
+]);
+function intervalTime(at: number, recordingStart?: number) {
+  if (recordingStart === undefined || !Number.isFinite(recordingStart))
+    return new Date(at).toLocaleTimeString();
+  const seconds = Math.max(0, Math.floor((at - recordingStart) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 export function maskingIntervals(events: MaskingDiagnostic[]) {
   const open = new Map<string, { pageId: string; start: number; reason: string }>(),
     intervals: Array<{
@@ -33,24 +48,50 @@ export function maskingIntervals(events: MaskingDiagnostic[]) {
 export function MaskingReview({
   diagnostics,
   onSeek,
+  recordingStart,
+  canSeek = true,
 }: {
   diagnostics: { events: MaskingDiagnostic[]; truncated: boolean };
   onSeek?: ((timestamp: number) => void) | undefined;
+  recordingStart?: number | undefined;
+  canSeek?: boolean | undefined;
 }) {
+  const intervals = maskingIntervals(diagnostics.events);
   return (
     <details>
       <summary>Masking review intervals</summary>
+      {intervals.length ? (
+        <p>
+          Automatic masking could not be confirmed during these parts of the evidence. Review these
+          parts before sharing.
+        </p>
+      ) : (
+        <p>
+          No specific masking review intervals were recorded. Review the evidence before sharing.
+        </p>
+      )}
       <p>
-        These intervals describe unconfirmed maintenance or installation, not proof of disclosed
-        information. Recovery does not remove earlier limitations.
+        An interval does not establish that information was disclosed. A confirmed recovery or an
+        empty history does not certify the rest of the recording or remove an earlier limitation.
       </p>
+      {onSeek && !canSeek && (
+        <p>Interval review buttons are available when the recording has loaded.</p>
+      )}
       <ol>
-        {maskingIntervals(diagnostics.events).map((i, n) => (
+        {intervals.map((i, n) => (
           <li key={n}>
-            {new Date(i.start).toISOString()} —{" "}
-            {i.end ? new Date(i.end).toISOString() : "end not confirmed"} · Page{" "}
-            {i.pageId.slice(0, 8)} · {i.reason.replaceAll("_", " ")} · {i.resolution}
-            {onSeek && <button onClick={() => onSeek(i.start)}>Review this interval</button>}
+            {intervalTime(i.start, recordingStart)}–
+            {i.end ? intervalTime(i.end, recordingStart) : "end not confirmed"} ·{" "}
+            {reasonLabels.get(i.reason) ?? "Masking status could not be confirmed"} · {i.resolution}
+            {onSeek && (
+              <button disabled={!canSeek} onClick={() => onSeek(i.start)}>
+                Review this interval
+              </button>
+            )}
+            <details>
+              <summary>Interval details</summary>
+              Page {i.pageId.slice(0, 8)} · {new Date(i.start).toISOString()}
+            </details>
           </li>
         ))}
       </ol>

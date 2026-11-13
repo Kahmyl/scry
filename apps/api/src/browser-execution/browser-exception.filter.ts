@@ -6,6 +6,7 @@ import {
   HttpStatus,
 } from "@nestjs/common";
 import { publicBrowserErrorCode } from "@scry/veil";
+import { errorFeedback } from "@scry/contracts";
 
 type HttpReply = { status(code: number): HttpReply; send(body: unknown): void };
 
@@ -14,18 +15,33 @@ export class BrowserExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const reply = host.switchToHttp().getResponse<HttpReply>();
     if (exception instanceof HttpException) {
-      reply.status(exception.getStatus()).send(exception.getResponse());
+      const existing = exception.getResponse();
+      const envelope =
+        typeof existing === "object" && existing !== null
+          ? (existing as Record<string, unknown>)
+          : { message: existing };
+      const code = typeof envelope.code === "string" ? envelope.code : envelope.message;
+      // Preserve the established HTTP validation/error envelope. The added
+      // assessment accepts finite codes only, never arbitrary diagnostic copy.
+      reply.status(exception.getStatus()).send({ ...envelope, interaction: errorFeedback(code) });
       return;
     }
     const code = publicBrowserErrorCode(exception);
     if (!code) {
-      reply
-        .status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .send({ statusCode: 500, message: "Internal server error" });
+      reply.status(HttpStatus.INTERNAL_SERVER_ERROR).send({
+        statusCode: 500,
+        message: "Internal server error",
+        interaction: errorFeedback(undefined),
+      });
       return;
     }
     const status = browserErrorStatus(code);
-    reply.status(status).send({ code, status, safeActions: browserSafeActions(code) });
+    reply.status(status).send({
+      code,
+      status,
+      safeActions: browserSafeActions(code),
+      interaction: errorFeedback(code),
+    });
   }
 }
 

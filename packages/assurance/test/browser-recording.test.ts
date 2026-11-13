@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { describe, expect, it } from "vitest";
 import { SanitizedBrowserRecorder, BrowserReplayRenderer } from "@scry/praxis";
 import { ChronicleEvidenceService, readNativeEvidence, readNativeMedia } from "@scry/chronicle";
-import { EvidenceCipher, nativeProtectionScript } from "@scry/veil";
+import { EvidenceCipher, nativeProtectionScript, createNativeAdapterProtector } from "@scry/veil";
 import { recordingAdmission } from "./fixtures/evidence-admission.js";
 
 const browserTest = process.env.SCRY_BROWSER_E2E === "1" ? it : it.skip;
@@ -30,6 +30,7 @@ describe("native browser evidence", () => {
         maxSessionBytes: 1024 * 1024,
       });
       const native = await evidence.createNativeRecording();
+      const nativeProtection = createNativeAdapterProtector({ PASSWORD: "fixture-access-secret" });
       const browser = await chromium.launch({
         headless: true,
         ...(process.env.SCRY_BROWSER_CHANNEL ? { channel: process.env.SCRY_BROWSER_CHANNEL } : {}),
@@ -39,7 +40,8 @@ describe("native browser evidence", () => {
         const page = await context.newPage();
         const recorder = new SanitizedBrowserRecorder({
           native,
-          protectionScript: nativeProtectionScript(["fixture-access-secret"]),
+          protection: nativeProtection,
+          recoverCaptures: () => evidence.recoverNativeCaptures(native),
         });
         await recorder.start(context);
         expect(
@@ -209,6 +211,7 @@ describe("native browser evidence", () => {
           "best effort",
         );
       } finally {
+        nativeProtection.dispose();
         await browser.close();
       }
     },

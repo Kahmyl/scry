@@ -1,5 +1,5 @@
-// Optional masking maintenance must never become browser-command admission.
-// At most one unfinished task per page; deadlines do not enqueue replacements.
+// At most one unfinished task per page in this lane; deadlines do not enqueue
+// replacements. The caller separately owns fact admission and paint warnings.
 export class BestEffortTasks {
   constructor(warn, budgetMs = 200, recovered = () => {}) {
     this.warn = warn;
@@ -10,7 +10,7 @@ export class BestEffortTasks {
   forget(key) {
     this.pending.delete(key);
   }
-  async run(entries) {
+  async run(entries, budgetMs = this.budgetMs) {
     const tasks = entries.map(([key, fn]) => {
       if (!this.pending.has(key)) {
         const task = Promise.resolve()
@@ -33,7 +33,7 @@ export class BestEffortTasks {
             for (const [key] of entries)
               if (this.pending.has(key)) this.warn("maintenance_timeout", key);
             resolve();
-          }, this.budgetMs);
+          }, budgetMs);
         }),
       ]);
     } finally {

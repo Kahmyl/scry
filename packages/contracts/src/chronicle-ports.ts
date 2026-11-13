@@ -1,4 +1,11 @@
 import type { Buffer } from "node:buffer";
+import type {
+  NativeCaptureKind,
+  NativeCapturePort,
+  NativeCaptureRecovery,
+  NativeImageEvidence,
+  RecordingAssessment,
+} from "./native-privacy.js";
 
 export interface EvidenceChunkReceipt {
   streamId: string;
@@ -130,10 +137,14 @@ export interface ChronicleNativeRecordingPort {
   recordMasking?(event: import("./masking-diagnostics.js").MaskingDiagnostic): void;
   maskingUnavailable(): void;
   readonly directory: string;
-  reserveCapture?(): Promise<string>;
-  admit(input: {
+  reserveCaptureV2(input: {
+    kind: NativeCaptureKind;
+    policyGeneration: number;
+  }): Promise<NativeCapturePort>;
+  /** Video admission is Chronicle-private and requires a sealed reservation. */
+  admitStill(input: {
     filename: string;
-    kind: NativeMediaReceipt["kind"];
+    imageEvidence: Extract<NativeImageEvidence, { state: "available" }>;
     timestamp: number;
     label: string;
     title?: string;
@@ -175,6 +186,7 @@ interface EvidenceCompletionFacts {
   chunkCount: number;
   totalBytes: number;
   videoObjectKey?: string;
+  recordingAssessment?: RecordingAssessment;
 }
 export type EvidenceCompletion = EvidenceCompletionFacts &
   (
@@ -220,7 +232,7 @@ export interface ChronicleEvidenceSessionPort {
     recordingDrained: true;
     recordingComplete?: boolean;
   }): Promise<void>;
-  recoverNativeCaptures?(native: ChronicleNativeRecordingPort): Promise<number>;
+  recoverNativeCaptures(native: ChronicleNativeRecordingPort): Promise<NativeCaptureRecovery>;
   prepareClosure(): Promise<void>;
   seal(options: ChronicleSealOptions): Promise<EvidenceCompletion>;
 }

@@ -24,14 +24,11 @@ import {
 } from "./saved-report-tools.js";
 import { reportingInstructions } from "./reporting-guidance.js";
 import { customerWorkflowInstructions } from "./customer-workflow.js";
+import { nativeWorkflowGuidance } from "./native-workflow.js";
 import { registerAgentWorkflowTools } from "./agent-workflow-tools.js";
 import { registerBrowserSequence } from "./browser-sequence.js";
 import { registerTestResourceTools, testResourceInstructions } from "./test-resource-tools.js";
-import {
-  nativeBrowserInstructions,
-  nativeCommandResult,
-  registerNativeBrowserTools,
-} from "./native-browser-tools.js";
+import { nativeCommandResult, registerNativeBrowserTools } from "./native-browser-tools.js";
 import {
   idempotentDurableWrite,
   localFactualRead,
@@ -48,7 +45,9 @@ const INSTRUCTIONS =
 export function createBrowserMcpServer(client = new BrowserApiClient()) {
   const native = resolveBrowserRuntime(process.env) === "playwright_mcp";
   const navigation = reportNavigation();
-  const workflowGuidance = `${customerWorkflowInstructions}\n\n${native ? nativeBrowserInstructions : INSTRUCTIONS}\n\n${testResourceInstructions}\n\n${reportingInstructions}`;
+  const workflowGuidance = native
+    ? nativeWorkflowGuidance
+    : `${customerWorkflowInstructions}\n\n${INSTRUCTIONS}\n\n${testResourceInstructions}\n\n${reportingInstructions}`;
   const server = new McpServer(
     { name: "scry-browser", version: "baseline" },
     {

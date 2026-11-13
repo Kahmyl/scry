@@ -3,6 +3,7 @@ import {
   customerReport,
   customerRun,
   customerMission,
+  runRecoveryStatus,
 } from "../src/browser-execution/customer-reporting.js";
 import { BrowserDashboardController } from "../src/browser-execution/controllers/browser-dashboard.controller.js";
 import type { Principal } from "../src/auth/auth.types.js";
@@ -52,6 +53,29 @@ const user = (
 const service: Principal = { kind: "service", credentialKind: "service", subject: "scry-service" };
 
 describe("customer application reporting boundary", () => {
+  it("derives release guidance from actual release facts without promoting an attempt to an application verdict", () => {
+    const facts = {
+      id: "run",
+      state: "failed",
+      browserSessionState: "completed",
+      ownerReleased: true,
+      evidenceSealed: true,
+      pendingCommandCount: 0,
+    };
+    expect(runRecoveryStatus(facts)).toMatchObject({
+      browserReleased: true,
+      interaction: {
+        state: "release_confirmed",
+        applicationConclusion: "not_determined",
+        next: { actor: "none" },
+      },
+    });
+    expect(runRecoveryStatus({ ...facts, ownerReleased: false })).toMatchObject({
+      browserReleased: false,
+      interaction: { state: "release_pending", next: { tool: "get_run_status" } },
+    });
+    expect(runRecoveryStatus({ ...facts, pendingCommandCount: 1 }).browserReleased).toBe(false);
+  });
   it("keeps actual app checks including untested scope but strips unrelated diagnostics", () => {
     const result = customerReport(report);
     expect(result.summary).toBe(report.summary);

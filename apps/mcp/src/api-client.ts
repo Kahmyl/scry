@@ -1,3 +1,5 @@
+import { canonicalFeedback, errorFeedback, type Feedback } from "@scry/contracts";
+
 export type BrowserAgentIdentity = Readonly<{
   provider: string;
   model?: string;
@@ -10,8 +12,11 @@ export class BrowserApiError extends Error {
     readonly code: string,
     readonly status: number,
     readonly safeActions: string[] = [],
+    readonly interaction: Feedback = errorFeedback(code),
   ) {
-    super(`Browser API request rejected: ${JSON.stringify({ code, status, safeActions })}`);
+    // The SDK transports thrown tool errors as text. Keep that error payload
+    // finite and machine-readable without expanding any strict output schema.
+    super(JSON.stringify({ message: interaction.summary, interaction }));
     this.name = "BrowserApiError";
   }
 }
@@ -72,7 +77,14 @@ export class BrowserApiClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    return (await this.response(path, init)).json() as Promise<T>;
+    try {
+      return (await (await this.response(path, init)).json()) as T;
+    } catch (error) {
+      if (error instanceof BrowserApiError) throw error;
+      // Transport and JSON errors can contain provider URLs or credentials.
+      // An absent reply never establishes whether an application write happened.
+      throw new BrowserApiError("SCRY_BROWSER_API_UNAVAILABLE", 0);
+    }
   }
 
   private async response(path: string, init?: RequestInit): Promise<Response> {
@@ -101,7 +113,10 @@ export class BrowserApiClient {
         stringField(envelope, "code") ??
         (typeof envelope?.message === "string" ? envelope.message : `HTTP_${response.status}`);
       const safeActions = stringArrayField(detail, "safeActions") ?? [];
-      throw new BrowserApiError(code, response.status, safeActions);
+      // Canonical validation admits only finite service-owned copy and next actions,
+      // never arbitrary provider messages, tokens or unrecognized recovery hints.
+      const interaction = canonicalFeedback(detail?.interaction) ?? errorFeedback(code);
+      throw new BrowserApiError(code, response.status, safeActions, interaction);
     }
     return response;
   }

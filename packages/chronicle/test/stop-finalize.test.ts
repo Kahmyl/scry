@@ -98,14 +98,15 @@ describe("stopped capture is independent of stored artifact availability", () =>
     await rename(f.filename, `${f.filename}.fixture-held`);
     const native = {
       directory: path.join(f.scope.root, "native"),
-      admit: vi.fn(),
+      admitStill: vi.fn(),
+      reserveCaptureV2: vi.fn(),
       maskingUnavailable: vi.fn(),
       recordError: vi.fn(),
       flush: () => f.recording.flush(),
       abort: () => f.recording.abort(),
     };
-    expect(await f.session.recoverNativeCaptures(native)).toBe(0);
-    expect(native.admit).not.toHaveBeenCalled();
+    expect(await f.session.recoverNativeCaptures(native)).toEqual({ admitted: 0 });
+    expect(native.admitStill).not.toHaveBeenCalled();
     expect(f.stream.captureStoppedAt).toBeNull();
     await f.session.stopCapture({ ...stopped, recordingComplete: false });
     expect(await f.session.seal(seal)).toMatchObject({
@@ -119,7 +120,8 @@ describe("stopped capture is independent of stored artifact availability", () =>
       const f = await activeCapture();
       const native = {
         directory: path.join(f.scope.root, "native"),
-        admit: vi.fn(),
+        admitStill: vi.fn(),
+        reserveCaptureV2: vi.fn(),
         maskingUnavailable: vi.fn(),
         recordError: vi.fn(),
         flush: () => f.recording.flush(),
@@ -127,14 +129,15 @@ describe("stopped capture is independent of stored artifact availability", () =>
       };
       vi.spyOn(AdmittedEvidenceReader.prototype, "verify").mockRejectedValueOnce(new Error(code));
       await expect(f.session.recoverNativeCaptures(native)).rejects.toThrow(code);
-      expect(native.admit).not.toHaveBeenCalled();
+      expect(native.admitStill).not.toHaveBeenCalled();
     },
   );
   it("does not report no native recovery after unavailable content loses ownership", async () => {
     const f = await activeCapture();
     const native = {
       directory: path.join(f.scope.root, "native"),
-      admit: vi.fn(),
+      admitStill: vi.fn(),
+      reserveCaptureV2: vi.fn(),
       maskingUnavailable: vi.fn(),
       recordError: vi.fn(),
       flush: () => f.recording.flush(),
@@ -145,7 +148,7 @@ describe("stopped capture is independent of stored artifact availability", () =>
       throw new EvidenceArtifactFailure("object_unavailable");
     });
     await expect(f.session.recoverNativeCaptures(native)).rejects.toThrow("OWNER_FENCED");
-    expect(native.admit).not.toHaveBeenCalled();
+    expect(native.admitStill).not.toHaveBeenCalled();
   });
   it.each([
     "database_unavailable",

@@ -7,6 +7,9 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import Ajv from "ajv/dist/2020.js";
 import { BestEffortTasks } from "./best-effort-tasks.mjs";
+import { installCaptureBinding } from "./capture-binding.mjs";
+import { createCaptureProducer } from "./capture-producer.mjs";
+import { refreshNativeProtection } from "./protection-refresh.mjs";
 import { MaskingDiagnostics } from "./masking-diagnostics.mjs";
 import { displayLayout } from "./display-layout.mjs";
 import { NativeInteractions, privateClipboard } from "./native-interactions.mjs";
@@ -23,6 +26,25 @@ import { DownloadTracker } from "./downloads.mjs";
 export function startBrowserAdapter(makeProtector) {
   let browser, context, client, upstream, protection, output, closing, validators, interactions;
   let handling = false;
+  let producer, captureEpoch;
+  const pageIds = new WeakMap(),
+    scriptRevisions = new WeakMap(),
+    installedSessions = new WeakSet();
+  let nextPageId = 0;
+  const pageId = (page) => {
+    if (!pageIds.has(page)) pageIds.set(page, nextPageId++);
+    return pageIds.get(page);
+  };
+  const sendCapture = (event) =>
+    new Promise((resolve, reject) => {
+      if (!process.connected) return reject(Error("NATIVE_CAPTURE_SEND_UNCONFIRMED"));
+      process.send(event, (error) =>
+        error ? reject(Error("NATIVE_CAPTURE_SEND_UNCONFIRMED")) : resolve(),
+      );
+    });
+  const emitGaps = () => {
+    for (const reason of protection?.drainGaps() ?? []) producer?.gap(reason);
+  };
   let plan;
   let observation;
   let capabilitiesEnabled = false,
@@ -37,11 +59,8 @@ export function startBrowserAdapter(makeProtector) {
   const dialogs = new Map();
   const masking = new MaskingDiagnostics((event) => process.send?.({ type: "masking", event }));
   const maskingWarning = (page) => masking.degrade(page, "installation_failed");
-  const maskTasks = new BestEffortTasks(
-    (reason, page) => masking.degrade(page, reason),
-    200,
-    (page) => masking.recovered(page),
-  );
+  const maskTasks = new BestEffortTasks((reason, page) => masking.degrade(page, reason), 200);
+  const pixelTasks = new BestEffortTasks((reason, page) => masking.degrade(page, reason), 200);
   async function install(page) {
     masking.degrade(page, "installation_pending");
     page.on("dialog", (dialog) => dialogs.set(dialog, page));
@@ -52,12 +71,14 @@ export function startBrowserAdapter(makeProtector) {
     page.once("close", () => {
       sessions.delete(page);
       maskTasks.forget(page);
+      pixelTasks.forget(page);
       masking.forget(page);
       for (const [dialog, owner] of dialogs) if (owner === page) dialogs.delete(dialog);
     });
     page.once("crash", () => {
       sessions.delete(page);
       maskTasks.forget(page);
+      pixelTasks.forget(page);
       masking.forget(page);
       for (const [dialog, owner] of dialogs) if (owner === page) dialogs.delete(dialog);
       process.send?.({ type: "browserEvent", event: "page_crashed" });
@@ -82,46 +103,69 @@ export function startBrowserAdapter(makeProtector) {
         process.send?.({ type: "browserEvent", event: "viewport_alignment_unavailable" });
     }
     await session.send("Page.enable");
+    await installCaptureBinding(session, protection, (reason) => producer?.gap(reason));
+    const source = protection.script,
+      revision = protection.scriptRevision;
     await session.send("Page.addScriptToEvaluateOnNewDocument", {
-      source: protection.script,
+      source,
       worldName: "scry-native-protection",
       runImmediately: true,
     });
+    installedSessions.add(session);
+    scriptRevisions.set(session, revision);
+    await syncDocuments();
   }
-  async function maskReady() {
-    // JavaScript execution is paused by native dialogs. The installed overlay
-    // continues to be best effort; a refresh must never block dialog handling.
-    const blocked = new Set(dialogs.values());
-    for (const page of blocked) masking.degrade(page, "dialog_refresh_deferred");
-    await maskTasks.run(
-      [...sessions]
-        .filter(([page]) => !page.isClosed() && !blocked.has(page))
-        .map(([page, session], index) => [
-          page,
-          async () => {
-            process.send?.({ type: "phase", phase: "mask_frame_tree:page" + index });
-            const { frameTree } = await session.send("Page.getFrameTree");
-            process.send?.({ type: "phase", phase: "mask_world" });
-            const world = await session.send("Page.createIsolatedWorld", {
-              frameId: frameTree.frame.id,
+  async function syncDocuments() {
+    await Promise.all(
+      [...sessions].map(async ([page, session]) => {
+        if (!installedSessions.has(session) || page.isClosed()) return;
+        for (const update of protection.documentUpdatesSince(scriptRevisions.get(session) ?? 0)) {
+          try {
+            await session.send("Page.addScriptToEvaluateOnNewDocument", {
+              source: update.script,
               worldName: "scry-native-protection",
-              grantUniveralAccess: false,
+              runImmediately: true,
             });
-            process.send?.({ type: "phase", phase: "mask_refresh" });
-            const refreshed = await session.send("Runtime.evaluate", {
-              contextId: world.executionContextId,
-              expression:
-                "new Promise((resolve,reject)=>{if(typeof globalThis.__scryNativeRefresh!=='function'){reject(new Error('mask_not_installed'));return;}globalThis.__scryNativeRefresh();requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(true)));setTimeout(()=>resolve(true),100);})",
-              awaitPromise: true,
-            });
-            if (refreshed.exceptionDetails || refreshed.result?.value !== true)
-              throw Error("MASK_REFRESH_UNCONFIRMED");
-          },
-        ]),
+            scriptRevisions.set(session, update.revision);
+          } catch {
+            maskingWarning(page);
+            break;
+          }
+        }
+      }),
     );
   }
-  async function normalize(result) {
+  async function maskReady(options = {}) {
+    await syncDocuments();
+    const alive = context.pages().filter((page) => !page.isClosed()),
+      selected =
+        options.selectedPage ??
+        interactions?.cachedActivePage() ??
+        (alive.length === 1 ? alive[0] : null);
+    const read = await refreshNativeProtection({
+      protection,
+      sessions,
+      pages: context.pages(),
+      pageId,
+      selectedPage: selected,
+      finalReadChallenge: options.challenge,
+      dialogs,
+      maskTasks,
+      pixelTasks,
+      recovered: (page) => masking.recovered(page),
+      degrade: (page, reason) => masking.degrade(page, reason),
+      phase: (phase) => process.send?.({ type: "phase", phase }),
+    });
+    await syncDocuments();
+    emitGaps();
+    if (options.record !== false && protection.captureSample().readId === read) producer?.sample();
+    return read;
+  }
+  async function normalize(result, tool) {
     const content = [];
+    protection.prelearn(
+      (result.content ?? []).filter((item) => item.type === "text").map((item) => item.text),
+    );
     for (const item of result.content ?? []) {
       if (item.type !== "text") {
         if (item.type === "image") content.push(item);
@@ -159,12 +203,38 @@ export function startBrowserAdapter(makeProtector) {
           /^.*New console entries:.*$/gm,
           "Additional console messages omitted from this result.",
         );
-      content.push({ type: "text", text: protection.clean(text) });
+      content.push({ type: "text", text });
     }
-    return { content, isError: result.isError ?? false };
+    return {
+      content: (() => {
+        const snapshot =
+          tool === "browser_snapshot" ||
+          content.some(
+            (item) =>
+              item.type === "text" &&
+              /Snapshot:\s*\n|```yaml|Page [Ss]napshot:/u.test(item.text ?? ""),
+          );
+        const cleaned = protection.cleanTextContent(content, snapshot);
+        const image = protection.imageEvidence();
+        return image.state === "withheld"
+          ? cleaned.filter((item) => item.type !== "image")
+          : cleaned;
+      })(),
+      ...((result.content ?? []).some((item) => item.type === "image")
+        ? { imageEvidence: protection.imageEvidence() }
+        : {}),
+      isError: result.isError ?? false,
+      observationAvailable: protection.observationAvailable(),
+      ...(protection.observationAvailable()
+        ? {}
+        : { observationIssue: protection.observationIssue() }),
+      diagnosticDetailAllowed: protection.diagnosticDetailAllowed(),
+    };
   }
   async function close() {
     return (closing ??= (async () => {
+      producer?.abandon();
+      protection?.dispose();
       await plan?.binding.dispose().catch(() => {});
       plan = undefined;
       await observation?.guard.dispose().catch(() => {});
@@ -191,10 +261,17 @@ export function startBrowserAdapter(makeProtector) {
       return;
     }
     handling = true;
-    let pendingObservation;
+    let pendingObservation, imageCaptureToken;
     try {
       if (message.type === "init") {
-        protection = makeProtector(message.secrets);
+        captureEpoch = message.captureEpoch;
+        protection = makeProtector(message.secrets, captureEpoch ? { captureEpoch } : {});
+        if (captureEpoch)
+          producer = createCaptureProducer({
+            epoch: captureEpoch,
+            send: sendCapture,
+            sample: () => protection.captureSample(),
+          });
         output = message.output;
         capabilitiesEnabled = message.capabilitiesEnabled === true;
         downloadDirectory = message.downloadDirectory;
@@ -222,14 +299,6 @@ export function startBrowserAdapter(makeProtector) {
           acceptDownloads: capabilitiesEnabled,
         });
         context.on("page", (page) => void install(page).catch(() => maskingWarning(page)));
-        context.on("request", (r) =>
-          process.send?.({
-            type: "network",
-            method: r.method(),
-            origin: new URL(r.url()).origin,
-            resource: r.resourceType(),
-          }),
-        );
         upstream = await createConnection(
           {
             browser: { browserName: "chromium" },
@@ -257,22 +326,34 @@ export function startBrowserAdapter(makeProtector) {
         const ajv = new Ajv({ strict: false, useDefaults: true });
         validators = new Map(definitions.map((t) => [t.name, ajv.compile(t.inputSchema)]));
         process.send({ id: message.id, ok: true, data: definitions });
+      } else if (message.type === "close_capture_producer") {
+        if (!producer) throw Error("NATIVE_CAPTURE_PRODUCER_UNCONFIRMED");
+        const data = await producer.close(message, async (challenge) => {
+          await maskReady({ challenge, record: false });
+          emitGaps();
+        });
+        process.send({ id: message.id, ok: true, data });
+      } else if (message.type === "policy_ack") {
+        if (message.policyGeneration !== protection.policyGeneration)
+          throw Error("NATIVE_POLICY_ACK_UNCONFIRMED");
+        producer?.resumeSamples();
+        process.send({
+          id: message.id,
+          ok: true,
+          data: { policyGeneration: protection.policyGeneration },
+        });
       } else if (message.type === "policy") {
-        protection = makeProtector(message.secrets);
-        // The isolated-world policy extends existing targets without replacing UI.
-        // One revision is installed only when the bound protected values change.
-        await Promise.all(
-          [...sessions].map(([page, session]) =>
-            session
-              .send("Page.addScriptToEvaluateOnNewDocument", {
-                source: protection.script,
-                worldName: "scry-native-protection",
-                runImmediately: true,
-              })
-              .catch(() => maskingWarning(page)),
-          ),
-        );
-        process.send({ id: message.id, ok: true });
+        producer?.pauseSamples();
+        const previous = protection.policyGeneration;
+        protection.updateSecrets(message.secrets);
+        await syncDocuments();
+        const changed = previous !== protection.policyGeneration;
+        if (!changed) producer?.resumeSamples();
+        process.send({
+          id: message.id,
+          ok: true,
+          data: { policyGeneration: protection.policyGeneration, policyAckRequired: changed },
+        });
       } else if (message.type === "call" && Object.hasOwn(nativeCapabilitySchemas, message.tool)) {
         if (!capabilitiesEnabled || plan) throw Error("INVALID_TOOL_ARGUMENTS");
         const input = nativeCapabilitySchemas[message.tool].parse(message.args);
@@ -392,6 +473,12 @@ export function startBrowserAdapter(makeProtector) {
         if (tool === "browser_edit_text") editBrowserTextSchema.parse(args);
         const evidence = {};
         if (tool === "browser_take_screenshot") {
+          const alive = context.pages().filter((page) => !page.isClosed()),
+            selected =
+              interactions.cachedActivePage() ?? (alive.length === 1 ? alive[0] : undefined);
+          imageCaptureToken = protection.beginImageCapture(selected ? pageId(selected) : undefined);
+        }
+        if (tool === "browser_take_screenshot") {
           screenshotPresentationSchema.parse(args);
           for (const key of ["evidenceTitle", "evidenceDescription"]) {
             if (args[key] !== undefined)
@@ -443,6 +530,7 @@ export function startBrowserAdapter(makeProtector) {
           tool === "browser_edit_text"
             ? await interactions.edit(args)
             : await client.callTool({ name: tool, arguments: args });
+        if (tool === "browser_tabs" && !result.isError) interactions.noteTabState(result);
         if (inPlan) {
           await plan.binding.after(message.index);
           plan.next++;
@@ -452,11 +540,13 @@ export function startBrowserAdapter(makeProtector) {
           for (const [dialog, owner] of dialogs)
             if (owner === page || owner.isClosed()) dialogs.delete(dialog);
         }
-        await maskReady();
+        await maskReady({ selectedPage: snapshotPage });
         process.send?.({ type: "phase", phase: "normalize:" + tool });
-        const normalized = await normalize(result);
+        const normalized = await normalize(result, tool);
+        emitGaps();
+        await syncDocuments();
         if (snapshotGuard) {
-          if (!result.isError && (await snapshotGuard.valid())) {
+          if (!result.isError && normalized.observationAvailable && (await snapshotGuard.valid())) {
             observation = { id: randomUUID(), guard: snapshotGuard, page: snapshotPage };
             normalized.observationId = observation.id;
           } else await snapshotGuard.dispose();
@@ -490,6 +580,7 @@ export function startBrowserAdapter(makeProtector) {
           }[error?.message] ?? "ADAPTER_CALL_FAILED",
       });
     } finally {
+      if (imageCaptureToken !== undefined) protection?.endImageCapture(imageCaptureToken);
       handling = false;
     }
   });

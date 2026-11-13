@@ -18,11 +18,41 @@ export interface BrowserAuthoritySnapshot {
   owner: RenewableAuthority;
   command: SupervisedCommand;
 }
+/** Private finite physical capture fact. No file capability or diagnostic crosses IPC. */
+export type NativeRecorderStopReceipt =
+  | {
+      readonly coverage: "complete" | "partial";
+      readonly started: number;
+      readonly ended: number;
+      readonly timingOrigin: "native_capture" | "recorder_start";
+    }
+  | { readonly coverage: "unavailable"; readonly reason: "capture_final_unconfirmed" };
+
+export function nativeRecorderStopReceipt(value: unknown): value is NativeRecorderStopReceipt {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  if (input.coverage === "unavailable")
+    return Object.keys(input).length === 2 && input.reason === "capture_final_unconfirmed";
+  return (
+    Object.keys(input).length === 4 &&
+    (input.coverage === "complete" || input.coverage === "partial") &&
+    Number.isSafeInteger(input.started) &&
+    (input.started as number) >= 0 &&
+    Number.isSafeInteger(input.ended) &&
+    (input.ended as number) >= (input.started as number) &&
+    (input.timingOrigin === "native_capture" || input.timingOrigin === "recorder_start")
+  );
+}
 export interface SupervisedBrowserOptions extends OwnedBrowserOptions {
   sampleAuthority(): BrowserAuthoritySnapshot;
   onUnconfirmedStop?: () => void;
 }
-const failure = () => new Error("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED");
+const failure = () =>
+  Object.assign(new Error("SCRY_BROWSER_PROCESS_TERMINATION_UNCONFIRMED"), {
+    code: "RECORDER_RETIREMENT_UNCONFIRMED",
+    physicalRetirement: "unconfirmed" as const,
+    mayOwnResources: true as const,
+  });
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (error: Error) => void;
   const promise = new Promise<T>((yes, no) => {
@@ -81,6 +111,9 @@ export class SupervisedBrowser {
   readonly #receipt = deferred<BrowserTerminationReceipt>();
   readonly #exit = deferred<void>();
   readonly #setup = deferred<void>();
+  #captureStop:
+    | { completion: ReturnType<typeof deferred<NativeRecorderStopReceipt>>; timer: NodeJS.Timeout }
+    | undefined;
   #browser: Pick<Browser, "isConnected" | "close"> | undefined;
   #legacyBrowser: Browser | undefined;
   #endpoint: string | undefined;
@@ -177,7 +210,10 @@ export class SupervisedBrowser {
       return owned;
     } catch {
       await owned.terminate();
-      throw new Error("SCRY_BROWSER_PROCESS_CONNECT_FAILED");
+      throw Object.assign(new Error("SCRY_BROWSER_PROCESS_CONNECT_FAILED"), {
+        physicalRetirement: "confirmed" as const,
+        mayOwnResources: false as const,
+      });
     } finally {
       clearTimeout(timeout);
     }
@@ -253,6 +289,10 @@ export class SupervisedBrowser {
     this.#ready.reject(failure());
     this.#setup.reject(failure());
     this.#receipt.reject(failure());
+    if (this.#captureStop) {
+      clearTimeout(this.#captureStop.timer);
+      this.#captureStop.completion.reject(failure());
+    }
     this.rejectBarrier();
     // This is the actual owned helper capability, not a guessed native PID.
     // Its death is containment, not a fabricated native-exit confirmation.
@@ -298,6 +338,14 @@ export class SupervisedBrowser {
       } catch {
         void this.terminate().catch(() => undefined);
       }
+    } else if (
+      input.kind === "capture_stopped" &&
+      this.#captureStop &&
+      input.requestId === 1 &&
+      nativeRecorderStopReceipt(input.receipt)
+    ) {
+      clearTimeout(this.#captureStop.timer);
+      this.#captureStop.completion.resolve(Object.freeze({ ...input.receipt }));
     } else if (input.kind === "setup_completed" && this.#readyReceived) {
       this.#setup.resolve();
     } else if (input.kind === "accepted" && acknowledgment(input.acknowledgment)) {
@@ -350,6 +398,12 @@ export class SupervisedBrowser {
       // still resolving before its asynchronous disconnect event is delivered.
       this.#state = "terminating";
       this.#receipt.resolve(Object.freeze({ exitConfirmed: true, forced: input.forced }));
+      if (this.#captureStop) {
+        clearTimeout(this.#captureStop.timer);
+        this.#captureStop.completion.resolve(
+          Object.freeze({ coverage: "unavailable", reason: "capture_final_unconfirmed" }),
+        );
+      }
       this.#ready.reject(new Error("SCRY_BROWSER_PROCESS_LAUNCH_FAILED"));
       this.#setup.reject(new Error("SCRY_BROWSER_PROCESS_LAUNCH_FAILED"));
       // The dispatch was refused, but custody is positively stopped. Do not
@@ -411,12 +465,24 @@ export class SupervisedBrowser {
     this.send({ kind: "setup_complete" });
     await this.#setup.promise;
   }
+  /** Encoder-end barrier only. Exact helper, browser and display remain owned. */
+  stopCapture(): Promise<NativeRecorderStopReceipt> {
+    if (this.#captureStop) return this.#captureStop.completion.promise;
+    this.checkLiveness();
+    if (this.#state !== "active") return Promise.reject(failure());
+    const completion = deferred<NativeRecorderStopReceipt>();
+    const timer = setTimeout(() => this.failTransport(), 22000);
+    this.#captureStop = { completion, timer };
+    this.send({ kind: "capture_stop", requestId: 1 });
+    return completion.promise;
+  }
   private dispose(force: boolean): Promise<BrowserTerminationReceipt> {
     if (!this.#disposal) {
       clearTimeout(this.#livenessWatch);
       // Once admission is fenced, only the stop budget may classify missing
       // native proof. A former dispatch timer must not preempt that outcome.
       clearTimeout(this.#barrier?.timer);
+      clearTimeout(this.#captureStop?.timer);
       if (this.#state === "active") this.#state = "terminating";
       this.#disposal = (async () => {
         const timer = setTimeout(
@@ -424,6 +490,7 @@ export class SupervisedBrowser {
           (this.options.launchTimeoutMs ?? 15000) +
             (this.options.gracefulCloseMs ?? 2000) +
             (this.options.killTimeoutMs ?? 5000) +
+            (this.options.captureDirectory ? 32000 : 0) +
             2000,
         );
         try {

@@ -19,7 +19,12 @@ type Media = {
   interruptionReason?: string;
   maskingDiagnostics?: { events: MaskingDiagnostic[]; truncated: boolean };
 };
-type Publication = { warning: string; playbackRate: 1; items: Media[] };
+type Publication = {
+  warning: string;
+  playbackRate: 1;
+  items: Media[];
+  recordingAssessment?: { state: "pending" | "best_effort_assessed" | "withheld" };
+};
 
 /** Only the selected item is fetched. Authorization, exact references and native timing are unchanged. */
 export function RunEvidence({
@@ -30,6 +35,9 @@ export function RunEvidence({
   initialArtifactId?: string;
 }) {
   const [publication, setPublication] = useState<Publication>();
+  // The authenticated capture owner supplies this fact. A gap in one capture
+  // does not invalidate independently admitted media or imply an app failure.
+  const recordingWithheld = publication?.recordingAssessment?.state === "withheld";
   const [selected, setSelected] = useState<Media>();
   const [kind, setKind] = useState<Media["kind"]>("video");
   const [page, setPage] = useState(0);
@@ -201,10 +209,19 @@ export function RunEvidence({
         {publication?.warning ??
           "Automatic redaction is best effort. Sensitive information may remain. Review before sharing."}
       </p>
+      {recordingWithheld && (
+        <p role="status" className="native-evidence-warning">
+          Recording evidence was withheld because Scry could not confirm protection. Review the
+          recorded results and any other available evidence. Withheld footage cannot be recovered by
+          refreshing; missing evidence does not establish an application result.
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
       {selected?.maskingDiagnostics && (
         <MaskingReview
           diagnostics={selected.maskingDiagnostics}
+          recordingStart={selected.kind === "video" ? selected.timestamp : undefined}
+          canSeek={ready && !error}
           onSeek={
             selected.kind === "video"
               ? (timestamp) => {
@@ -225,10 +242,12 @@ export function RunEvidence({
           detail="Fetching the available evidence for this attempt."
         />
       ) : !publication ? null : !publication.items.length ? (
-        <p>
-          No recordings or screenshots are available for this attempt yet. Refresh to check again.
-          Missing evidence does not establish an application result.
-        </p>
+        recordingWithheld ? null : (
+          <p>
+            No recordings or screenshots are available for this attempt yet. Refresh to check again.
+            Missing evidence does not establish an application result.
+          </p>
+        )
       ) : (
         <>
           <div

@@ -6,6 +6,7 @@ import {
   editBrowserTextSchema,
   nativeBrowserToolSchema,
   nativeCapabilitySchemas,
+  commandFeedback,
 } from "@scry/contracts";
 import { z } from "zod";
 import { BrowserApiClient } from "./api-client.js";
@@ -23,11 +24,35 @@ export async function nativeCommandResult(
         execution?: string;
         content?: Array<{ type: string; text?: string }>;
         media?: Array<{ artifactId: string }>;
+        readOnlyImageInspectionSupported?: boolean;
       }
     | undefined;
+  const recovery =
+    command.recovery && typeof command.recovery === "object"
+      ? (command.recovery as Record<string, unknown>)
+      : {};
+  const assessment = commandFeedback({
+    ...command,
+    recovery: {
+      ...recovery,
+      // Registration establishes exposure, not whether this Run's lane remains
+      // usable. Only the engine's final, drained-lane fact supplies that half.
+      readOnlyImageToolExposed: true,
+      readOnlyImageInspectionSupported: result?.readOnlyImageInspectionSupported === true,
+      ...(uuid.safeParse(command.runId).success ? { statusInspectionSupported: true } : {}),
+    },
+  });
+  // Incidental scope observations remain in the durable result. They do not
+  // turn an acknowledged action with an available observation into recovery.
+  const routine = assessment.state === "action_complete_observation_available";
+  // Interpretation is a response projection, never a mutation of durable truth.
+  const returned = routine ? command : { ...command, interaction: assessment };
+  const message = routine
+    ? "Action completed. Use the returned observation to verify the application outcome."
+    : assessment.summary;
   const content: Array<
     { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
-  > = [{ type: "text", text: JSON.stringify(command) }];
+  > = [{ type: "text", text: JSON.stringify({ message, command: returned }) }];
   if (result?.media?.length && typeof command.runId === "string") {
     try {
       const publication = await client.get<{
@@ -48,11 +73,29 @@ export async function nativeCommandResult(
   }
   return {
     content,
-    structuredContent: { message: "Browser command facts loaded.", command },
+    structuredContent: { message, command: returned },
+    // An action checkpoint is not the command's terminal outcome. Keep pending
+    // orchestration retrievable even when an intermediate receipt is uncertain.
     isError:
-      command.state === "failed" ||
-      result?.execution === "tool_error" ||
-      result?.execution === "unknown",
+      assessment.state !== "pending" &&
+      (command.state === "failed" ||
+        result?.execution === "tool_error" ||
+        result?.execution === "unknown"),
+  };
+}
+
+/** A bounded wait expiring does not make an unfinished command a failure. */
+export function nativePendingResult(submitted: { commandId: string; state: string }) {
+  const interaction = commandFeedback(submitted);
+  const structuredContent = {
+    message: interaction.summary,
+    ...submitted,
+    command: { ...submitted, interaction },
+  };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }],
+    structuredContent,
+    isError: false,
   };
 }
 
@@ -149,20 +192,7 @@ export function registerNativeBrowserTools(
           },
         );
         const command = await poll(client, submitted.commandId, 30000);
-        return command
-          ? nativeCommandResult(client, command)
-          : {
-              content: [
-                {
-                  type: "text" as const,
-                  text: JSON.stringify({
-                    ...submitted,
-                    message:
-                      "Still queued or running. Read get_command; do not issue a replacement action.",
-                  }),
-                },
-              ],
-            };
+        return command ? nativeCommandResult(client, command) : nativePendingResult(submitted);
       },
     );
 }
