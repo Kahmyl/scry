@@ -233,9 +233,11 @@ export class PraxisBrowserEngine {
       this.assertOpening(resources);
       const page = await context.newPage();
       this.assertOpening(resources);
+      const nativeRecording = await evidence.createNativeRecording();
       const recorder = new SanitizedBrowserRecorder({
-        native: await evidence.createNativeRecording(),
-        protectionScript: protectedSession.nativeProtectionScript,
+        native: nativeRecording,
+        protection: protectedSession.nativePrivacy,
+        recoverCaptures: () => evidence.recoverNativeCaptures(nativeRecording),
       });
       resources.recorder = recorder;
       await recorder.start(context);

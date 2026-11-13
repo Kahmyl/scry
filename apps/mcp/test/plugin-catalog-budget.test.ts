@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, expect, it, vi } from "vitest";
@@ -22,6 +24,28 @@ it.each([false, true])(
     try {
       const { tools } = await client.listTools();
       expect(tools).toHaveLength(native ? 61 : 33);
+      // Frozen from the pre-campaign source through the real SDK. Handler copy
+      // can evolve; cached schemas, identities, annotations and OAuth cannot.
+      const historical = JSON.parse(
+        readFileSync(new URL("./fixtures/catalog-compatibility.json", import.meta.url), "utf8"),
+      );
+      const shapes = Object.fromEntries(
+        tools.map((tool) => [
+          tool.name,
+          createHash("sha256")
+            .update(
+              JSON.stringify({
+                title: tool.title,
+                inputSchema: tool.inputSchema,
+                outputSchema: tool.outputSchema,
+                annotations: tool.annotations,
+                _meta: tool._meta,
+              }),
+            )
+            .digest("hex"),
+        ]),
+      );
+      expect(shapes).toEqual(historical[native ? "native" : "retained"]);
       const budget = codexPluginBudget(tools, client.getInstructions() ?? "");
       expect(budget.hidden).toEqual([]);
       // Reserve space for modest host attribution changes; all current tools must fit.

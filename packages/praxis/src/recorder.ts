@@ -1,31 +1,63 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { BrowserContext, Page, CDPSession } from "playwright";
-import type { ChronicleNativeRecordingPort } from "@scry/contracts";
+import type {
+  ChronicleNativeRecordingPort,
+  NativeBrowserProtectionPort,
+  NativeCapturePort,
+  NativeCaptureSample,
+  NativeCaptureRecovery,
+  NativeImageReason,
+} from "@scry/contracts";
+// @ts-expect-error Private JavaScript transport, shared with the native adapter.
+import { createCaptureProducer } from "./mcp-native/capture-producer.mjs";
+// @ts-expect-error Private isolated-world binding transport.
+import { installCaptureBinding } from "./mcp-native/capture-binding.mjs";
+// @ts-expect-error Private bounded browser maintenance transport.
+import { refreshNativeProtection } from "./mcp-native/protection-refresh.mjs";
+// @ts-expect-error Private task lanes with the existing 200 ms maintenance budget.
+import { BestEffortTasks } from "./mcp-native/best-effort-tasks.mjs";
 
-/** Records the live browser's native pixels. Screenshots are action checkpoints,
- * never the source of the video. Chronicle owns files and admitted receipts. */
+type ProducerEvent =
+  | { type: "capture_sample"; sequence: number; sample: NativeCaptureSample }
+  | { type: "capture_gap"; sequence: number; reason: NativeImageReason };
+type Entry = {
+  capture: NativeCapturePort;
+  protection: NativeBrowserProtectionPort;
+  producer: ReturnType<typeof createCaptureProducer>;
+  started: number;
+  capturing: boolean;
+  session?: CDPSession;
+  scriptRevision: number;
+  policyGeneration: number;
+};
+/** Native pixels are prospective candidates. Chronicle alone admits sealed media. */
 export class SanitizedBrowserRecorder {
-  readonly #pages = new Map<Page, { filename: string; started: number; capturing: boolean }>();
+  readonly #pages = new Map<Page, Entry>();
   readonly #contexts = new Set<BrowserContext>();
   readonly #attachments = new Set<Promise<void>>();
-  readonly #privateWorlds = new Map<Page, CDPSession>();
+  readonly #dialogs = new Map<unknown, Page>();
+  readonly #maskTasks = new BestEffortTasks(() => this.options.native.maskingUnavailable(), 200);
+  readonly #pixelTasks = new BestEffortTasks(() => this.options.native.maskingUnavailable(), 200);
   #closed = false;
   #acceptingPages = true;
   #queue: Promise<void> = Promise.resolve();
   #aborting?: Promise<void>;
   #closing?: Promise<void>;
   readonly #onPage = (page: Page) => {
-    if (!this.#acceptingPages) return;
-    void this.attach(page).catch((error) =>
-      this.options.native.recordError("recorder_attach_failed", error),
-    );
+    if (this.#acceptingPages)
+      void this.attach(page).catch((error) =>
+        this.options.native.recordError("recorder_attach_failed", error),
+      );
   };
   constructor(
-    private readonly options: { native: ChronicleNativeRecordingPort; protectionScript: string },
+    private readonly options: {
+      native: ChronicleNativeRecordingPort;
+      protection: NativeBrowserProtectionPort;
+      recoverCaptures: () => Promise<NativeCaptureRecovery>;
+    },
   ) {}
-
-  async start(context: BrowserContext): Promise<void> {
+  async start(context: BrowserContext) {
     await Promise.resolve();
     this.assertOpen();
     if (this.#contexts.has(context)) return;
@@ -33,174 +65,254 @@ export class SanitizedBrowserRecorder {
     context.on("page", this.#onPage);
     for (const page of context.pages()) await this.attach(page);
   }
-
-  private attach(page: Page): Promise<void> {
-    const attached = this.attachPage(page);
-    this.#attachments.add(attached);
-    void attached.finally(() => this.#attachments.delete(attached)).catch(() => undefined);
-    return attached;
+  private attach(page: Page) {
+    const work = this.attachPage(page);
+    this.#attachments.add(work);
+    void work.finally(() => this.#attachments.delete(work)).catch(() => {});
+    return work;
   }
-
-  private async attachPage(page: Page): Promise<void> {
+  private async attachPage(page: Page) {
     this.assertOpen();
     if (this.#pages.has(page)) return;
-    const filename = `${randomUUID()}.webm`;
-    const entry = { filename, started: Date.now(), capturing: false };
+    const capture = await this.options.native.reserveCaptureV2({
+      kind: "screencast",
+      policyGeneration: this.options.protection.policyGeneration,
+    });
+    this.assertOpen();
+    const protection = this.options.protection.fork(capture.epoch);
+    const entry: Entry = {
+      capture,
+      protection,
+      producer: undefined,
+      started: Date.now(),
+      capturing: false,
+      scriptRevision: 0,
+      policyGeneration: protection.policyGeneration,
+    };
+    entry.producer = createCaptureProducer({
+      epoch: capture.epoch,
+      sample: () => protection.captureSample(),
+      send: (event: ProducerEvent) =>
+        event.type === "capture_gap"
+          ? capture.graphGap({ sequence: event.sequence, reason: event.reason })
+          : capture.graphSample({ sequence: event.sequence, sample: event.sample }),
+    });
     this.#pages.set(page, entry);
-    let session: CDPSession | undefined;
+    page.on("dialog", (dialog) => this.#dialogs.set(dialog, page));
     try {
-      session = await page.context().newCDPSession(page);
-      this.assertOpen();
-      this.#privateWorlds.set(page, session);
-      // CDP does not install future-document scripts until the Page domain is
-      // enabled on this session. A successful addScript reply alone is not proof.
+      const session = await page.context().newCDPSession(page);
+      entry.session = session;
       await session.send("Page.enable");
+      await installCaptureBinding(session, protection, (reason: NativeImageReason) =>
+        entry.producer.gap(reason),
+      );
+      const source = protection.script,
+        revision = protection.scriptRevision;
       await session.send("Page.addScriptToEvaluateOnNewDocument", {
-        source: this.options.protectionScript,
+        source,
         worldName: "scry-native-protection",
         runImmediately: true,
       });
+      entry.scriptRevision = revision;
+      await this.refresh(page, entry);
     } catch (error) {
-      this.#privateWorlds.delete(page);
-      await session?.detach().catch(() => undefined);
-      if (this.#closed) throw error;
       this.options.native.maskingUnavailable();
+      this.options.native.recordError("recorder_attach_failed", error);
     }
     this.assertOpen();
+    entry.started = Date.now();
     await page.screencast.start({
-      path: path.join(this.options.native.directory, filename),
+      path: path.join(capture.directory, capture.filename),
       size: page.viewportSize() ?? { width: 1280, height: 720 },
     });
     entry.capturing = true;
     if (this.#closed && !page.isClosed()) await page.screencast.stop();
   }
-
-  async protectValue(value: string): Promise<void> {
-    for (const page of this.#pages.keys())
-      if (!page.isClosed()) {
-        await this.privateEvaluation(
-          page,
-          `globalThis.__scryNativeRefresh?.(${JSON.stringify(value)})`,
-        ).catch(() => this.options.native.maskingUnavailable());
-      }
+  private async syncDocuments(page: Page, entry: Entry) {
+    if (!entry.session || page.isClosed()) return;
+    for (const update of entry.protection.documentUpdatesSince(entry.scriptRevision)) {
+      await entry.session.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: update.script,
+        worldName: "scry-native-protection",
+        runImmediately: true,
+      });
+      entry.scriptRevision = update.revision;
+    }
   }
-
+  private async refresh(
+    page: Page,
+    entry: Entry,
+    options: { challenge?: string; record?: boolean } = {},
+  ) {
+    if (!entry.session || page.isClosed()) throw Error("native_graph_unavailable");
+    await this.syncDocuments(page, entry);
+    const read = await refreshNativeProtection({
+      protection: entry.protection,
+      sessions: new Map([[page, entry.session]]),
+      pages: [page],
+      pageId: () => 0,
+      selectedPage: page,
+      finalReadChallenge: options.challenge,
+      dialogs: this.#dialogs,
+      maskTasks: this.#maskTasks,
+      pixelTasks: this.#pixelTasks,
+      recovered: () => {},
+      degrade: () => this.options.native.maskingUnavailable(),
+      phase: () => {},
+    });
+    await this.syncDocuments(page, entry);
+    for (const reason of entry.protection.drainGaps()) entry.producer.gap(reason);
+    if (options.record !== false && entry.protection.captureSample().readId === read)
+      entry.producer.sample();
+  }
+  async protectValue(value: string) {
+    for (const entry of this.#pages.values()) entry.producer.pauseSamples();
+    this.options.protection.updateSecrets({ selected: value });
+    for (const [page, entry] of this.#pages) {
+      try {
+        await this.syncDocuments(page, entry);
+        const next = entry.protection.policyGeneration;
+        if (next !== entry.policyGeneration) {
+          await entry.capture.policyTransition({
+            from: entry.policyGeneration,
+            to: next,
+            acknowledged: true,
+          });
+          entry.policyGeneration = next;
+        }
+        entry.producer.resumeSamples();
+      } catch {
+        this.options.native.maskingUnavailable();
+        await entry.capture
+          .policyTransition({
+            from: entry.policyGeneration,
+            to: entry.protection.policyGeneration,
+            acknowledged: false,
+          })
+          .catch(() => {});
+      }
+    }
+  }
   checkpoint(label = "commit"): Promise<void> {
     this.assertOpen();
     const operation = this.#queue.then(async () => {
       if (this.#closed) return;
-      for (const page of this.#pages.keys())
-        if (!page.isClosed()) {
-          const filename = `${randomUUID()}.png`;
-          try {
-            await this.privateEvaluation(
-              page,
-              "new Promise(resolve => { globalThis.__scryNativeRefresh?.(); setTimeout(resolve,100); requestAnimationFrame(() => requestAnimationFrame(resolve)); })",
-            );
-          } catch {
-            this.options.native.maskingUnavailable();
-          }
-          try {
-            if (this.#closed) return;
-            await page.screenshot({
-              path: path.join(this.options.native.directory, filename),
-              timeout: 5000,
-            });
-          } catch {
-            // Optional screenshot/mask failure does not invalidate native video or
-            // the application journey. The viewer always warns about missed masks.
-            continue;
-          }
-          if (this.#closed) return;
-          await this.options.native.admit({
-            filename,
-            kind: "screenshot",
-            timestamp: Date.now(),
-            label,
-          });
-        }
+      for (const [page, entry] of this.#pages)
+        if (!page.isClosed()) await this.still(page, entry, label);
     });
     this.#queue = operation.catch((error) =>
       this.options.native.recordError("recorder_write_failed", error),
     );
     return operation;
   }
-
+  private async still(page: Page, entry: Entry, label: string) {
+    const token = entry.protection.beginImageCapture(0),
+      filename = randomUUID() + ".png";
+    try {
+      await this.refresh(page, entry);
+      if (entry.protection.imageEvidence().state !== "available") return;
+      await page.screenshot({
+        path: path.join(this.options.native.directory, filename),
+        timeout: 5000,
+      });
+      await this.refresh(page, entry);
+      const imageEvidence = entry.protection.imageEvidence();
+      if (this.#closed || imageEvidence.state !== "available") return;
+      await this.options.native.admitStill({
+        filename,
+        timestamp: Date.now(),
+        label,
+        imageEvidence,
+      });
+    } catch {
+      this.options.native.maskingUnavailable();
+    } finally {
+      entry.protection.endImageCapture(token);
+    }
+  }
   async flush() {
     await this.#queue;
     return this.options.native.flush();
   }
-
   close(): Promise<void> {
-    if (this.#aborting) return Promise.reject(new Error("SCRY_BROWSER_RECORDER_CLOSED"));
+    if (this.#aborting) return Promise.reject(Error("SCRY_BROWSER_RECORDER_CLOSED"));
     return (this.#closing ??= this.finishClose());
   }
-  private async finishClose(): Promise<void> {
+  private async finishClose() {
     this.assertOpen();
     this.stopAcceptingPages();
-    // Failed popup starts already record their finite capture diagnostics. Join
-    // them without trying to publish a file that the browser never produced.
     await Promise.allSettled([...this.#attachments]);
-    this.assertOpen();
-    await this.checkpoint("final");
-    this.#closed = true;
     await this.#queue;
-    for (const [page, entry] of this.#pages) {
-      if (!entry.capturing) continue;
-      if (!page.isClosed()) await page.screencast.stop();
-      await this.options.native.admit({
-        filename: entry.filename,
-        kind: "video",
-        timestamp: entry.started,
-        durationMs: Math.max(0, Date.now() - entry.started),
-        label: "page",
-      });
+    try {
+      for (const [page, entry] of this.#pages) {
+        try {
+          if (!entry.capturing || page.isClosed())
+            throw Error("native_capture_final_assessment_missing");
+          await page.screencast.stop();
+          entry.capturing = false;
+          const final = await entry.capture.physicalStopped({
+            epoch: entry.capture.epoch,
+            started: entry.started,
+            ended: Date.now(),
+            physicalCoverage: "complete",
+          });
+          const reply = await entry.producer.close(
+            { epoch: entry.capture.epoch, challenge: final.challenge },
+            async (challenge: string) => this.refresh(page, entry, { challenge, record: false }),
+          );
+          await entry.capture.graphSample({
+            sequence: reply.lastSequence,
+            sample: reply.finalSample,
+          });
+          await entry.capture.graphClosed({ lastSequence: reply.lastSequence });
+        } catch {
+          this.options.native.maskingUnavailable();
+          entry.producer.abandon();
+        } finally {
+          await entry.capture.seal();
+        }
+        if (!page.isClosed()) await this.still(page, entry, "final");
+      }
+      await this.options.recoverCaptures();
+      await this.options.native.flush();
+    } finally {
+      this.#closed = true;
+      await Promise.allSettled(
+        [...this.#pages.values()].map(async (entry) => {
+          entry.producer.abandon();
+          entry.protection.dispose();
+          await entry.session?.detach().catch(() => {});
+        }),
+      );
+      this.options.protection.dispose();
     }
-    await this.options.native.flush();
-    await Promise.allSettled([...this.#privateWorlds.values()].map((session) => session.detach()));
   }
-
   abort(): Promise<void> {
-    if (!this.#aborting) {
+    return (this.#aborting ??= (async () => {
       this.stopAcceptingPages();
       this.#closed = true;
-      this.#aborting = Promise.all([
-        this.options.native.abort(),
+      for (const entry of this.#pages.values()) entry.producer.abandon();
+      const nativeAbort = this.options.native.abort();
+      await Promise.allSettled([
+        nativeAbort,
         this.#queue,
-        this.#closing?.catch(() => undefined),
-        Promise.allSettled([...this.#attachments]),
-        ...[...this.#privateWorlds.values()].map((session) =>
-          session.detach().catch(() => undefined),
-        ),
-        ...[...this.#pages.keys()]
-          .filter((page) => !page.isClosed())
-          .map((page) => page.screencast.stop().catch(() => undefined)),
-      ]).then(() => undefined);
-    }
-    return this.#aborting;
+        this.#closing,
+        ...this.#attachments,
+        ...[...this.#pages].map(async ([page, entry]) => {
+          if (entry.capturing && !page.isClosed()) await page.screencast.stop().catch(() => {});
+          entry.protection.dispose();
+          await entry.session?.detach().catch(() => {});
+        }),
+      ]);
+      this.options.protection.dispose();
+      await nativeAbort;
+    })());
   }
   private assertOpen() {
-    if (this.#closed) throw new Error("SCRY_BROWSER_RECORDER_CLOSED");
+    if (this.#closed) throw Error("SCRY_BROWSER_RECORDER_CLOSED");
   }
   private stopAcceptingPages() {
     this.#acceptingPages = false;
     for (const context of this.#contexts) context.off("page", this.#onPage);
-  }
-  private async privateEvaluation(page: Page, expression: string): Promise<void> {
-    const session = this.#privateWorlds.get(page);
-    if (!session) return;
-    const tree = await session.send("Page.getFrameTree");
-    const world = await session.send("Page.createIsolatedWorld", {
-      frameId: tree.frameTree.frame.id,
-      worldName: "scry-native-protection",
-      grantUniveralAccess: false,
-    });
-    const result = await session.send("Runtime.evaluate", {
-      expression: `if (typeof globalThis.__scryNativeRefresh !== 'function') throw new Error('native_mask_not_installed'); ${expression}`,
-      contextId: world.executionContextId,
-      awaitPromise: true,
-      returnByValue: false,
-    });
-    if (result.exceptionDetails) throw new Error("native_mask_refresh_failed");
   }
 }

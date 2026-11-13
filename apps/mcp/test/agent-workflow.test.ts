@@ -79,7 +79,7 @@ it("gets one scoped server readiness snapshot rather than inferring capabilities
       hostToolExposure: "unknown",
     });
     expect((r.structuredContent as Record<string, unknown>).workflowGuidance).toContain(
-      "Optimize the whole agent loop",
+      "get_testing_context",
     );
     expect((r.structuredContent as Record<string, unknown>).workflowGuidance).not.toContain(
       "An upstream field",

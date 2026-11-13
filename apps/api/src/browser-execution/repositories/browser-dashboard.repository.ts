@@ -2,9 +2,10 @@ import { ChronicleRepository } from "@scry/chronicle";
 import { Inject, Injectable } from "@nestjs/common";
 import { NotFoundException } from "@nestjs/common";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import {
   nativeEvidenceWarning,
-  readNativeEvidence,
+  readNativeEvidenceInventory,
   readNativeMedia,
   AdmittedEvidenceRepository,
 } from "@scry/chronicle";
@@ -12,42 +13,75 @@ import {
 import { Database } from "../../infrastructure/database.js";
 import { readBrowserEvidenceProtection } from "../browser-boundary-composition.js";
 import type { NativeMediaReceipt } from "@scry/contracts";
+import { isTerminalRunState } from "../customer-reporting.js";
+
+const statusBudgetMs = 3000;
+async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(Error("SCRY_BROWSER_OPTIONAL_ASSESSMENT_UNAVAILABLE")),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 @Injectable()
 export class BrowserDashboardRepository {
   constructor(@Inject(Database) private readonly database: Database) {}
 
-  private async nativePublication(workspaceId: string | undefined, runId: string) {
-    const result = await this.database.query<{ sessionId: string; protectionKeyId: string }>(
-      `SELECT es.session_id AS "sessionId",s.protection_key_id AS "protectionKeyId"
+  private async nativePublication(
+    workspaceId: string | undefined,
+    runId: string,
+    timeoutMs = 5000,
+  ) {
+    // Keep metadata locks bounded and release them before authenticated file I/O.
+    const bundle = await this.database.boundedTransaction(async (client) => {
+      const result = await client.query<{
+        sessionId: string;
+        protectionKeyId: string;
+        runState: string;
+      }>(
+        `SELECT es.session_id AS "sessionId",s.protection_key_id AS "protectionKeyId",r.state AS "runState"
        FROM browser_evidence_streams es JOIN runs r ON r.id=es.run_id
        JOIN browser_execution_sessions s ON s.id=es.session_id
        JOIN projects p ON p.id=r.project_id WHERE r.id=$1
        AND ($2::uuid IS NULL OR p.workspace_id=$2)
        AND es.state IN ('open','complete','incomplete') AND es.retention_expires_at>now()
        ORDER BY es.created_at DESC LIMIT 1`,
-      [runId, workspaceId ?? null],
-    );
-    const publication = result.rows[0];
-    if (!publication) return undefined;
+        [runId, workspaceId ?? null],
+      );
+      const publication = result.rows[0];
+      if (!publication) return undefined;
+      const snapshot = await new AdmittedEvidenceRepository(client).snapshot(
+        publication.sessionId,
+        true,
+      );
+      return { publication, snapshot };
+    }, timeoutMs);
+    if (!bundle) return undefined;
+    const { publication, snapshot } = bundle;
     const root = path.resolve(process.env.SCRY_BROWSER_ARTIFACT_ROOT ?? "artifacts/browser");
     const sessionRoot = path.join(root, publication.sessionId);
-    // Freeze exact admitted metadata under the stream lock, then release all
-    // coordination locks BEFORE authenticated file reads or decryption.
-    const snapshot = await this.database.transaction((client) =>
-      new AdmittedEvidenceRepository(client).snapshot(publication.sessionId, true),
-    );
-    const media = await readNativeEvidence({
+    const inventory = await readNativeEvidenceInventory({
       root: sessionRoot,
       snapshot,
       allowOpen: true,
+      terminal: isTerminalRunState(publication.runState),
       protection: readBrowserEvidenceProtection({
         runId,
         sessionId: publication.sessionId,
         protectionKeyId: publication.protectionKeyId,
       }),
     });
-    return { media, sessionRoot };
+    return { ...inventory, sessionRoot };
   }
 
   async listMedia(workspaceId: string | undefined, runId: string) {
@@ -65,6 +99,9 @@ export class BrowserDashboardRepository {
           ? " Masking could not be confirmed for one or more intervals. Review the recorded reasons before sharing."
           : ""),
       playbackRate: 1,
+      ...(publication?.recordingAssessment
+        ? { recordingAssessment: publication.recordingAssessment }
+        : {}),
       items: (publication?.media ?? []).map(
         (
           {
@@ -199,7 +236,8 @@ export class BrowserDashboardRepository {
   }
 
   async recoveryStatus(workspaceId: string | undefined, runId: string) {
-    return this.database.boundedTransaction(async (client) => {
+    const deadline = performance.now() + statusBudgetMs;
+    const row = await this.database.boundedTransaction(async (client) => {
       const result = await client.query(
         `SELECT r.id,r.mission_id AS "missionId",r.state,r.outcome_classification AS "outcomeClassification",
         s.state AS "browserSessionState",s.active_owner_generation AS "ownerGeneration",s.stop_requested_at AS "stopRequestedAt",
@@ -212,7 +250,25 @@ export class BrowserDashboardRepository {
       );
       if (!result.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_FOUND");
       return result.rows[0];
-    }, 3000);
+    }, statusBudgetMs);
+    // Optional recording metadata must never hide authoritative release facts.
+    // A read failure is availability uncertainty, not a permanent privacy veto.
+    const remaining = Math.floor(deadline - performance.now());
+    if (remaining < 1) return { ...row, recordingAssessmentAvailability: "unavailable" as const };
+    try {
+      const publication = await within(
+        this.nativePublication(workspaceId, runId, remaining),
+        remaining,
+      );
+      return {
+        ...row,
+        ...(publication?.recordingAssessment
+          ? { recordingAssessment: publication.recordingAssessment }
+          : {}),
+      };
+    } catch {
+      return { ...row, recordingAssessmentAvailability: "unavailable" as const };
+    }
   }
 
   async listReports(workspaceId: string | undefined, projectId: string) {

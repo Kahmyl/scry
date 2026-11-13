@@ -7,8 +7,41 @@ import type {
   NativeMediaReceipt,
   EvidenceStreamSnapshot,
   EvidenceReadProtectionPort,
+  NativeCaptureRecovery,
+  NativeCaptureEpoch,
+  RecordingAssessment,
 } from "@scry/contracts";
 import type { ChronicleRecording } from "./recording.js";
+import type { EvidenceVerification } from "./admitted-evidence-reader.js";
+import {
+  createNativeCapture,
+  evaluateNativeCaptures,
+  recordingAssessment,
+  type CaptureReservation,
+} from "./native-capture.js";
+
+type NativeInput = Omit<
+  NativeMediaReceipt,
+  "objectKey" | "digest" | "bytes" | "timingOrigin" | "masking"
+> & {
+  filename: string;
+  timingOrigin?: NativeMediaReceipt["timingOrigin"];
+  masking?: NativeMediaReceipt["masking"];
+};
+type NativeInternal = {
+  generation: number;
+  recording: ChronicleRecording;
+  assertActive(): void;
+  verify(): Promise<EvidenceVerification<Record<string, unknown>>>;
+  append(event: Record<string, unknown>): Promise<void>;
+  restoreLegacyDiagnostics(events: Record<string, unknown>[]): void;
+  joinCaptures(): Promise<void>;
+  admit(
+    input: NativeInput,
+    proof?: { epoch: NativeCaptureEpoch; sealDigest: string; bytesDigest: string; bytes: number },
+  ): Promise<void>;
+};
+const internals = new WeakMap<ChronicleNativeRecordingPort, NativeInternal>();
 import {
   maskingDiagnosticSchema,
   maskingDiagnosticsSchema,
@@ -29,53 +62,37 @@ export async function createNativeRecording(options: {
   generation: number;
   recording: ChronicleRecording;
   assertActive(): void;
+  verify(): Promise<EvidenceVerification<Record<string, unknown>>>;
 }): Promise<ChronicleNativeRecordingPort> {
   const directory = path.join(options.root, "native", String(options.generation), randomUUID());
   await ensurePrivateDirectory(directory);
   options.assertActive();
-  let usedBytes = 0;
-  const admitted = new Set<string>();
-  const screenshotDigests = new Set<string>();
-  let maskingUnavailable = false;
-  const maskingEvents: MaskingDiagnostic[] = [];
-  let maskingTruncated = false;
-  return {
-    directory,
-    recordMasking(event) {
-      options.assertActive();
-      const safe = maskingDiagnosticSchema.parse(event);
-      if (maskingEvents.length >= 256) {
-        if (!maskingTruncated)
-          options.recording.receive(
-            JSON.stringify({ type: "native_masking_truncated", timestamp: safe.at }),
-          );
-        maskingTruncated = true;
-        return;
-      }
-      maskingEvents.push(safe);
-      options.recording.receive(
-        JSON.stringify({ type: "native_masking", timestamp: safe.at, event: safe }),
-      );
-    },
-    async reserveCapture() {
-      options.assertActive();
-      const captureDirectory = path.join(directory, "capture");
-      await ensurePrivateDirectory(captureDirectory);
-      options.recording.receive(
-        JSON.stringify({
-          type: "native_capture_started",
-          timestamp: Date.now(),
-          directory: path.relative(options.root, captureDirectory),
-        }),
-      );
-      if ((await options.recording.flush()).errors.length)
-        throw new Error("native_media_admission_failed");
-      return captureDirectory;
-    },
-    maskingUnavailable() {
-      maskingUnavailable = true;
-    },
-    async admit(input) {
+  let usedBytes = 0,
+    maskingUnavailable = false,
+    maskingTruncated = false;
+  const admitted = new Set<string>(),
+    screenshotDigests = new Set<string>(),
+    maskingEvents: MaskingDiagnostic[] = [];
+  let queue: Promise<unknown> = Promise.resolve();
+  const serial = <T>(work: () => Promise<T>): Promise<T> => {
+    const next = queue.then(work);
+    queue = next.catch(() => {});
+    return next;
+  };
+  const append = async (event: Record<string, unknown>) => {
+    options.assertActive();
+    options.recording.assertActive();
+    options.recording.receive(JSON.stringify(event));
+    const diagnostics = await options.recording.flush();
+    options.assertActive();
+    if (diagnostics.errors.length) throw new Error("native_media_admission_failed");
+  };
+  const admit = async (
+    candidate: NativeInput,
+    proof?: { epoch: NativeCaptureEpoch; sealDigest: string; bytesDigest: string; bytes: number },
+  ) => {
+    const input = structuredClone(candidate);
+    return serial(async () => {
       options.assertActive();
       options.recording.assertActive();
       if (
@@ -98,6 +115,8 @@ export async function createNativeRecording(options: {
       if (usedBytes + bytes.length > 256 * 1024 * 1024)
         throw new Error("native_media_capacity_exceeded");
       const digest = hash(bytes);
+      if (proof && (digest !== proof.bytesDigest || bytes.length !== proof.bytes))
+        throw new Error("native_capture_bytes_mismatch");
       if (input.kind === "screenshot" && screenshotDigests.has(digest)) {
         // Only this new, unadmitted duplicate is discarded. Never remove the
         // original admitted screenshot or keep charging storage for no change.
@@ -139,7 +158,18 @@ export async function createNativeRecording(options: {
       };
       options.assertActive();
       options.recording.receive(
-        JSON.stringify({ type: "native_media", timestamp: input.timestamp, media: receipt }),
+        JSON.stringify({
+          type: "native_media",
+          timestamp: input.timestamp,
+          media: receipt,
+          ...(proof
+            ? {
+                captureEpoch: proof.epoch,
+                captureSealDigest: proof.sealDigest,
+                admittingGeneration: options.generation,
+              }
+            : {}),
+        }),
       );
       const diagnostics = await options.recording.flush();
       options.assertActive();
@@ -147,11 +177,107 @@ export async function createNativeRecording(options: {
       usedBytes += bytes.length;
       admitted.add(input.filename);
       if (input.kind === "screenshot") screenshotDigests.add(digest);
+    });
+  };
+  const captureBarriers = new Set<() => Promise<void>>();
+  const native: ChronicleNativeRecordingPort = {
+    directory,
+    recordMasking(event) {
+      options.assertActive();
+      const safe = maskingDiagnosticSchema.parse(event);
+      if (maskingEvents.length >= 256) {
+        if (!maskingTruncated)
+          options.recording.receive(
+            JSON.stringify({ type: "native_masking_truncated", timestamp: safe.at }),
+          );
+        maskingTruncated = true;
+        return;
+      }
+      maskingEvents.push(safe);
+      options.recording.receive(
+        JSON.stringify({ type: "native_masking", timestamp: safe.at, event: safe }),
+      );
+    },
+
+    maskingUnavailable() {
+      maskingUnavailable = true;
+    },
+    async reserveCaptureV2(input) {
+      const { kind, policyGeneration } = input;
+      options.assertActive();
+      if (
+        !["display", "screencast"].includes(kind) ||
+        !Number.isSafeInteger(policyGeneration) ||
+        policyGeneration < 1
+      )
+        throw new Error("native_capture_identity_mismatch");
+      const epoch = {
+        captureId: randomUUID(),
+        originalWriterGeneration: options.generation,
+        assessmentPolicyVersion: 2 as const,
+      };
+      const captureDirectory = path.join(directory, "capture-v2", epoch.captureId);
+      await ensurePrivateDirectory(captureDirectory);
+      const reservation: CaptureReservation = {
+        type: "native_capture_reserved_v2",
+        epoch,
+        directory: path.relative(options.root, captureDirectory),
+        kind,
+        filename: kind === "display" ? "recording.mp4" : "recording.webm",
+        initialPolicyGeneration: policyGeneration,
+        requiredProducers: ["graph", "physical"],
+      };
+      return createNativeCapture({
+        reservation,
+        directory: captureDirectory,
+        append,
+        assertActive: options.assertActive,
+        registerBarrier: (join) => captureBarriers.add(join),
+        readPhysical: async (receipt) => {
+          const bytes = await captureFile(
+            path.join(captureDirectory, reservation.filename),
+            options.root,
+          );
+          return { ...receipt, bytes: bytes.length, bytesDigest: hash(bytes) };
+        },
+      });
+    },
+    async admitStill(input) {
+      if (
+        input.imageEvidence?.state !== "available" ||
+        input.imageEvidence.assessment !== "best_effort_known_candidates"
+      )
+        throw new Error("native_image_evidence_withheld");
+      const { imageEvidence: _, ...candidate } = input;
+      return admit({ ...candidate, kind: "screenshot" });
     },
     flush: () => options.recording.flush(),
     abort: () => options.recording.abort(),
     recordError: (code, error) => options.recording.recordError(code, error),
   };
+  internals.set(native, {
+    generation: options.generation,
+    recording: options.recording,
+    assertActive: options.assertActive,
+    verify: options.verify,
+    append,
+    admit,
+    async joinCaptures() {
+      await Promise.all([...captureBarriers].map((join) => join()));
+    },
+    restoreLegacyDiagnostics(events) {
+      const restored = events
+        .filter((e) => e.type === "native_masking")
+        .slice(0, 256)
+        .map((e) => maskingDiagnosticSchema.safeParse(e.event))
+        .flatMap((p) => (p.success ? [p.data] : []));
+      for (const event of restored)
+        if (!maskingEvents.some((e) => JSON.stringify(e) === JSON.stringify(event)))
+          maskingEvents.push(event);
+      maskingTruncated ||= events.some((e) => e.type === "native_masking_truncated");
+    },
+  });
+  return native;
 }
 
 function hash(bytes: Buffer): string {
@@ -209,16 +335,17 @@ async function privateFile(filename: string, root: string, limit: number): Promi
   }
 }
 
-export async function readNativeEvidence(options: {
+export async function readNativeEvidenceInventory(options: {
   root: string;
   snapshot: EvidenceStreamSnapshot;
   protection: EvidenceReadProtectionPort;
   /** Authorized application reads may inspect an immutable admitted prefix. */
   allowOpen?: boolean;
-}): Promise<NativeMediaReceipt[]> {
+  terminal?: boolean;
+}): Promise<{ media: NativeMediaReceipt[]; recordingAssessment?: RecordingAssessment }> {
   const { snapshot } = options;
   if (!snapshot.sealedAt && !options.allowOpen) throw new Error("native_media_not_sealed");
-  if (snapshot.custodyMode !== "admitted") return [];
+  if (snapshot.custodyMode !== "admitted") return { media: [] };
   // A sealed database snapshot is immutable. No live-owner lease or file-system
   // manifest can grant read authority or introduce another receipt.
   const verified = await new AdmittedEvidenceReader<Record<string, unknown>>({
@@ -228,7 +355,53 @@ export async function readNativeEvidence(options: {
     protection: options.protection,
     admission: { readStream: async () => snapshot, assertActive() {} },
   }).verify();
-  return nativeMediaReceipts(verified.events);
+  return nativeEvidenceInventory(verified, snapshot, options.terminal);
+}
+
+/** Compatibility wrapper; both metadata and assessment share the same verifier. */
+export async function readNativeEvidence(
+  options: Parameters<typeof readNativeEvidenceInventory>[0],
+): Promise<NativeMediaReceipt[]> {
+  return (await readNativeEvidenceInventory(options)).media;
+}
+
+export function nativeEvidenceInventory(
+  verified: EvidenceVerification<Record<string, unknown>>,
+  snapshot: EvidenceStreamSnapshot,
+  terminal = false,
+): { media: NativeMediaReceipt[]; recordingAssessment?: RecordingAssessment } {
+  const facts = {
+    ownerGenerations: verified.eventOwnerGenerations,
+    captureStopped: !!snapshot.captureStoppedAt,
+    terminal: terminal || !!snapshot.sealedAt,
+    interrupted: snapshot.interruptions > 0,
+    writerGeneration: snapshot.writerGeneration,
+  };
+  const captures = evaluateNativeCaptures(verified.events, facts);
+  const events = verified.events.filter((e) => {
+    if (e.type !== "native_media") return true;
+    const linked = captures.filter((c) => {
+      const id = c.reservation.epoch?.captureId;
+      return (
+        typeof id === "string" &&
+        (id === (e.captureEpoch as NativeCaptureEpoch | undefined)?.captureId ||
+          (typeof (e.media as Record<string, unknown> | undefined)?.objectKey === "string" &&
+            String((e.media as Record<string, unknown>).objectKey).endsWith(
+              `/${id}.${c.reservation.kind === "display" ? "mp4" : "webm"}`,
+            )))
+      );
+    });
+    if (e.captureEpoch && !linked.length) return false;
+    return (
+      !linked.length ||
+      linked.every((c) => c.assessment.state === "best_effort_assessed" && c.admitted)
+    );
+  });
+  const assessment = recordingAssessment(verified.events, facts);
+  return {
+    media: nativeMediaReceipts(events),
+    ...(assessment ? { recordingAssessment: assessment } : {}),
+  };
 }
 
 export function nativeMediaReceipts(events: Array<Record<string, unknown>>): NativeMediaReceipt[] {
@@ -288,23 +461,16 @@ export async function readNativeMedia(
 
 /** Recover only an authenticated, pre-capture reservation. Never scan orphan
  * directories. Final bytes are copied and admitted under the current owner. */
-export async function recoverNativeCaptures(
+async function recoverLegacyCaptures(
   root: string,
   events: Record<string, unknown>[],
   native: ChronicleNativeRecordingPort,
+  internal: NativeInternal,
 ): Promise<number> {
   // A receipt admitted before a crash is already authoritative. Do not create
   // another copy merely because its pre-capture reservation remains in history.
   if (nativeMediaReceipts(events).some((item) => item.kind === "video")) return 1;
-  const diagnostics = events.filter((e) => e.type === "native_masking").slice(0, 256);
-  for (const event of diagnostics) {
-    const parsed = maskingDiagnosticSchema.safeParse(event.event);
-    if (parsed.success) native.recordMasking?.(parsed.data);
-  }
-  if (events.some((e) => e.type === "native_masking_truncated") && diagnostics[0]) {
-    const first = maskingDiagnosticSchema.safeParse(diagnostics[0].event);
-    if (first.success) native.recordMasking?.(first.data);
-  }
+  internal.restoreLegacyDiagnostics(events);
   const captures = events.filter((e) => e.type === "native_capture_started");
   let recovered = 0;
   for (const capture of captures) {
@@ -340,7 +506,7 @@ export async function recoverNativeCaptures(
     );
     const filename = `${randomUUID()}.mp4`;
     await durableWrite(path.join(native.directory, filename), bytes);
-    await native.admit({
+    await internal.admit({
       filename,
       kind: "video",
       timestamp: manifest.started!,
@@ -361,4 +527,136 @@ export async function recoverNativeCaptures(
     recovered++;
   }
   return recovered;
+}
+
+/** Reservation-aware recovery is the only native video admission capability. */
+async function recoverNativeCapturesUnlocked(
+  root: string,
+  native: ChronicleNativeRecordingPort,
+): Promise<NativeCaptureRecovery> {
+  const internal = internals.get(native);
+  if (!internal) throw new Error("native_capture_recording_invalid");
+  internal.assertActive();
+  await internal.joinCaptures();
+  let verified = await internal.verify();
+  const evaluated = evaluateNativeCaptures(verified.events, {
+    ownerGenerations: verified.eventOwnerGenerations,
+  });
+  let admitted = 0;
+  // Historical legacy receipts remain authoritative, but never suppress v2 checks.
+  const legacyEvents = verified.events.filter((e) => e.type !== "native_media" || !e.captureEpoch);
+  if (
+    legacyEvents.some((e) => e.type === "native_capture_started") ||
+    nativeMediaReceipts(legacyEvents).some((m) => m.kind === "video")
+  )
+    admitted += await recoverLegacyCaptures(root, legacyEvents, native, internal);
+  for (const capture of evaluated) {
+    if (capture.admitted) {
+      admitted++;
+      continue;
+    }
+    if (
+      capture.assessment.state !== "best_effort_assessed" ||
+      !capture.physical ||
+      !capture.sealDigest
+    )
+      continue;
+    const { reservation, physical } = capture;
+    let bytes: Buffer;
+    try {
+      bytes = await captureFile(path.join(root, reservation.directory, reservation.filename), root);
+      if (bytes.length !== physical.bytes || hash(bytes) !== physical.bytesDigest) {
+        await internal.append({
+          type: "native_capture_admission_failed_v2",
+          epoch: reservation.epoch,
+          reason: "native_capture_bytes_mismatch",
+        });
+        continue;
+      }
+    } catch (error) {
+      if (
+        !isArtifactFilesystemFailure(error) &&
+        !(error instanceof Error && /^native_media_(path|size)_invalid$/.test(error.message))
+      )
+        throw error;
+      await internal.append({
+        type: "native_capture_admission_failed_v2",
+        epoch: reservation.epoch,
+        reason: "native_capture_physical_receipt_missing",
+      });
+      continue;
+    }
+    const filename = `${reservation.epoch.captureId}.${reservation.kind === "display" ? "mp4" : "webm"}`;
+    internal.assertActive();
+    try {
+      await durableWrite(path.join(native.directory, filename), bytes);
+      await internal.admit(
+        {
+          filename,
+          kind: "video",
+          timestamp: physical.started,
+          label: "final",
+          durationMs: physical.ended - physical.started,
+          coverage: physical.physicalCoverage,
+          masking: "best_effort",
+          timingOrigin: "native_capture",
+        },
+        {
+          epoch: reservation.epoch,
+          sealDigest: capture.sealDigest,
+          bytesDigest: physical.bytesDigest,
+          bytes: physical.bytes,
+        },
+      );
+      admitted++;
+    } catch (error) {
+      internal.assertActive();
+      if (
+        !isArtifactFilesystemFailure(error) &&
+        !(
+          error instanceof Error &&
+          /^(?:native_media_(?:admission_failed|capacity_exceeded|path_invalid|size_invalid)|native_capture_bytes_mismatch)$/.test(
+            error.message,
+          )
+        )
+      )
+        throw error;
+      await internal.append({
+        type: "native_capture_admission_failed_v2",
+        epoch: reservation.epoch,
+        reason: "native_capture_admission_unavailable",
+      });
+    }
+  }
+  verified = await internal.verify();
+  const assessment = recordingAssessment(verified.events, {
+    ownerGenerations: verified.eventOwnerGenerations,
+  });
+  return { admitted, ...(assessment ? { recordingAssessment: assessment } : {}) };
+}
+
+const recoveryQueues = new WeakMap<ChronicleNativeRecordingPort, Promise<unknown>>();
+export function recoverNativeCaptures(
+  root: string,
+  native: ChronicleNativeRecordingPort,
+): Promise<NativeCaptureRecovery> {
+  const next = (recoveryQueues.get(native) ?? Promise.resolve()).then(() =>
+    recoverNativeCapturesUnlocked(root, native),
+  );
+  recoveryQueues.set(
+    native,
+    next.catch(() => {}),
+  );
+  return next;
+}
+
+async function captureFile(filename: string, root: string): Promise<Buffer> {
+  const canonicalRoot = await realpath(root),
+    canonical = await realpath(filename);
+  if (
+    canonical !== path.join(canonicalRoot, path.relative(root, filename)) ||
+    (await lstat(filename)).nlink !== 1
+  )
+    throw new Error("native_media_path_invalid");
+  return privateFile(filename, root, 128 * 1024 * 1024);
 }

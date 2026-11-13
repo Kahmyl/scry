@@ -10,6 +10,8 @@ import {
 
 export interface EvidenceVerification<T> {
   events: T[];
+  /** Authenticated chunk writer for each payload; never inferred from payload fields. */
+  eventOwnerGenerations: number[];
   chunks: number;
   complete: boolean;
   gaps: Array<{ type: "partial_chunk"; name: string }>;
@@ -42,6 +44,7 @@ export class AdmittedEvidenceReader<T> {
     )
       throw new Error("evidence_admission_scope_invalid");
     const events: T[] = [];
+    const eventOwnerGenerations: number[] = [];
     let sequence = 0,
       previousDigest = "GENESIS",
       plaintextBytes = 0,
@@ -113,6 +116,7 @@ export class AdmittedEvidenceReader<T> {
       for (const event of decoded.events) {
         if (event.sequence !== sequence++) throw new EvidenceArtifactFailure("integrity_mismatch");
         events.push(event.payload);
+        eventOwnerGenerations.push(receipt.ownerGeneration);
       }
       previousDigest = receipt.digest;
       plaintextBytes += decoded.plaintextBytes;
@@ -127,6 +131,7 @@ export class AdmittedEvidenceReader<T> {
       throw new Error("evidence_receipt_summary_mismatch");
     return {
       events,
+      eventOwnerGenerations,
       chunks: snapshot.chunks.length,
       complete: true,
       gaps: [],

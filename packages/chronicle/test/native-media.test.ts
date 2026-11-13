@@ -1,11 +1,17 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, symlink, unlink, stat } from "node:fs/promises";
+import { mkdtemp, writeFile, symlink, unlink, stat, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ChronicleEvidenceService } from "../src/evidence-session.js";
-import { readNativeMedia, readNativeEvidence, recoverNativeCaptures } from "../src/native-media.js";
+import {
+  readNativeMedia,
+  readNativeEvidence,
+  recoverNativeCaptures,
+  createNativeRecording,
+} from "../src/native-media.js";
 import { memoryAdmission } from "./fixtures/evidence-admission.js";
+import { AdmittedEvidenceReader } from "../src/admitted-evidence-reader.js";
 import { EvidenceCipher } from "@scry/veil";
 
 async function fixture() {
@@ -24,18 +30,49 @@ async function fixture() {
     admission,
     maxSessionBytes: 1024 * 1024,
   });
-  const native = await evidence.createNativeRecording();
+  const recording = evidence.createRecording({ snapshot: () => (v) => v });
+  const native = await createNativeRecording({
+    root,
+    generation: admission.ownerGeneration,
+    recording,
+    assertActive: () => admission.assertActive(),
+    verify: () =>
+      new AdmittedEvidenceReader<Record<string, unknown>>({
+        directory: path.join(root, "evidence"),
+        runId: stream.runId,
+        scopeId: stream.sessionId,
+        protection,
+        admission,
+      }).verify(),
+  });
   await evidence.startCapture();
   const filename = `${randomUUID()}.png`;
   await writeFile(path.join(native.directory, filename), randomBytes(64));
-  const input = { filename, kind: "screenshot" as const, timestamp: Date.now(), label: "initial" };
+  const input = {
+    filename,
+    imageEvidence: {
+      state: "available" as const,
+      assessment: "best_effort_known_candidates" as const,
+    },
+    timestamp: Date.now(),
+    label: "initial",
+  };
   const readMedia = () =>
     readNativeEvidence({
       root,
       protection,
       snapshot: { ...structuredClone(stream), sealedAt: new Date().toISOString() },
     });
-  return { root, admission, evidence, native, input, revoke, readMedia };
+  return { root, admission, evidence, native, recording, input, revoke, readMedia };
+}
+async function legacyCapture(f: Awaited<ReturnType<typeof fixture>>) {
+  const capture = path.join(f.native.directory, "capture");
+  await mkdir(capture, { recursive: true });
+  f.recording.receive(
+    JSON.stringify({ type: "native_capture_started", directory: path.relative(f.root, capture) }),
+  );
+  await f.recording.flush();
+  return capture;
 }
 describe("native media custody", () => {
   it("retains finite masking reasons and recovery in the admitted video history", async () => {
@@ -46,7 +83,7 @@ describe("native media custody", () => {
       { pageId, at, state: "degraded" as const, reason: "maintenance_timeout" as const },
       { pageId, at: at + 1000, state: "recovered" as const, reason: "refresh_confirmed" as const },
     ];
-    const capture = await f.native.reserveCapture!();
+    const capture = await legacyCapture(f);
     await writeFile(path.join(capture, "recording.mp4"), randomBytes(128));
     await writeFile(
       path.join(capture, "recording.json"),
@@ -59,14 +96,9 @@ describe("native media custody", () => {
     );
     // A replacement owner's recovery reconstructs diagnostics from admitted
     // events, rather than trusting the filesystem or erasing a recovered gap.
-    await recoverNativeCaptures(
-      f.root,
-      [
-        ...events.map((event) => ({ type: "native_masking", event })),
-        { type: "native_capture_started", directory: path.relative(f.root, capture) },
-      ],
-      f.native,
-    );
+    for (const event of events) f.native.recordMasking!(event);
+    await f.native.flush();
+    await recoverNativeCaptures(f.root, f.native);
     await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
     await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
     expect(await f.readMedia()).toMatchObject([
@@ -94,9 +126,13 @@ describe("native media custody", () => {
       state: "degraded",
       reason: "installation_failed",
     });
-    const filename = `${randomUUID()}.mp4`;
-    await writeFile(path.join(f.native.directory, filename), randomBytes(128));
-    await f.native.admit({ filename, kind: "video", label: "final", timestamp: at });
+    const capture = await legacyCapture(f);
+    await writeFile(path.join(capture, "recording.mp4"), randomBytes(128));
+    await writeFile(
+      path.join(capture, "recording.json"),
+      JSON.stringify({ started: at, duration: "1", coverage: "complete" }),
+    );
+    await f.evidence.recoverNativeCaptures(f.native);
     expect(() =>
       f.native.recordMasking!({
         pageId,
@@ -116,7 +152,7 @@ describe("native media custody", () => {
   });
   it("retains bounded user-facing evidence descriptions in admitted receipts", async () => {
     const f = await fixture();
-    await f.native.admit({
+    await f.native.admitStill({
       ...f.input,
       title: "Saved project document",
       description: "The note after saving and reopening.",
@@ -133,18 +169,20 @@ describe("native media custody", () => {
     { interruptionReason: "arbitrary internal details" },
   ])("rejects malformed native presentation %#", async (invalid) => {
     const f = await fixture();
-    await expect(f.native.admit({ ...f.input, ...invalid })).rejects.toThrow("receipt_invalid");
+    await expect(f.native.admitStill({ ...f.input, ...invalid })).rejects.toThrow(
+      "receipt_invalid",
+    );
     expect(await f.readMedia()).toEqual([]);
   });
   it("publishes only admitted native receipts and deduplicates identical screenshots", async () => {
     const f = await fixture();
-    await f.native.admit(f.input);
+    await f.native.admitStill(f.input);
     const duplicate = `${randomUUID()}.png`;
     const bytes = await import("node:fs/promises").then((fs) =>
       fs.readFile(path.join(f.native.directory, f.input.filename)),
     );
     await writeFile(path.join(f.native.directory, duplicate), bytes);
-    await f.native.admit({ ...f.input, filename: duplicate });
+    await f.native.admitStill({ ...f.input, filename: duplicate });
     await expect(stat(path.join(f.native.directory, duplicate))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -159,11 +197,11 @@ describe("native media custody", () => {
   it("refuses stale-owner admission rather than promoting an orphan file", async () => {
     const f = await fixture();
     f.revoke();
-    await expect(f.native.admit(f.input)).rejects.toThrow("OWNER_FENCED");
+    await expect(f.native.admitStill(f.input)).rejects.toThrow("OWNER_FENCED");
   });
   it("admits a native MP4 only from a pre-capture reservation and preserves partial coverage", async () => {
     const f = await fixture();
-    const capture = await f.native.reserveCapture!();
+    const capture = await legacyCapture(f);
     await writeFile(path.join(capture, "recording.mp4"), randomBytes(128));
     await writeFile(
       path.join(capture, "recording.json"),
@@ -174,9 +212,9 @@ describe("native media custody", () => {
         reason: "recording_capacity",
       }),
     );
-    expect(await f.evidence.recoverNativeCaptures!(f.native)).toBe(1);
+    expect(await f.evidence.recoverNativeCaptures!(f.native)).toMatchObject({ admitted: 1 });
     // Repeating recovery cannot duplicate an already admitted video.
-    expect(await f.evidence.recoverNativeCaptures!(f.native)).toBe(1);
+    expect(await f.evidence.recoverNativeCaptures!(f.native)).toMatchObject({ admitted: 1 });
     await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
     const closed = await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
     expect(closed.state).toBe("incomplete");
@@ -197,12 +235,12 @@ describe("native media custody", () => {
       path.join(f.native.directory, "recording.json"),
       JSON.stringify({ started: Date.now(), duration: "1", coverage: "complete" }),
     );
-    expect(await f.evidence.recoverNativeCaptures!(f.native)).toBe(0);
+    expect(await f.evidence.recoverNativeCaptures!(f.native)).toMatchObject({ admitted: 0 });
     expect(await f.readMedia()).toHaveLength(0);
   });
   it("detects changed native bytes at read time", async () => {
     const f = await fixture();
-    await f.native.admit(f.input);
+    await f.native.admitStill(f.input);
     await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
     const result = await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
     const media = await f.readMedia();
@@ -215,7 +253,7 @@ describe("native media custody", () => {
     "preserves unavailable failure closure for %s admitted native media",
     async (kind) => {
       const f = await fixture();
-      await f.native.admit(f.input);
+      await f.native.admitStill(f.input);
       await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
       const file = path.join(f.native.directory, f.input.filename);
       if (kind === "missing") await unlink(file);
@@ -234,7 +272,7 @@ describe("native media custody", () => {
   );
   it("ignores a substituted filesystem manifest and reads only database-admitted media receipts", async () => {
     const f = await fixture();
-    await f.native.admit(f.input);
+    await f.native.admitStill(f.input);
     await f.evidence.stopCapture({ browserStopped: true, recordingDrained: true });
     const result = await f.evidence.seal({ renderVideo: false, actionLedger: async () => [] });
     const original = await f.readMedia();
@@ -254,7 +292,7 @@ describe("native media custody", () => {
   });
   it("rejects traversal and symlink media candidates", async () => {
     const f = await fixture();
-    await expect(f.native.admit({ ...f.input, filename: "../outside.png" })).rejects.toThrow(
+    await expect(f.native.admitStill({ ...f.input, filename: "../outside.png" })).rejects.toThrow(
       "receipt_invalid",
     );
     const link = `${randomUUID()}.png`;
@@ -262,6 +300,8 @@ describe("native media custody", () => {
       path.join(f.native.directory, f.input.filename),
       path.join(f.native.directory, link),
     );
-    await expect(f.native.admit({ ...f.input, filename: link })).rejects.toThrow("path_invalid");
+    await expect(f.native.admitStill({ ...f.input, filename: link })).rejects.toThrow(
+      "path_invalid",
+    );
   });
 });

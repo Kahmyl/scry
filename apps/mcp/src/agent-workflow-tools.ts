@@ -14,6 +14,9 @@ import {
   publishBrowserMissionReportSchema,
   prepareBrowserJourneySchema,
   testingContextRequestSchema,
+  canonicalFeedback,
+  contextFeedback,
+  releaseFeedback,
 } from "@scry/contracts";
 
 /** Convenience operations reuse the same scoped APIs and idempotency rules. */
@@ -100,13 +103,9 @@ export function registerAgentWorkflowTools(
       annotations: localFactualRead,
     },
     async (input) => {
-      return toolResult(
-        {
-          ...(await client.post<Record<string, unknown>>("/testing-context", input)),
-          workflowGuidance,
-        },
-        "Context readiness is a snapshot, not a permission grant or proof of host tool exposure. Resolve blocked prerequisites before dependent work.",
-      );
+      const context = await client.post<Record<string, unknown>>("/testing-context", input);
+      const interaction = canonicalFeedback(context.interaction) ?? contextFeedback(context);
+      return toolResult({ ...context, interaction, workflowGuidance }, interaction.summary);
     },
   );
   server.registerTool(
@@ -134,11 +133,11 @@ export function registerAgentWorkflowTools(
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
     },
-    async ({ runId }) =>
-      toolResult(
-        await client.get<Record<string, unknown>>(`/runs/${runId}/status`),
-        "Run execution and release facts loaded.",
-      ),
+    async ({ runId }) => {
+      const status = await client.get<Record<string, unknown>>(`/runs/${runId}/status`);
+      const interaction = releaseFeedback(status);
+      return toolResult({ ...status, interaction }, interaction.summary);
+    },
   );
   server.registerTool(
     "finish_incomplete_run",
@@ -156,11 +155,12 @@ export function registerAgentWorkflowTools(
     async ({ runId, ...input }) => {
       const stopped = await client.post<Record<string, unknown>>(`/runs/${runId}/stop`, input);
       const status = await client.get<Record<string, unknown>>(`/runs/${runId}/status`);
+      const interaction = releaseFeedback(status);
       return toolResult(
-        { ...stopped, ...status },
-        status.browserReleased === true
-          ? "Incomplete attempt ended; browser release confirmed."
-          : "Stop returned, but browser release is not confirmed. Inspect status before claiming completion.",
+        { ...stopped, ...status, interaction },
+        interaction.state === "release_confirmed"
+          ? "Incomplete attempt ended; browser release confirmed. Reuse this receipt; no immediate status reread is needed."
+          : interaction.summary,
       );
     },
   );

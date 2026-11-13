@@ -6,9 +6,14 @@ import { BrowserProtectedKeyring } from "./protected-keyring.js";
 import { EvidenceCipher } from "./evidence-cipher.js";
 import { safeDomSemanticHint } from "./transport-protection.js";
 import { nativeProtectionScript } from "./native-protection.js";
+import { createNativeDiagnosticProtection } from "./native-diagnostic-protection.js";
+import { createNativeAdapterProtector } from "./native-adapter-protection.js";
 
 /** Supplies policy capabilities without exposing key material to browser execution. */
 export class VeilBrowserProtection implements VeilBrowserProtectionPort {
+  nativeDiagnostics(protectedValues: Record<string, string>) {
+    return createNativeDiagnosticProtection(protectedValues);
+  }
   nativeEvidence(scope: Parameters<NonNullable<VeilBrowserProtectionPort["nativeEvidence"]>>[0]) {
     const keys = BrowserProtectedKeyring.fromEnvironment();
     const context = `${scope.runId}:${scope.sessionId}`;
@@ -60,6 +65,7 @@ export class VeilBrowserProtection implements VeilBrowserProtectionPort {
     });
     return {
       nativeProtectionScript: nativeProtectionScript(Object.values(input.protectedValues)),
+      nativePrivacy: createNativeAdapterProtector(input.protectedValues),
       authority,
       vault,
       evidenceProtection: new EvidenceCipher(

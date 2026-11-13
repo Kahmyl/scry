@@ -44,6 +44,19 @@ export function privateClipboard(display) {
 
 export class NativeInteractions {
   #epochs = new WeakMap();
+  #selectedPage;
+  cachedActivePage() {
+    return this.#selectedPage && !this.#selectedPage.isClosed() ? this.#selectedPage : undefined;
+  }
+  noteTabState(result) {
+    const text =
+      result.content
+        ?.filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("\n") ?? "";
+    const matches = [...text.matchAll(/^- (\d+): \(current\)/gm)];
+    if (matches.length === 1) this.#selectedPage = this.context.pages()[Number(matches[0][1])];
+  }
   constructor(context, call, clipboard) {
     this.context = context;
     this.call = call;
@@ -66,6 +79,7 @@ export class NativeInteractions {
     if (matches.length !== 1) throw Error("REFERENCE_UNAVAILABLE");
     const page = this.context.pages()[Number(matches[0][1])];
     if (!page || page.isClosed()) throw Error("REFERENCE_UNAVAILABLE");
+    this.#selectedPage = page;
     return page;
   }
   async bind(page, target) {

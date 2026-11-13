@@ -6,7 +6,11 @@ import { BrowserExecutionRepository } from "../src/browser-execution/repositorie
 import { BrowserCommandRepository } from "../src/browser-execution/repositories/browser-command.repository.js";
 import { BrowserProtectedValueCipher } from "../src/browser-execution/protected-value-cipher.js";
 import { TestResourcesRepository } from "../src/test-resources/test-resources.repository.js";
-import { testingContextRequestSchema, createTestResourceSchema } from "@scry/contracts";
+import {
+  testingContextRequestSchema,
+  createTestResourceSchema,
+  applicationReportPresentationSchema,
+} from "@scry/contracts";
 import { seedSession } from "./fixtures/browser-session.js";
 const target = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
 (target ? describe : describe.skip)("context prerequisite snapshots", () => {
@@ -154,5 +158,73 @@ const target = process.env.SCRY_BROWSER_TEST_DATABASE_URL;
       available: false,
     });
     expect(r.hostToolExposure).toBe("unknown");
+  });
+
+  it("resumes the selected completed Mission's exact report with its exclusions and no operator fields", async () => {
+    const f = await setup();
+    const reportId = randomUUID();
+    const presentation = applicationReportPresentationSchema.parse({
+      subject: "application",
+      scope: ["Fictional preference only"],
+      checks: [
+        {
+          title: "Saved preference",
+          expected: "Persisted",
+          actual: "Persisted",
+          status: "matched_expectation",
+        },
+      ],
+      limitations: ["Account removal was excluded; preserve access."],
+    });
+    await db.query(
+      "INSERT INTO mission_reports(id,mission_id,state,summary,safe_report,evidence_digest,finalized_at) VALUES($1,$2,'final','Preference saved',$3,$4,now())",
+      [
+        reportId,
+        f.s.missionId,
+        JSON.stringify({ presentation, operatorOnly: "PRIVATE_CONTEXT_CANARY" }),
+        "a".repeat(64),
+      ],
+    );
+    await db.query(
+      "UPDATE missions SET state='completed',final_report_id=$2,completed_at=now() WHERE id=$1",
+      [f.s.missionId, reportId],
+    );
+    const r = await controller.context(f.principal, f.input);
+    expect(r.resume).toMatchObject({
+      lifecycle: "completed",
+      originalMissionFacts: { finalReportId: reportId },
+      reportFacts: {
+        state: "available",
+        source: { id: reportId, projectId: f.s.projectId, missionId: f.s.missionId },
+        scope: presentation.scope,
+        limitations: presentation.limitations,
+      },
+      permissions: "not_determined",
+    });
+    expect(r.interaction.next.action).toBe("plan_follow_up_from_returned_facts");
+    expect(JSON.stringify(r)).not.toContain("PRIVATE_CONTEXT_CANARY");
+    await expect(
+      controller.context({ ...f.principal, workspaceId: randomUUID() }, f.input),
+    ).rejects.toThrow("PROJECT_NOT_FOUND");
+
+    await db.query("UPDATE mission_reports SET safe_report=$2 WHERE id=$1", [
+      reportId,
+      JSON.stringify({
+        presentation: {
+          ...presentation,
+          limitations: Array.from({ length: 5 }, (_, index) => `Retained exclusion ${index + 1}`),
+        },
+      }),
+    ]);
+    const bounded = await controller.context(f.principal, f.input);
+    expect(bounded.resume?.reportFacts).toMatchObject({
+      state: "partial",
+      omitted: { limitations: true },
+    });
+    expect(bounded.interaction.next).toMatchObject({
+      action: "read_saved_report",
+      tool: "get_report",
+    });
+    expect(bounded.resume?.originalMissionFacts?.finalReportId).toBe(reportId);
   });
 });

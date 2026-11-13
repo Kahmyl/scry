@@ -11,3 +11,7 @@ export * from "./agent-workflow.js";
 export * from "./cleanup.js";
 export * from "./masking-diagnostics.js";
 export * from "./native-capabilities.js";
+export * from "./agent-feedback.js";
+export * from "./agent-resume.js";
+export * from "./native-privacy.js";
+export * from "./native-protection-port.js";

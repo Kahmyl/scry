@@ -16,7 +16,7 @@ import {
   ProtectedCaptureVault,
   ProtectionAuthority,
   EvidenceCipher,
-  nativeProtectionScript,
+  createNativeAdapterProtector,
 } from "@scry/veil";
 
 import {
@@ -205,9 +205,15 @@ run("browser execution baseline queued long journey", () => {
       store,
       new BrowserReplayRenderer(),
     );
+    const nativeRecording = await evidenceSession.createNativeRecording();
+    const nativeProtection = createNativeAdapterProtector({
+      LOGIN_PASSWORD: loginPassword,
+      GENERATED_SECRET: generatedSecret,
+    });
     const recorder = new SanitizedBrowserRecorder({
-      native: await evidenceSession.createNativeRecording(),
-      protectionScript: nativeProtectionScript([loginPassword, generatedSecret]),
+      native: nativeRecording,
+      protection: nativeProtection,
+      recoverCaptures: () => evidenceSession.recoverNativeCaptures(nativeRecording),
     });
     const actions: Array<Record<string, unknown>> = [];
     const recordAction = async (tool: string, element: string, perform: () => Promise<void>) => {
@@ -441,6 +447,7 @@ run("browser execution baseline queued long journey", () => {
       const diagnostics = await recorder.flush();
       expect(diagnostics.errors).toEqual([]);
       await recorder.close();
+      nativeProtection.dispose();
       await context.close();
       await browser.close();
     }

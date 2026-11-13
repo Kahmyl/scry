@@ -10,3 +10,5 @@ export * from "./evidence-artifact-failure.js";
 export * from "./native-timeline.js";
 export * from "./native-media.js";
 export * from "./native-stream.js";
+
+export { recordingAssessment, evaluateNativeCaptures } from "./native-capture.js";

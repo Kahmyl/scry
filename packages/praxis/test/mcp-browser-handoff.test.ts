@@ -378,3 +378,119 @@ describe("official adapter command handoff", () => {
     }
   });
 });
+
+it.each(["native_protection_capacity", "native_protection_refresh_incomplete"])(
+  "keeps completed action truth when the native observation is withheld (%s)",
+  async (observationIssue) => {
+    const effects = { assertOwner: vi.fn(async () => {}) } as unknown as PraxisEffectsPort;
+    const commands = {
+      protectedValuesForSession: vi.fn(async () => ({})),
+    } as unknown as PraxisCommandsPort;
+    const engine = new PraxisMcpBrowserEngine(
+      commands,
+      effects,
+      {} as ChronicleEvidencePort,
+      {
+        nativeDiagnostics: () => ({ sanitize: (value: string) => value }),
+      } as unknown as VeilBrowserProtectionPort,
+      "unused",
+    );
+    const c = (engine as unknown as { cell(id: string): any }).cell("privacy-limited-observation");
+    c.scope = { baseOrigin: "http://app.test" };
+    c.opening = Promise.resolve();
+    c.lease = new PraxisOwnerLease(
+      { sessionId: c.id, generation: 1, leaseToken: "private" },
+      effects,
+      { sampleStartedAt: performance.now(), leaseRemainingMs: 60000 },
+    );
+    c.policyDigest = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    c.custody = { synchronize: vi.fn(async () => {}) };
+    const persisted: any[] = [];
+    let count = 0;
+    c.worker = {
+      call: vi.fn(async () => {
+        c.denials.record({
+          reason: "origin_not_allowed",
+          origin: "http://fictional-generated-secret.example",
+        });
+        return {
+          isError: false,
+          observationAvailable: false,
+          observationIssue,
+          diagnosticDetailAllowed: ++count === 1 ? false : true,
+          content: [{ type: "text", text: "[UNAVAILABLE:NATIVE_PROTECTION_REFRESH]" }],
+        };
+      }),
+    };
+    try {
+      const result = await engine.execute(
+        c.id,
+        { kind: "browser_tool", tool: "browser_click", args: { target: "#save" } },
+        {
+          remainingMs: 5000,
+          persistAction: async (r) => {
+            persisted.push(structuredClone(r));
+          },
+        },
+      );
+      expect(result).toMatchObject({
+        execution: "completed",
+        businessOutcome: "unverified",
+        observation: "unavailable",
+        observationIssue,
+      });
+      expect(result).not.toHaveProperty("observationId");
+      expect(result).not.toHaveProperty("diagnosticDetailAllowed");
+      expect(
+        persisted.some((r) => r.execution === "completed" && r.observation === "unavailable"),
+      ).toBe(true);
+      expect(c.worker.call).toHaveBeenCalledTimes(2); // One action + existing successor read; no write replay.
+      expect(c.diagnosticDetailSuppressed).toBe(true);
+      expect(JSON.stringify(result)).not.toContain("fictional-generated-secret");
+      expect((result.scopeDiagnostics as any).current).toMatchObject({
+        denialCount: 2,
+        endpoints: [],
+      });
+    } finally {
+      c.lease.revoke();
+    }
+  },
+);
+
+it("keeps endpoint details suppressed after rejected child knowledge and a later bound-only reply", async () => {
+  const engine = new PraxisMcpBrowserEngine(
+    {} as PraxisCommandsPort,
+    {} as PraxisEffectsPort,
+    {} as ChronicleEvidencePort,
+    {
+      nativeDiagnostics: () => ({ sanitize: (value: string) => value }),
+    } as unknown as VeilBrowserProtectionPort,
+    "unused",
+  ) as any;
+  const c = engine.cell("rejected-native-read");
+  engine.phase = async (
+    _c: unknown,
+    _attempt: unknown,
+    _budget: unknown,
+    work: () => Promise<unknown>,
+  ) => work();
+  c.worker = {
+    call: vi
+      .fn()
+      .mockRejectedValueOnce(Error("fixture child timeout"))
+      .mockResolvedValueOnce({ content: [], diagnosticDetailAllowed: true }),
+  };
+  const attempt = { remainingMs: () => 1000 };
+  await expect(engine.nativeCall(c, attempt, {})).rejects.toThrow("fixture child timeout");
+  c.denials.record({
+    reason: "origin_not_allowed",
+    origin: "http://fictional-unobserved-secret.example",
+  });
+  await engine.nativeCall(c, attempt, {});
+  engine.diagnosticPolicy(c, {});
+  const diagnostic = c.denials.snapshot();
+  expect(c.diagnosticDetailSuppressed).toBe(true);
+  expect(diagnostic.denialCount).toBe(1);
+  expect(diagnostic.endpoints).toEqual([]);
+  expect(JSON.stringify(diagnostic)).not.toContain("fictional-unobserved-secret");
+});

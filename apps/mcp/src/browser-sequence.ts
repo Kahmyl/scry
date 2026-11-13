@@ -3,7 +3,7 @@ import { browserSequenceInputSchema } from "@scry/contracts";
 import type { BrowserApiClient } from "./api-client.js";
 import { toolAuthMetadata } from "./oauth-discovery.js";
 import { uuid } from "./tool-registry.js";
-import { nativeCommandResult } from "./native-browser-tools.js";
+import { nativeCommandResult, nativePendingResult } from "./native-browser-tools.js";
 
 type Poll = (
   client: BrowserApiClient,
@@ -36,7 +36,9 @@ export function registerBrowserSequence(server: McpServer, client: BrowserApiCli
         },
       );
       const observed = await poll(client, submitted.commandId, 25_000);
-      const final = observed ? await nativeCommandResult(client, observed) : undefined;
+      const final = observed
+        ? await nativeCommandResult(client, observed)
+        : nativePendingResult(submitted);
       const result = observed?.result as Record<string, unknown> | undefined;
       const complete =
         observed?.state === "completed" &&
@@ -45,12 +47,12 @@ export function registerBrowserSequence(server: McpServer, client: BrowserApiCli
         final?.isError !== true;
       const structuredContent = {
         message: complete
-          ? "Planned actions completed. Verify the resulting business state."
-          : "Inspect this durable command before continuing. Pending or uncertain actions must not be replayed.",
+          ? "Planned actions completed. Use the returned observation to verify the business state."
+          : final.structuredContent.message,
         commandId: submitted.commandId,
         state: observed?.state ?? submitted.state,
         complete,
-        ...(final ? { command: final.structuredContent.command } : {}),
+        command: final.structuredContent.command,
       };
       return {
         content: [

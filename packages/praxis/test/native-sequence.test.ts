@@ -117,3 +117,43 @@ it("a dispatch-admission failure prevents all application calls and disposes the
     c.lease.revoke();
   }
 });
+it("withholds idle diagnostic detail in a new dispatch prefix until that step has fresh child admission", async () => {
+  const { engine, c, command } = fixture(),
+    persisted: any[] = [];
+  (engine as any).protection.nativeDiagnostics = () => ({ sanitize: (value: string) => value });
+  let step = 0,
+    injected = false;
+  c.worker.call.mockImplementation(async (message: any) => ({
+    isError: false,
+    content: [],
+    diagnosticDetailAllowed: message.type === "plan_step" ? step++ === 0 : true,
+  }));
+  try {
+    const result = await engine.execute(c.id, command, {
+      remainingMs: 5000,
+      persistAction: async (r) => {
+        persisted.push(structuredClone(r));
+        if (r.reason === "step_receipt" && (r.receipts as any[]).length === 1 && !injected) {
+          injected = true;
+          c.denials.record({
+            reason: "origin_not_allowed",
+            origin: "http://fictional-newly-generated-secret.example",
+          });
+        }
+      },
+    });
+    const secondDispatch = persisted.find(
+      (r) => r.reason === "dispatch_started" && r.receipts.length === 2,
+    );
+    expect(secondDispatch.receipts.map((r: any) => r.execution)).toEqual(["completed", "unknown"]);
+    expect(secondDispatch.scopeDiagnostics.current).toMatchObject({
+      denialCount: 1,
+      endpoints: [],
+    });
+    expect(JSON.stringify(persisted)).not.toContain("fictional-newly-generated-secret");
+    expect(result).toMatchObject({ execution: "completed", complete: true });
+    expect(c.diagnosticDetailSuppressed).toBe(true);
+  } finally {
+    c.lease.revoke();
+  }
+});

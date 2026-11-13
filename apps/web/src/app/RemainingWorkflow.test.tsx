@@ -108,7 +108,7 @@ it("projects masking intervals by exact page, preserves unconfirmed tails and se
   ]);
   const seek = vi.fn();
   render(<MaskingReview diagnostics={{ events, truncated: true }} onSeek={seek} />);
-  expect(screen.getByText(/not proof of disclosed information/)).toBeTruthy();
+  expect(screen.getByText(/does not establish that information was disclosed/)).toBeTruthy();
   fireEvent.click(screen.getByText("Masking review intervals"));
   fireEvent.click(screen.getAllByRole("button", { name: "Review this interval" })[1]!);
   expect(seek).toHaveBeenCalledWith(1200);

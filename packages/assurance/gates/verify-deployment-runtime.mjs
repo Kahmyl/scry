@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 
 const fixture = mkdtempSync(join(tmpdir(), "scry-deployment-runtime-"));
 const envFile = join(fixture, "deploy.env");
+const caddyfile = join(fixture, "Caddyfile");
 const project = `scry-caddy-contract-${process.pid}-${Date.now()}`;
 writeFileSync(
   envFile,
@@ -27,7 +28,6 @@ writeFileSync(
   ].join("\n"),
   { mode: 0o600 },
 );
-
 const composeArguments = [
   "compose",
   "--project-name",
@@ -72,32 +72,42 @@ try {
   console.log(
     "OAuth deployment wiring verified: explicit activation, shared public scope, private keys only on API.",
   );
+  // Validate the exact Compose-rendered bytes with its actual Caddy image.
+  // A parser check needs no Compose network, service ports or persistent volumes.
+  assert.equal(typeof enabled.configs.caddyfile.content, "string");
+  assert.ok(enabled.configs.caddyfile.content.trim());
+  assert.ok(enabled.services.caddy.image);
+  writeFileSync(caddyfile, enabled.configs.caddyfile.content, { mode: 0o600 });
   execFileSync(
     "docker",
     [
-      ...composeArguments,
       "run",
       "--rm",
-      "--no-deps",
+      "--name",
+      project,
+      "--network",
+      "none",
+      "--mount",
+      `type=bind,src=${caddyfile},dst=/etc/caddy/Caddyfile,readonly`,
       "--entrypoint",
       "caddy",
-      "caddy",
+      enabled.services.caddy.image,
       "validate",
       "--config",
       "/etc/caddy/Caddyfile",
     ],
-    { stdio: "inherit" },
+    { stdio: "inherit", timeout: 30_000 },
   );
   console.log(
     "Deployment runtime verified: the real Caddy image accepts the rendered configuration.",
   );
 } finally {
   try {
-    execFileSync("docker", [...composeArguments, "down", "-v", "--remove-orphans"], {
+    execFileSync("docker", ["rm", "--force", project], {
       stdio: "ignore",
     });
   } catch {
-    // The validation command can fail before Compose creates project resources.
+    // --rm already removes a completed validator; only this exact fixture is owned.
   }
   rmSync(fixture, { recursive: true, force: true });
 }

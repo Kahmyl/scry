@@ -114,40 +114,76 @@ describe("self-contained external-agent reporting guidance", () => {
           ]),
         );
         fetcher.mockClear();
-        expect(instructions).toContain(
-          "Customer reports describe the tested application, not Scry",
-        );
-        expect(instructions).toContain("safeReport.presentation");
-        expect(instructions).toContain("not_tested");
-        expect(instructions).toContain("inconclusive");
-        expect(instructions).toContain("No automatic retry");
-        expect(instructions).toContain("operator diagnostics");
-        expect(instructions).toContain("Before asking a question, review the current conversation");
-        expect(instructions).toContain("do not make them repeat an answer");
-        expect(instructions).toContain(
-          "does not override the client's approval or safety requirements",
-        );
-        expect(instructions).toContain("State the exact action/account, why it is needed");
-        expect(instructions).toContain(
-          "Never accept agreements or consequential actions from silence",
-        );
-        expect(instructions).toContain("Continue independent checks while waiting");
-        expect(instructions).toContain("Do not ask customers for internal IDs");
-        expect(instructions).toContain("unsupported workspace administration");
-        expect(instructions).toContain("in the same reply");
-        expect(instructions).toContain("https://scry.giize.com/support");
-        expect(instructions).toContain("Do not invent an administration screen");
-        expect(instructions).toContain(
-          "Separate operations exercised from successful business journeys",
-        );
-        expect(instructions).toContain("Put the most consequential recorded limitations first");
-        expect(instructions).toContain(
-          "not exhaustive requested-scenario coverage or unique defects",
-        );
-        expect(instructions).toContain("Distinguish a deliberately excluded check");
-        expect(instructions).toContain("why the test was not carried out");
-        expect(instructions).toContain("If the reason is unknown, say so instead of inventing one");
-        expect(instructions).toContain("not automatically confirmed defects");
+        if (native) {
+          expect(instructions).toContain(
+            "Withheld destinations remain unknown; explain the gap without guessing a blocked host",
+          );
+          expect(instructions).toContain("Masking alone does not save credentials");
+          expect(instructions).toContain("never recover plaintext from pixels or logs");
+          // Native wording is intentionally compact. Assert the safety decisions
+          // and executable protocol instead of freezing paragraphs of old prose.
+          for (const fact of [
+            "application verdict",
+            "safeReport.presentation",
+            "not_tested",
+            "inconclusive",
+            "unknown action may already have happened",
+            "Never repeat an uncertain write",
+            "Reuse available task facts",
+            "client's approval rules",
+            "Silence",
+            "continue independent checks",
+            "unsupported workspace administration",
+            "in the same reply",
+            "https://scry.giize.com/support",
+            "next useful action and who can do it",
+            "agreed exclusion",
+            "not requested-scenario coverage",
+            "never invent references",
+          ])
+            expect(instructions).toContain(fact);
+          expect(Buffer.byteLength(instructions)).toBeLessThan(14300);
+          expect(instructions.split("\n\n").length).toBeLessThan(21);
+        } else {
+          expect(instructions).toContain(
+            "Customer reports describe the tested application, not Scry",
+          );
+          expect(instructions).toContain("safeReport.presentation");
+          expect(instructions).toContain("not_tested");
+          expect(instructions).toContain("inconclusive");
+          expect(instructions).toContain("No automatic retry");
+          expect(instructions).toContain("operator diagnostics");
+          expect(instructions).toContain(
+            "Before asking a question, review the current conversation",
+          );
+          expect(instructions).toContain("do not make them repeat an answer");
+          expect(instructions).toContain(
+            "does not override the client's approval or safety requirements",
+          );
+          expect(instructions).toContain("State the exact action/account, why it is needed");
+          expect(instructions).toContain(
+            "Never accept agreements or consequential actions from silence",
+          );
+          expect(instructions).toContain("Continue independent checks while waiting");
+          expect(instructions).toContain("Do not ask customers for internal IDs");
+          expect(instructions).toContain("unsupported workspace administration");
+          expect(instructions).toContain("in the same reply");
+          expect(instructions).toContain("https://scry.giize.com/support");
+          expect(instructions).toContain("Do not invent an administration screen");
+          expect(instructions).toContain(
+            "Separate operations exercised from successful business journeys",
+          );
+          expect(instructions).toContain("Put the most consequential recorded limitations first");
+          expect(instructions).toContain(
+            "not exhaustive requested-scenario coverage or unique defects",
+          );
+          expect(instructions).toContain("Distinguish a deliberately excluded check");
+          expect(instructions).toContain("why the test was not carried out");
+          expect(instructions).toContain(
+            "If the reason is unknown, say so instead of inventing one",
+          );
+          expect(instructions).toContain("not automatically confirmed defects");
+        }
         expect(instructions).toContain("Example report payload");
         const example = JSON.parse(
           /Example report payload[^\n]*?: (\{[^\n]+\})$/.exec(instructions)![1]!,

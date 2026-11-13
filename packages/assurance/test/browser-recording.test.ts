@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { describe, expect, it } from "vitest";
 import { SanitizedBrowserRecorder, BrowserReplayRenderer } from "@scry/praxis";
 import { ChronicleEvidenceService, readNativeEvidence, readNativeMedia } from "@scry/chronicle";
-import { EvidenceCipher, nativeProtectionScript } from "@scry/veil";
+import { EvidenceCipher, nativeProtectionScript, createNativeAdapterProtector } from "@scry/veil";
 import { recordingAdmission } from "./fixtures/evidence-admission.js";
 
 const browserTest = process.env.SCRY_BROWSER_E2E === "1" ? it : it.skip;
@@ -30,6 +30,7 @@ describe("native browser evidence", () => {
         maxSessionBytes: 1024 * 1024,
       });
       const native = await evidence.createNativeRecording();
+      const nativeProtection = createNativeAdapterProtector({ PASSWORD: "fixture-access-secret" });
       const browser = await chromium.launch({
         headless: true,
         ...(process.env.SCRY_BROWSER_CHANNEL ? { channel: process.env.SCRY_BROWSER_CHANNEL } : {}),
@@ -39,7 +40,8 @@ describe("native browser evidence", () => {
         const page = await context.newPage();
         const recorder = new SanitizedBrowserRecorder({
           native,
-          protectionScript: nativeProtectionScript(["fixture-access-secret"]),
+          protection: nativeProtection,
+          recoverCaptures: () => evidence.recoverNativeCaptures(native),
         });
         await recorder.start(context);
         expect(
@@ -119,8 +121,18 @@ describe("native browser evidence", () => {
         for (const protectedPixel of pixels.slice(0, 2)) {
           expect(protectedPixel![3]).toBe(255);
           expect(protectedPixel).not.toEqual([0, 0, 0, 255]);
-          expect(protectedPixel![0]).toBeGreaterThanOrEqual(150);
-          expect(protectedPixel![0]).toBeLessThanOrEqual(229);
+          // Opaque #e5e9ed with the shipped white-18% / dark-5% texture.
+          // The old blurred stripe's red-channel ceiling excluded the new
+          // highlight (234). Check every channel, including raster rounding;
+          // an uncovered white input still fails these bounds.
+          for (const [channel, minimum, maximum] of [
+            [0, 222, 234],
+            [1, 226, 238],
+            [2, 231, 241],
+          ] as const) {
+            expect(protectedPixel![channel]).toBeGreaterThanOrEqual(minimum);
+            expect(protectedPixel![channel]).toBeLessThanOrEqual(maximum);
+          }
         }
         expect(pixels[2]).not.toEqual(pixels[0]);
         expect(pixels[3]).toEqual([0, 136, 0, 255]);
@@ -209,6 +221,7 @@ describe("native browser evidence", () => {
           "best effort",
         );
       } finally {
+        nativeProtection.dispose();
         await browser.close();
       }
     },

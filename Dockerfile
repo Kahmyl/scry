@@ -31,7 +31,8 @@ ENV SCRY_BROWSER_ADAPTER=playwright_mcp
 ENV SCRY_BROWSER_PLAYWRIGHT_MCP_ENABLED=true
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /workspace
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg xvfb xclip \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg xvfb xclip util-linux \
+    && test -x /usr/bin/setpriv \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=prod-deps /workspace/package.json /workspace/pnpm-workspace.yaml /workspace/tsconfig.base.json ./
