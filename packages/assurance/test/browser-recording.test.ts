@@ -121,8 +121,18 @@ describe("native browser evidence", () => {
         for (const protectedPixel of pixels.slice(0, 2)) {
           expect(protectedPixel![3]).toBe(255);
           expect(protectedPixel).not.toEqual([0, 0, 0, 255]);
-          expect(protectedPixel![0]).toBeGreaterThanOrEqual(150);
-          expect(protectedPixel![0]).toBeLessThanOrEqual(229);
+          // Opaque #e5e9ed with the shipped white-18% / dark-5% texture.
+          // The old blurred stripe's red-channel ceiling excluded the new
+          // highlight (234). Check every channel, including raster rounding;
+          // an uncovered white input still fails these bounds.
+          for (const [channel, minimum, maximum] of [
+            [0, 222, 234],
+            [1, 226, 238],
+            [2, 231, 241],
+          ] as const) {
+            expect(protectedPixel![channel]).toBeGreaterThanOrEqual(minimum);
+            expect(protectedPixel![channel]).toBeLessThanOrEqual(maximum);
+          }
         }
         expect(pixels[2]).not.toEqual(pixels[0]);
         expect(pixels[3]).toEqual([0, 136, 0, 255]);
