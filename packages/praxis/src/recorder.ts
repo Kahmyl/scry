@@ -17,6 +17,7 @@ import { installCaptureBinding } from "./mcp-native/capture-binding.mjs";
 import { refreshNativeProtection } from "./mcp-native/protection-refresh.mjs";
 // @ts-expect-error Private task lanes with the existing 200 ms maintenance budget.
 import { BestEffortTasks } from "./mcp-native/best-effort-tasks.mjs";
+import { readFinalCaptureProtection } from "./mcp-native/final-protection-read.mjs";
 
 type ProducerEvent =
   | { type: "capture_sample"; sequence: number; sample: NativeCaptureSample }
@@ -44,6 +45,7 @@ export class SanitizedBrowserRecorder {
   #queue: Promise<void> = Promise.resolve();
   #aborting?: Promise<void>;
   #closing?: Promise<void>;
+  readonly #finalReads = new AbortController();
   readonly #onPage = (page: Page) => {
     if (this.#acceptingPages)
       void this.attach(page).catch((error) =>
@@ -258,7 +260,23 @@ export class SanitizedBrowserRecorder {
           });
           const reply = await entry.producer.close(
             { epoch: entry.capture.epoch, challenge: final.challenge },
-            async (challenge: string) => this.refresh(page, entry, { challenge, record: false }),
+            () =>
+              readFinalCaptureProtection({
+                finalRead: final,
+                epoch: entry.capture.epoch,
+                read: (challenge) => this.refresh(page, entry, { challenge, record: false }),
+                sample: () => entry.protection.captureSample(),
+                pending: () =>
+                  [this.#maskTasks.pending.get(page), this.#pixelTasks.pending.get(page)].filter(
+                    (task) => task !== undefined,
+                  ),
+                assertActive: () => {
+                  this.assertOpen();
+                  if (this.#aborting || page.isClosed() || !entry.session)
+                    throw Error("SCRY_BROWSER_RECORDER_CLOSED");
+                },
+                signal: this.#finalReads.signal,
+              }),
           );
           await entry.capture.graphSample({
             sequence: reply.lastSequence,
@@ -291,6 +309,7 @@ export class SanitizedBrowserRecorder {
     return (this.#aborting ??= (async () => {
       this.stopAcceptingPages();
       this.#closed = true;
+      this.#finalReads.abort();
       for (const entry of this.#pages.values()) entry.producer.abandon();
       const nativeAbort = this.options.native.abort();
       await Promise.allSettled([

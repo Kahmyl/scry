@@ -174,3 +174,16 @@ it("an older pending paint cannot block fresh facts or recover a disposed/new re
   expect(f.args.recovered).not.toHaveBeenCalled();
   expect(f.protection.observationAvailable()).toBe(false);
 });
+
+it("a late paint cannot certify even its own read after the shared live deadline", async () => {
+  vi.useFakeTimers();
+  const f = fixture({ paintDelay: 350 });
+  const operation = refreshNativeProtection(f.args);
+  await vi.advanceTimersByTimeAsync(201);
+  await operation;
+  expect(f.protection.observationAvailable()).toBe(true);
+  expect(f.protection.imageEvidence().state).toBe("withheld");
+  await vi.advanceTimersByTimeAsync(200);
+  expect(f.protection.imageEvidence().state).toBe("withheld");
+  expect(f.args.recovered).not.toHaveBeenCalled();
+});

@@ -1,4 +1,5 @@
 // Transports Veil-owned private facts; never classifies field semantics.
+import { transportNativeGeometry } from "./geometry-transport.mjs";
 const currentReads = new WeakMap();
 export async function refreshNativeProtection({
   protection,
@@ -20,6 +21,8 @@ export async function refreshNativeProtection({
   const started = Date.now();
   const read = protection.beginNativeRead(finalReadChallenge);
   currentReads.set(protection, read);
+  const deadline = started + 200;
+  const isCurrent = () => currentReads.get(protection) === read && Date.now() <= deadline;
   const blocked = new Set(dialogs.values());
   const expected = pages.filter((page) => !page.isClosed());
   const active = [...sessions].filter(([page]) => !page.isClosed());
@@ -65,6 +68,7 @@ export async function refreshNativeProtection({
             // Raw learned facts stay inside this worker and the Veil capability.
             // Never put them in phase/error events, durable results or IPC.
             if (
+              !isCurrent() ||
               refreshed.exceptionDetails ||
               !protection.acceptNativeRead(read, refreshed.result?.value, {
                 pageId: pageId(page),
@@ -72,7 +76,15 @@ export async function refreshNativeProtection({
               })
             )
               throw Error("MASK_REFRESH_UNCONFIRMED");
-            contexts.push({ contextId: world.executionContextId, worldId });
+            contexts.push({
+              contextId: world.executionContextId,
+              worldId,
+              frameId,
+              isMainFrame: frameId === frameTree.frame.id,
+              geometryRequired: refreshed.result?.value?.geometryRequired === true,
+              geometryScope: refreshed.result?.value?.geometryScope,
+              policyGeneration: refreshed.result?.value?.policyGeneration,
+            });
           }
           worlds.set(page, { session, contexts });
           completedPages++;
@@ -97,25 +109,54 @@ export async function refreshNativeProtection({
         async () => {
           // Every fact is already admitted or withheld before optional paint.
           await Promise.all(
-            contexts.map(async ({ contextId, worldId }) => {
-              phase("mask_paint");
-              const refreshed = await session.send("Runtime.evaluate", {
+            contexts.map(
+              async ({
                 contextId,
-                expression: protection.pixelExpression,
-                awaitPromise: true,
-                returnByValue: true,
-              });
-              if (
-                refreshed.exceptionDetails ||
-                !protection.acceptNativePaint(read, refreshed.result?.value, {
-                  pageId: pageId(page),
-                  worldId,
-                })
-              )
-                throw Error("MASK_PIXEL_REFRESH_UNCONFIRMED");
-            }),
+                worldId,
+                frameId,
+                isMainFrame,
+                geometryRequired,
+                geometryScope,
+                policyGeneration,
+              }) => {
+                if (!isCurrent()) throw Error("MASK_PIXEL_REFRESH_UNCONFIRMED");
+                if (geometryRequired) {
+                  await transportNativeGeometry({
+                    session,
+                    contextId,
+                    frameId,
+                    isMainFrame,
+                    readId: read,
+                    policyGeneration,
+                    expectedScope: geometryScope,
+                    deadline,
+                    isCurrent,
+                  });
+                  // A finite refusal is latched in the exact graph ticket. Read
+                  // its normal receipt so unsupported layouts retain their
+                  // preserve-gap recovery instead of suggesting a blind retry.
+                  if (!isCurrent()) throw Error("MASK_PIXEL_REFRESH_UNCONFIRMED");
+                }
+                phase("mask_paint");
+                const refreshed = await session.send("Runtime.evaluate", {
+                  contextId,
+                  expression: protection.pixelExpression,
+                  awaitPromise: true,
+                  returnByValue: true,
+                });
+                if (
+                  !isCurrent() ||
+                  refreshed.exceptionDetails ||
+                  !protection.acceptNativePaint(read, refreshed.result?.value, {
+                    pageId: pageId(page),
+                    worldId,
+                  })
+                )
+                  throw Error("MASK_PIXEL_REFRESH_UNCONFIRMED");
+              },
+            ),
           );
-          if (currentReads.get(protection) === read && protection.observationAvailable()) {
+          if (isCurrent() && protection.observationAvailable()) {
             painted.add(page);
             recovered(page);
           }

@@ -36,15 +36,68 @@ function nativeWholeOwnerEnvelope(box, ink, guard) {
 }
 // An ordinary document box cannot paint through an opaque fullscreen surface.
 // This proves only public-overlap occlusion; private candidates are never omitted.
-function nativeFullscreenOccludesPublicPaint(owner, other, box) {
+function nativeOpaqueSurfaceBox(surface) {
   try {
-    const fullscreen = document.fullscreenElement;
+    if (
+      !surface ||
+      surface.namespaceURI !== "http://www.w3.org/1999/xhtml" ||
+      surface.ownerDocument !== document ||
+      surface.getRootNode() !== document ||
+      !(surface.matches(":fullscreen") || surface.matches(":modal"))
+    )
+      return null;
+    const s = getComputedStyle(surface);
+    if (
+      s.overlay !== "auto" ||
+      !/^rgb\(\d+,\s*\d+,\s*\d+\)$/u.test(s.backgroundColor) ||
+      s.opacity !== "1" ||
+      s.backgroundClip !== "border-box" ||
+      s.borderRadius !== "0px" ||
+      s.backgroundImage !== "none" ||
+      s.backgroundBlendMode !== "normal" ||
+      s.mixBlendMode !== "normal" ||
+      s.filter !== "none" ||
+      s.backdropFilter !== "none" ||
+      s.clipPath !== "none" ||
+      s.maskImage !== "none" ||
+      s.transform !== "none" ||
+      s.perspective !== "none" ||
+      s.animationName !== "none" ||
+      (s.transitionProperty !== "all" && s.transitionProperty !== "none") ||
+      s.transitionDuration.split(",").some((d) => parseFloat(d) !== 0)
+    )
+      return null;
+    const b = surface.getBoundingClientRect();
+    if (![b.left, b.top, b.right, b.bottom].every(Number.isFinite)) return null;
+    // Only fully covered device pixels establish opaque occlusion. Keeping
+    // fractional edge pixels outside this proof also prevents mask rounding
+    // from spilling back onto public foreground after rectangle subtraction.
+    const ratio = globalThis.devicePixelRatio || 1;
+    const covered = {
+      left: Math.ceil(b.left * ratio) / ratio,
+      top: Math.ceil(b.top * ratio) / ratio,
+      right: Math.floor(b.right * ratio) / ratio,
+      bottom: Math.floor(b.bottom * ratio) / ratio,
+    };
+    return covered.right > covered.left && covered.bottom > covered.top ? covered : null;
+  } catch {
+    return null;
+  }
+}
+function nativeFullscreenOccludesPublicPaint(
+  owner,
+  other,
+  box,
+  candidate = document.fullscreenElement,
+) {
+  try {
+    const fullscreen = candidate;
     if (
       !fullscreen ||
       fullscreen.namespaceURI !== "http://www.w3.org/1999/xhtml" ||
       fullscreen.ownerDocument !== document ||
       fullscreen.getRootNode() !== document ||
-      !fullscreen.matches(":fullscreen")
+      !(fullscreen.matches(":fullscreen") || fullscreen.matches(":modal"))
     )
       return false;
     const parent = (node) => node.assignedSlot ?? node.parentElement ?? node.getRootNode()?.host;
@@ -69,29 +122,8 @@ function nativeFullscreenOccludesPublicPaint(owner, other, box) {
         return false;
       node = parent(node);
     }
-    const style = getComputedStyle(fullscreen);
-    if (
-      style.overlay !== "auto" ||
-      !/^rgb\(\d+,\s*\d+,\s*\d+\)$/u.test(style.backgroundColor) ||
-      style.opacity !== "1" ||
-      style.backgroundClip !== "border-box" ||
-      style.borderRadius !== "0px" ||
-      style.backgroundImage !== "none" ||
-      style.backgroundBlendMode !== "normal" ||
-      style.mixBlendMode !== "normal" ||
-      style.filter !== "none" ||
-      style.backdropFilter !== "none" ||
-      style.clipPath !== "none" ||
-      style.maskImage !== "none" ||
-      style.transform !== "none" ||
-      style.perspective !== "none" ||
-      style.animationName !== "none" ||
-      (style.transitionProperty !== "all" && style.transitionProperty !== "none")
-    )
-      return false;
-    if (style.transitionDuration.split(",").some((duration) => Number.parseFloat(duration) !== 0))
-      return false;
-    const surface = fullscreen.getBoundingClientRect();
+    const surface = nativeOpaqueSurfaceBox(fullscreen);
+    if (!surface) return false;
     return (
       [
         surface.left,
@@ -142,6 +174,7 @@ function installNativePrivacyGraph(initialBound, options = {}) {
   let learnedBytes = 0,
     readId = 0,
     policyGeneration = options.policyGeneration ?? 1,
+    fontGeneration = 0,
     revision = 0,
     graph = null,
     overlay,
@@ -496,11 +529,21 @@ function installNativePrivacyGraph(initialBound, options = {}) {
     return (
       s.transform !== "none" ||
       s.textShadow !== "none" ||
+      (s.webkitBoxReflect && s.webkitBoxReflect !== "none") ||
       s.filter !== "none" ||
       s.writingMode !== "horizontal-tb" ||
       s.textTransform !== "none" ||
       s.animationName !== "none" ||
       (pseudo && ["absolute", "fixed"].includes(s.position))
+    );
+  };
+  const unsupportedTextInk = (element, pseudo) => {
+    const s = getComputedStyle(element, pseudo);
+    return (
+      Number.parseFloat(s.webkitTextStrokeWidth || "0") !== 0 ||
+      (!!s.textDecorationLine && s.textDecorationLine !== "none") ||
+      (!!s.textEmphasisStyle && s.textEmphasisStyle !== "none") ||
+      (s.outlineStyle !== "none" && Number.parseFloat(s.outlineWidth || "0") !== 0)
     );
   };
   const pseudoValue = (element, which) => {
@@ -681,7 +724,13 @@ function installNativePrivacyGraph(initialBound, options = {}) {
           } else if (decision.private) {
             retain(value);
             add(element, value, "pseudo", "private", text === "", pseudo);
-          } else
+          } else {
+            // A selected value remains private when generated content adds a
+            // public prefix/suffix. Partial pseudo paint is not supported, but
+            // it must be recognized and refused rather than silently exposed.
+            for (const known of [...bound, ...learned])
+              if (known && value.includes(known))
+                add(element, known, "pseudo", "known", false, pseudo);
             for (const found of nativeIntrinsicFindings(value)) {
               retain(found.value);
               add(
@@ -693,6 +742,7 @@ function installNativePrivacyGraph(initialBound, options = {}) {
                 pseudo,
               );
             }
+          }
         }
       }
     } catch {
@@ -794,9 +844,26 @@ function installNativePrivacyGraph(initialBound, options = {}) {
       if (
         svg &&
         svg.textContent.trim() === value &&
-        [...svg.querySelectorAll("*")].every((n) => ["text", "tspan"].includes(n.localName))
+        [...svg.querySelectorAll("*")].every((n) => ["text", "tspan"].includes(n.localName)) &&
+        [getComputedStyle(svg).overflowX, getComputedStyle(svg).overflowY].every((v) =>
+          ["hidden", "clip"].includes(v),
+        )
       )
         return { box: svg.getBoundingClientRect(), element: svg };
+      // Native character cells do not include stroke/decoration outsets. A
+      // descendant tspan may override its parent's ink, so inspect every
+      // private text descendant before using those cells as a coverage bound.
+      for (const node of [element, ...element.querySelectorAll("*")]) {
+        const ink = getComputedStyle(node);
+        if (
+          (ink.stroke !== "none" && Number.parseFloat(ink.strokeOpacity) !== 0) ||
+          ink.textDecorationLine !== "none" ||
+          Number.parseFloat(ink.webkitTextStrokeWidth || "0") !== 0 ||
+          unsupportedTextInk(node) ||
+          ink.fontStyle !== "normal"
+        )
+          return null;
+      }
       if (
         typeof element.getNumberOfChars !== "function" ||
         typeof element.getExtentOfChar !== "function" ||
@@ -808,8 +875,9 @@ function installNativePrivacyGraph(initialBound, options = {}) {
       const matrix = element.getScreenCTM();
       if (
         !matrix ||
-        matrix.a !== 1 ||
-        matrix.d !== 1 ||
+        ![matrix.a, matrix.d, matrix.e, matrix.f].every(Number.isFinite) ||
+        matrix.a <= 0 ||
+        matrix.d <= 0 ||
         matrix.b !== 0 ||
         matrix.c !== 0 ||
         element.getNumberOfChars() > 4096
@@ -822,10 +890,11 @@ function installNativePrivacyGraph(initialBound, options = {}) {
       const guard = 1 / (devicePixelRatio || 1);
       for (let i = 0; i < element.getNumberOfChars(); i++) {
         const cell = element.getExtentOfChar(i);
-        left = Math.min(left, cell.x + matrix.e - guard);
-        top = Math.min(top, cell.y + matrix.f - guard);
-        right = Math.max(right, cell.x + cell.width + matrix.e + guard);
-        bottom = Math.max(bottom, cell.y + cell.height + matrix.f + guard);
+        if (![cell.x, cell.y, cell.width, cell.height].every(Number.isFinite)) return null;
+        left = Math.min(left, cell.x * matrix.a + matrix.e - guard);
+        top = Math.min(top, cell.y * matrix.d + matrix.f - guard);
+        right = Math.max(right, (cell.x + cell.width) * matrix.a + matrix.e + guard);
+        bottom = Math.max(bottom, (cell.y + cell.height) * matrix.d + matrix.f + guard);
       }
       return Number.isFinite(left)
         ? { box: { left, top, right, bottom, width: right - left, height: bottom - top }, element }
@@ -835,6 +904,9 @@ function installNativePrivacyGraph(initialBound, options = {}) {
       canvas = document.createElement("canvas"),
       ctx = canvas.getContext("2d");
     if (
+      !ctx ||
+      !style.font ||
+      (style.fontSizeAdjust && style.fontSizeAdjust !== "none") ||
       (style.letterSpacing !== "normal" && style.letterSpacing !== "0px") ||
       (style.wordSpacing !== "normal" && style.wordSpacing !== "0px") ||
       document.fonts?.status !== "loaded"
@@ -844,8 +916,49 @@ function installNativePrivacyGraph(initialBound, options = {}) {
     const metrics = ctx.measureText(value),
       guard = 1 / (devicePixelRatio || 1);
     if (owner.kind === "pseudo") {
-      // Only normal-flow single-value generated text with ample allocated slot is supported.
+      // The owner box is an envelope only for an otherwise empty, normal-flow
+      // generated line. Mixed owners use graph-selected native pseudo quads.
+      const opposite = pseudoValue(element, owner.pseudo === "::before" ? "::after" : "::before");
+      const ownerStyle = getComputedStyle(element);
       if (
+        !owner.whole ||
+        element.textContent.trim() ||
+        element.children.length ||
+        !geometryCapability.supported(owner) ||
+        opposite?.value ||
+        style.display !== "block" ||
+        style.position !== "static" ||
+        [style.marginLeft, style.marginRight, style.marginTop, style.marginBottom].some(
+          (v) => parseFloat(v) !== 0,
+        ) ||
+        [
+          style.paddingLeft,
+          style.paddingRight,
+          style.paddingTop,
+          style.paddingBottom,
+          style.borderLeftWidth,
+          style.borderRightWidth,
+          style.borderTopWidth,
+          style.borderBottomWidth,
+        ].some((v) => parseFloat(v) !== 0) ||
+        ![metrics.fontBoundingBoxAscent, metrics.fontBoundingBoxDescent].every(Number.isFinite) ||
+        metrics.actualBoundingBoxLeft > guard ||
+        metrics.actualBoundingBoxRight > metrics.width + guard ||
+        metrics.actualBoundingBoxAscent > metrics.fontBoundingBoxAscent + guard ||
+        metrics.actualBoundingBoxDescent > metrics.fontBoundingBoxDescent + guard ||
+        metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent >
+          parseFloat(style.lineHeight) + 2 * guard ||
+        parseFloat(style.height) >
+          element.clientHeight -
+            parseFloat(ownerStyle.paddingTop) -
+            parseFloat(ownerStyle.paddingBottom) +
+            0.02 ||
+        parseFloat(style.width) +
+          parseFloat(style.paddingLeft) +
+          parseFloat(style.paddingRight) +
+          parseFloat(style.borderLeftWidth) +
+          parseFloat(style.borderRightWidth) >
+          box.width + 0.02 ||
         box.width < metrics.actualBoundingBoxLeft + metrics.actualBoundingBoxRight + 2 * guard ||
         box.height < metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent + 2 * guard
       )
@@ -903,9 +1016,44 @@ function installNativePrivacyGraph(initialBound, options = {}) {
     return stable ? { box: stable, element } : null;
   }
 
+  const geometryCapability = nativeCreateGeometryCapability({
+    graph: () => graph,
+    revision: () => revision,
+    policy: () => policyGeneration,
+    fontGeneration: () => fontGeneration,
+    readId: () => readId,
+    disposed: () => disposed,
+    visible,
+    pseudoValue,
+    unsupportedStyle,
+    unsupportedTextInk,
+    paintChainSupported,
+    ancestor,
+    nativeEnvelope: (owner) =>
+      owner.kind === "pseudo" && owner.whole ? paintEnvelope(owner) : null,
+  });
+
+  // Native opaque surfaces can hide background paint, but our topmost mask
+  // must not cover their public foreground. Keep only the visible remainder.
+  const subtractSurface = (box, surface) => {
+    if (!intersects(box, surface)) return [box];
+    const l = Math.max(box.left, surface.left),
+      r = Math.min(box.right, surface.right),
+      t = Math.max(box.top, surface.top),
+      b = Math.min(box.bottom, surface.bottom);
+    return [
+      { left: box.left, top: box.top, right: box.right, bottom: t },
+      { left: box.left, top: b, right: box.right, bottom: box.bottom },
+      { left: box.left, top: t, right: l, bottom: b },
+      { left: r, top: t, right: box.right, bottom: b },
+    ].filter((v) => v.right > v.left && v.bottom > v.top);
+  };
   function geometry(g) {
     const rectangles = [];
-    let reason = g.reason;
+    let reason = g.reason ?? geometryCapability.reason(g);
+    const surfaces = g.elements.filter(
+      (e) => e.matches(":modal") || e === document.fullscreenElement,
+    );
     for (const owner of g.owners) {
       const element = owner.element;
       if (!element.isConnected) {
@@ -913,79 +1061,122 @@ function installNativePrivacyGraph(initialBound, options = {}) {
         continue;
       }
       if (!visible(element)) continue;
+      const externalPseudo = owner.kind === "pseudo" && geometryCapability.supported(owner);
       if (
-        (owner.kind !== "control" && !owner.whole) ||
+        (owner.kind !== "control" && !owner.whole && !externalPseudo) ||
+        (owner.kind !== "control" && unsupportedTextInk(element, owner.pseudo)) ||
         unsupportedStyle(element, owner.pseudo) ||
         !paintChainSupported(element)
       ) {
         reason ??= "native_protection_geometry_unsupported";
         continue;
       }
-      // Full value-owner coverage is restricted to atomic private paint.
       if (
-        [...element.children].some((child) => !formatting.has(child.localName)) ||
-        [...element.querySelectorAll("*")].some(
-          (child) =>
-            payloadControl(child) ||
-            caption(child) ||
-            ["svg", "canvas", "img", "button"].includes(child.localName) ||
-            unsupportedStyle(child),
-        )
+        !externalPseudo &&
+        ([...element.children].some((c) => !formatting.has(c.localName)) ||
+          [...element.querySelectorAll("*")].some(
+            (c) =>
+              payloadControl(c) ||
+              caption(c) ||
+              ["svg", "canvas", "img", "button"].includes(c.localName) ||
+              unsupportedTextInk(c) ||
+              unsupportedStyle(c),
+          ))
       ) {
         reason ??= "native_protection_geometry_unsupported";
         continue;
       }
       const envelope = paintEnvelope(owner);
-      if (!envelope) {
+      let boxes = envelope
+        ? [envelope.box]
+        : externalPseudo
+          ? geometryCapability.boxes(g, owner)
+          : null;
+      const paintElement = envelope?.element ?? element;
+      if (!boxes) {
         reason ??= "native_protection_geometry_unsupported";
         continue;
       }
-      const box = envelope.box,
-        paintElement = envelope.element;
-      if (owner.kind !== "control")
-        for (const other of g.elements) {
-          if (
-            other === paintElement ||
-            ancestor(paintElement, other) ||
-            ancestor(other, paintElement) ||
-            !visible(other)
-          )
-            continue;
-          const b = other.getBoundingClientRect();
-          if (!intersects(box, b)) continue;
-          if (nativeFullscreenOccludesPublicPaint(paintElement, other, box)) continue;
-          const s = getComputedStyle(other);
-          if (
-            other.textContent?.trim() ||
-            s.backgroundImage !== "none" ||
-            s.backgroundColor !== "rgba(0, 0, 0, 0)" ||
-            ["svg", "canvas", "img"].includes(other.localName)
-          ) {
-            reason ??= "native_protection_geometry_unsupported";
-            break;
+      // Only a unique confirmed top layer establishes this ordering. Pending
+      // removal or a second native surface makes subtraction ambiguous.
+      const top = g.elements.filter((e) => getComputedStyle(e).overlay === "auto");
+      if (
+        surfaces.length === 1 &&
+        top.length === 1 &&
+        top[0] === surfaces[0] &&
+        !ancestor(element, surfaces[0])
+      ) {
+        const surface = nativeOpaqueSurfaceBox(surfaces[0]);
+        if (surface) boxes = boxes.flatMap((b) => subtractSurface(b, surface));
+      }
+      for (const box of boxes) {
+        if (
+          ![box.left, box.top, box.right, box.bottom].every(Number.isFinite) ||
+          box.right <= box.left ||
+          box.bottom <= box.top
+        ) {
+          reason ??= "native_protection_geometry_unsupported";
+          continue;
+        }
+        if (owner.kind !== "control") {
+          // A mixed owner may contain a public caption. Its native text ranges
+          // are tested even though ordinary ancestor overlap checks skip it.
+          if (externalPseudo && !owner.whole) {
+            for (const n of g.elements.filter((e) => ancestor(e, element)))
+              for (const child of n.childNodes) {
+                if (child.nodeType !== 3 || !child.textContent.trim()) continue;
+                const range = document.createRange();
+                range.selectNodeContents(child);
+                if ([...range.getClientRects()].some((b) => intersects(box, b)))
+                  reason ??= "native_protection_geometry_unsupported";
+              }
+          }
+          for (const other of g.elements) {
+            if (
+              other === paintElement ||
+              ancestor(paintElement, other) ||
+              ancestor(other, paintElement) ||
+              !visible(other)
+            )
+              continue;
+            if (!intersects(box, other.getBoundingClientRect())) continue;
+            if (
+              surfaces.some((surface) =>
+                nativeFullscreenOccludesPublicPaint(paintElement, other, box, surface),
+              )
+            )
+              continue;
+            const s = getComputedStyle(other);
+            if (
+              other.textContent?.trim() ||
+              s.backgroundImage !== "none" ||
+              s.backgroundColor !== "rgba(0, 0, 0, 0)" ||
+              ["svg", "canvas", "img"].includes(other.localName)
+            ) {
+              reason ??= "native_protection_geometry_unsupported";
+              break;
+            }
           }
         }
-      if (box.width <= 0 || box.height <= 0) {
-        reason ??= "native_protection_geometry_unsupported";
-        continue;
+        const ratio = devicePixelRatio || 1,
+          left = Math.floor(Math.max(0, box.left) * ratio) / ratio,
+          top = Math.floor(Math.max(0, box.top) * ratio) / ratio,
+          right = Math.ceil(Math.min(innerWidth, box.right) * ratio) / ratio,
+          bottom = Math.ceil(Math.min(innerHeight, box.bottom) * ratio) / ratio;
+        if (right > left && bottom > top)
+          rectangles.push({
+            left,
+            top,
+            width: right - left,
+            height: bottom - top,
+            boundIndex: boundList.indexOf(owner.value),
+          });
+        if (rectangles.length > limits.rectangles) {
+          reason = "native_protection_graph_capacity";
+          break;
+        }
       }
-      const ratio = devicePixelRatio || 1,
-        left = Math.floor(Math.max(0, box.left) * ratio) / ratio,
-        top = Math.floor(Math.max(0, box.top) * ratio) / ratio,
-        right = Math.ceil(Math.min(innerWidth, box.right) * ratio) / ratio,
-        bottom = Math.ceil(Math.min(innerHeight, box.bottom) * ratio) / ratio;
-      if (right > left && bottom > top)
-        rectangles.push({
-          left,
-          top,
-          width: right - left,
-          height: bottom - top,
-          boundIndex: boundList.indexOf(owner.value),
-        });
-      if (rectangles.length > limits.rectangles) {
-        reason = "native_protection_graph_capacity";
-        break;
-      }
+      if (rectangles.length > limits.rectangles) break;
     }
     g.count.rectangles = rectangles.length;
     return { rectangles, reason };
@@ -1064,6 +1255,9 @@ function installNativePrivacyGraph(initialBound, options = {}) {
     version: 1,
     readId: g.id,
     policyGeneration,
+    ...(geometryCapability.required(g)
+      ? { geometryRequired: true, geometryScope: geometryCapability.scope(g) }
+      : {}),
     finalReadChallenge: readChallenge,
     text: !permanentReason && g.textComplete ? "complete" : "withheld",
     image: permanentReason ? evidence(permanentReason) : image,
@@ -1137,6 +1331,7 @@ function installNativePrivacyGraph(initialBound, options = {}) {
         layer = undefined;
         overlay = undefined;
         g.paintReady = true;
+        geometryCapability.installed(g);
         return output(g, evidence());
       }
       createLayer();
@@ -1154,6 +1349,7 @@ function installNativePrivacyGraph(initialBound, options = {}) {
       if (layer.matches(":popover-open")) layer.hidePopover();
       layer.showPopover();
       g.paintReady = true;
+      geometryCapability.installed(g);
       return output(g, evidence());
     } catch {
       if (g.owners.some(required)) observeGap("native_protection_refresh_incomplete");
@@ -1166,7 +1362,15 @@ function installNativePrivacyGraph(initialBound, options = {}) {
     requestAnimationFrame(() => {
       scheduled = false;
       if (disposed) return;
-      graph = build(readId);
+      const changed =
+        !graph ||
+        graph.id !== readId ||
+        graph.revision !== revision ||
+        graph.policyGeneration !== policyGeneration;
+      if (changed) graph = build(readId);
+      // A foreground read owns its unconsumed geometry ticket. A redundant
+      // animation callback cannot replace that graph or manufacture a gap.
+      if (!changed && geometryCapability.required(graph)) return;
       render(graph);
     });
   }
@@ -1184,6 +1388,10 @@ function installNativePrivacyGraph(initialBound, options = {}) {
   });
   globalThis.__scryNativeGraph = {
     version: 2,
+    geometryRequest: (id, budgetMs, scope) => geometryCapability.request(id, budgetMs, scope),
+    geometryOwner: (ticket, token) => geometryCapability.owner(ticket, token),
+    geometryAccept: (ticket, facts) => geometryCapability.accept(ticket, facts),
+    geometryAbort: (ticket, reason) => geometryCapability.abort(ticket, reason),
     armImageCapture(token) {
       if (token !== activeImageToken) {
         activeImageToken = Number.isSafeInteger(token) && token > 0 ? token : undefined;
@@ -1191,7 +1399,10 @@ function installNativePrivacyGraph(initialBound, options = {}) {
       }
     },
     bind(values, next) {
+      const before = bound.size,
+        previous = policyGeneration;
       bind(values, next);
+      if (bound.size !== before || policyGeneration !== previous) revision++;
       refresh();
     },
     visualReady() {
@@ -1207,7 +1418,9 @@ function installNativePrivacyGraph(initialBound, options = {}) {
       );
     },
     learn(values) {
+      const before = learned.size;
       for (const value of values) retain(value);
+      if (learned.size !== before) revision++;
     },
     read(id, known = [], challenge) {
       if (disposed) throw Error("disposed");
@@ -1216,6 +1429,7 @@ function installNativePrivacyGraph(initialBound, options = {}) {
         typeof challenge === "string" && /^[a-f0-9-]{36}$/u.test(challenge) ? challenge : undefined;
       for (const value of known) retain(value);
       graph = build(id);
+      geometryCapability.newRead(id);
       return output(
         graph,
         evidence(
@@ -1227,7 +1441,8 @@ function installNativePrivacyGraph(initialBound, options = {}) {
     paint(id) {
       return new Promise((resolve) => {
         let settled = false,
-          timer;
+          timer,
+          completed;
         const finish = (value) => {
           if (settled) return;
           settled = true;
@@ -1235,17 +1450,80 @@ function installNativePrivacyGraph(initialBound, options = {}) {
           resolve(value);
         };
         requestAnimationFrame(() => {
+          if (settled) return;
           if (disposed || !graph || graph.id !== id)
             return finish({ version: 1, image: evidence("native_protection_geometry_stale") });
           if (graph.revision !== revision) graph = build(id);
           const value = render(graph);
-          requestAnimationFrame(() => finish(value));
+          if (value.image.state === "available") completed = graph;
+          requestAnimationFrame(() => {
+            if (settled) return;
+            if (value.image.state !== "available" && graph?.id === id) return finish(value);
+            const confirmed = revalidateInstallation();
+            if (!confirmed && !disposed && graph?.id === id) latchCurrentGap();
+            finish(
+              confirmed ??
+                (graph?.id === id
+                  ? output(graph, evidence("native_protection_geometry_stale"))
+                  : { version: 1, image: evidence("native_protection_geometry_stale") }),
+            );
+          });
         });
+        const latchCurrentGap = () => {
+          const current = build(id);
+          if (graph?.owners.some(required) || current.owners.some(required))
+            observeGap("native_protection_refresh_incomplete");
+        };
+        const revalidateInstallation = () => {
+          if (
+            !completed ||
+            disposed ||
+            graph?.id !== id ||
+            completed.policyGeneration !== policyGeneration ||
+            !completed.paintReady ||
+            (completed.projected.rectangles.length &&
+              (!layer?.isConnected || !layer.matches(":popover-open")))
+          )
+            return null;
+          const fresh = build(id);
+          if (
+            fresh.reason ||
+            fresh.owners.length !== completed.owners.length ||
+            fresh.owners.some((o, i) => {
+              const p = completed.owners[i];
+              return (
+                o.element !== p.element ||
+                o.value !== p.value ||
+                o.kind !== p.kind ||
+                o.pseudo !== p.pseudo ||
+                o.whole !== p.whole ||
+                o.source !== p.source
+              );
+            })
+          )
+            return null;
+          const projected = geometryCapability.revalidate(fresh, completed, () => geometry(fresh));
+          if (
+            !projected ||
+            projected.reason ||
+            JSON.stringify(projected.rectangles) !== JSON.stringify(completed.projected.rectangles)
+          )
+            return null;
+          graph = fresh;
+          fresh.projected = projected;
+          fresh.paintReady = true;
+          return output(fresh, evidence());
+        };
         timer = setTimeout(() => {
           if (settled) return;
           if (disposed || graph?.id !== id)
             return finish({ version: 1, image: evidence("native_protection_geometry_stale") });
-          if (graph?.owners.some(required)) observeGap("native_protection_refresh_incomplete");
+          const completedReceipt = revalidateInstallation();
+          if (completedReceipt) return finish(completedReceipt);
+          // A disconnected old owner may have been replaced by fresh private
+          // paint. Withholding this read must not hide that required interval
+          // from the recording history merely because the old node is gone.
+          latchCurrentGap();
           finish(
             graph
               ? output(
@@ -1262,6 +1540,7 @@ function installNativePrivacyGraph(initialBound, options = {}) {
     dispose() {
       disposed = true;
       observer.disconnect();
+      geometryCapability.dispose();
       bound.clear();
       boundList.length = 0;
       boundBytes = 0;
@@ -1272,6 +1551,7 @@ function installNativePrivacyGraph(initialBound, options = {}) {
       overlay?.remove();
       graph = null;
       for (const event of events) removeEventListener(event, onEvent, true);
+      for (const event of fontEvents) document.fonts?.removeEventListener(event, onEvent);
     },
   };
   const events = [
@@ -1285,10 +1565,13 @@ function installNativePrivacyGraph(initialBound, options = {}) {
     ],
     onEvent = (e) => {
       if (e.target === overlay) return;
+      if (fontEvents.includes(e.type)) fontGeneration++;
       revision++;
       refresh();
     };
   for (const event of events) addEventListener(event, onEvent, true);
+  const fontEvents = ["loading", "loadingdone", "loadingerror"];
+  for (const event of fontEvents) document.fonts?.addEventListener(event, onEvent);
   observer.observe(document, {
     subtree: true,
     childList: true,
@@ -1298,6 +1581,7 @@ function installNativePrivacyGraph(initialBound, options = {}) {
   globalThis.__scryNativeBind = (values) => globalThis.__scryNativeGraph.bind(values);
   globalThis.__scryNativeRefresh = (value) => {
     if (value !== undefined) globalThis.__scryNativeGraph.learn([value]);
+    revision++;
     refresh();
   };
   globalThis.__scryNativeRead = (values) =>
