@@ -21,6 +21,8 @@ import { PageTitle } from "../../shared/components/dashboard-primitives.js";
 import { createSetupCommand } from "../../../scripts/desktop-bootstrap.mjs";
 import type { createSetupCommand as SetupCommandFactory } from "../../../scripts/desktop-bootstrap.d.mts";
 import "./connections.css";
+import { createDesktopSetupPrompt } from "./assistant-prompts.js";
+import { PromptExamples, PromptMessage } from "./prompt-examples.js";
 import { groupConnections, connectionStatus, type Connection } from "./connection-groups.js";
 import { ConnectionDiagnostics } from "./connection-diagnostics.js";
 
@@ -32,7 +34,7 @@ declare const __SCRY_DESKTOP_INSTALLER_SHA__: string;
 const setupCommand: ReturnType<typeof SetupCommandFactory> = createSetupCommand(
   __SCRY_DESKTOP_INSTALLER_SHA__,
 );
-const desktopSetupPrompt = `Install Scry using the tested installer below. Run this one command; it checks the installer checksum, validates the package, preserves existing connections and opens my browser for Scry sign-in. On Windows run it in PowerShell; on macOS or Linux use the normal shell. Do not write another installer or repeat manual package checks. Tell me that the browser will open and let me sign in and choose my workspace myself. Never approve consent for me. Stop on conflicts or unsupported hosts. If authorization needs attention, show the returned URL as a clickable link using its linkLabel and explain the next click in plain language; do not send me looking for an unspecified host control. Never log into an existing bare-name MCP server. Only after the installer reports authorization.status=authorized, verify workspace access with read-only list_projects through the installed plugin's scry_beta connection, never an older scry connection. If that plugin tool is not available in this chat after successful authorization, say workspace access is not yet checked. Never claim a working sign-in when setup reports needs_attention. Describe the result without tool names or technical jargon. Do not claim access from installation alone. Do not start tests.\n\n${setupCommand}`;
+const desktopSetupPrompt = createDesktopSetupPrompt(setupCommand);
 
 export function Connections() {
   const [client, setClient] = useState<Client>("codex");
@@ -212,6 +214,13 @@ export function Connections() {
                             >
                               Open desktop setup <ExternalLink size={15} />
                             </a>
+                            <details className="connection-setup-preview">
+                              <summary>Preview setup message</summary>
+                              <PromptMessage
+                                prompt={desktopSetupPrompt}
+                                label="Copy setup message"
+                              />
+                            </details>
                             <p className="connection-install-note">
                               Setup opens your browser so you can sign in and choose a workspace.
                               Requires the desktop app, Node.js 18+ and Codex CLI. This installs on
@@ -502,6 +511,7 @@ export function Connections() {
           </p>
         </section>
       </div>
+      <PromptExamples />
       <AlertDialog.Root
         open={!!disconnecting}
         onOpenChange={(open) => {

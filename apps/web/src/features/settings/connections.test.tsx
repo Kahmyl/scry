@@ -7,6 +7,7 @@ import { Connections } from "./connections.js";
 import { OAuthConsent } from "./OAuthConsent.js";
 import { rememberConnectionReturn, takeConnectionReturn } from "./connection-return.js";
 import { publicConfig } from "../../infrastructure/config/runtime-config.js";
+import { scryPromptExamples } from "./assistant-prompts.js";
 
 vi.mock("../../infrastructure/config/runtime-config.js", () => ({
   publicConfig: { mcpServerUrl: "https://scry.giize.com/mcp" },
@@ -41,6 +42,64 @@ afterEach(() => {
 });
 
 describe("guided account connections", () => {
+  it("preserves the structured setup message in the desktop link, preview and clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<Connections />);
+    const link = await screen.findByRole("link", { name: /Open desktop setup/ });
+    const prompt = new URL(link.getAttribute("href")!).searchParams.get("prompt")!;
+    expect(prompt).toMatch(/^Install Scry.*\n\n1\. Install the plugin\n/);
+    expect(prompt).toContain("\n\n2. Let me connect my account\n");
+    expect(prompt).toContain("\n\n3. Verify access\n");
+    expect(prompt).toMatch(/\n```\nnode --input-type=module -e "[^\n]+"\n```\n/);
+    expect(prompt).toContain("authorization.status=authorized");
+    expect(prompt).toContain("plugin's scry_beta connection, never an older scry connection");
+    fireEvent.click(screen.getByText("Preview setup message"));
+    expect(screen.getByLabelText("setup message").textContent).toBe(prompt);
+    expect(writeText).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Copy setup message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(prompt));
+    expect(await screen.findByRole("status")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("Copied."),
+    );
+  });
+  it("offers copyable prompts for ongoing work, fresh tests, retesting, resuming and report review", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<Connections />);
+    await screen.findByRole("link", { name: /Open desktop setup/ });
+    const examples = screen.getByRole("region", { name: "Try Scry in your next message" });
+    expect(within(examples).getByText(/keep using that chat/)).toBeTruthy();
+    for (const example of scryPromptExamples) {
+      const card = within(examples)
+        .getByRole("heading", { name: example.title })
+        .closest("article")!;
+      if (example.id === "full-test")
+        fireEvent.click(within(card).getByText("Show full test example"));
+      fireEvent.click(within(card).getByRole("button"));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(example.prompt));
+    }
+    expect(writeText).toHaveBeenCalledTimes(5);
+    expect(post).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
+    expect(screen.getByRole("region", { name: "Try Scry in your next message" })).toBeTruthy();
+  });
+  it("keeps the example visible for manual copying when clipboard access fails", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("private clipboard diagnostic"));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(<Connections />);
+    await screen.findByRole("link", { name: /Open desktop setup/ });
+    const card = screen.getByRole("heading", { name: "While you’re building" }).closest("article")!;
+    fireEvent.click(within(card).getByRole("button"));
+    expect(await within(card).findByRole("alert")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("Copy the message above"),
+    );
+    expect(card.textContent).toContain(scryPromptExamples[0].prompt);
+    expect(document.body.textContent).not.toContain("private clipboard diagnostic");
+  });
   it("renders one card for multiple Codex sign-ins and disconnects only the selected grant", async () => {
     vi.mocked(api).mockResolvedValue({
       available: true,
