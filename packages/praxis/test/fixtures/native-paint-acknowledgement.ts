@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { nativeProtectionScript } from "@scry/veil";
-import { transportNativeGeometry } from "../../../praxis/src/mcp-native/geometry-transport.mjs";
+import { transportNativeGeometry } from "../../src/mcp-native/geometry-transport.mjs";
 
 export const paintAcknowledgementCases = [
   "second-delayed",

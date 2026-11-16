@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { expect, it } from "vitest";
 import { nativeProtectionScript } from "@scry/veil";
-import { transportNativeGeometry } from "../../praxis/src/mcp-native/geometry-transport.mjs";
+import { transportNativeGeometry } from "../src/mcp-native/geometry-transport.mjs";
 
 const browserTest = process.env.SCRY_BROWSER_E2E === "1" ? it : it.skip;
 
