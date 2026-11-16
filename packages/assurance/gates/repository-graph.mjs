@@ -72,6 +72,13 @@ export function traceSourceGraph({ roots, files, entries, read }) {
     }
     reachable.add(filename);
     if (!/\.[cm]?[jt]sx?$/u.test(filename)) return;
+    // TypeScript loads a JavaScript module's adjacent declaration alongside its
+    // runtime source. Keep that actual type dependency in the same closure;
+    // an unrelated declaration is still unreachable and remains a failure.
+    const declaration = filename.replace(/\.(mjs|cjs|js)$/u, (_, extension) =>
+      extension === "mjs" ? ".d.mts" : extension === "cjs" ? ".d.cts" : ".d.ts",
+    );
+    if (declaration !== filename && files.has(declaration)) visit(declaration);
     const parsed = moduleReferences(filename, read(filename));
     if (parsed.computed) computed.push(filename);
     for (const specifier of parsed.references) {

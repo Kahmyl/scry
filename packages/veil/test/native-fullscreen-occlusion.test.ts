@@ -152,3 +152,17 @@ it("fails closed for cyclic ownership or unavailable style facts", () => {
   f.fullscreen.style = null;
   expect(f.check()).toBe(false);
 });
+
+it("does not count partially covered device pixels as opaque surface coverage", () => {
+  const f = fixture();
+  f.fullscreen.getBoundingClientRect = () => ({
+    left: 0.25,
+    top: 0.25,
+    right: 1279.75,
+    bottom: 719.75,
+  });
+  f.box.left = 0.5;
+  expect(f.check()).toBe(false);
+  f.box.left = 1;
+  expect(f.check()).toBe(true);
+});

@@ -23,6 +23,8 @@ export type NativeGraphReceipt = {
   version: 1;
   readId: number;
   policyGeneration: number;
+  geometryRequired?: boolean;
+  geometryScope?: { instanceId: string; graphId: string };
   finalReadChallenge?: string;
   text: "complete" | "withheld";
   image: NativeImageEvidence;

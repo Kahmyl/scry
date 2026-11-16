@@ -76,3 +76,24 @@ test("module-like text in comments and strings does not revive a displaced imple
   assert.deepEqual(parsed.references, ["node:fs"]);
   assert.equal(parsed.computed, false);
 });
+
+test("follows adjacent JavaScript declarations and their imports without admitting unrelated declarations", () => {
+  for (const [runtime, declaration] of [
+    ["module.mjs", "module.d.mts"],
+    ["module.cjs", "module.d.cts"],
+    ["module.js", "module.d.ts"],
+  ]) {
+    const result = graph({
+      "apps/example/src/main.ts": `import "./${runtime}";`,
+      [`apps/example/src/${runtime}`]: "export const value = 1;",
+      [`apps/example/src/${declaration}`]:
+        'import type { Contract } from "@scry/contracts"; export const value: Contract;',
+      "packages/contracts/src/index.ts": "export type Contract = number;",
+      "apps/example/src/unrelated.d.mts": "export const unused: boolean;",
+    });
+    assert.equal(result.reachable.size, 4);
+    assert.equal(result.reachable.has(`apps/example/src/${declaration}`), true);
+    assert.equal(result.reachable.has("apps/example/src/unrelated.d.mts"), false);
+    assert.deepEqual(result.missing, []);
+  }
+});

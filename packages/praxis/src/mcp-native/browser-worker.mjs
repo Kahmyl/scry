@@ -9,6 +9,7 @@ import Ajv from "ajv/dist/2020.js";
 import { BestEffortTasks } from "./best-effort-tasks.mjs";
 import { installCaptureBinding } from "./capture-binding.mjs";
 import { createCaptureProducer } from "./capture-producer.mjs";
+import { readFinalCaptureProtection } from "./final-protection-read.mjs";
 import { refreshNativeProtection } from "./protection-refresh.mjs";
 import { MaskingDiagnostics } from "./masking-diagnostics.mjs";
 import { displayLayout } from "./display-layout.mjs";
@@ -27,6 +28,7 @@ export function startBrowserAdapter(makeProtector) {
   let browser, context, client, upstream, protection, output, closing, validators, interactions;
   let handling = false;
   let producer, captureEpoch;
+  const finalReads = new AbortController();
   const pageIds = new WeakMap(),
     scriptRevisions = new WeakMap(),
     installedSessions = new WeakSet();
@@ -233,6 +235,7 @@ export function startBrowserAdapter(makeProtector) {
   }
   async function close() {
     return (closing ??= (async () => {
+      finalReads.abort();
       producer?.abandon();
       protection?.dispose();
       await plan?.binding.dispose().catch(() => {});
@@ -329,8 +332,23 @@ export function startBrowserAdapter(makeProtector) {
       } else if (message.type === "close_capture_producer") {
         if (!producer) throw Error("NATIVE_CAPTURE_PRODUCER_UNCONFIRMED");
         const data = await producer.close(message, async (challenge) => {
-          await maskReady({ challenge, record: false });
-          emitGaps();
+          await readFinalCaptureProtection({
+            finalRead: { epoch: message.epoch, challenge },
+            epoch: captureEpoch,
+            read: async (finalReadChallenge) => {
+              await maskReady({ challenge: finalReadChallenge, record: false });
+              emitGaps();
+            },
+            sample: () => protection.captureSample(),
+            // Display capture covers every page, including pending background
+            // documents; none may be replaced while its old read is in flight.
+            pending: () => [...maskTasks.pending.values(), ...pixelTasks.pending.values()],
+            assertActive: () => {
+              if (closing || !context || !browser?.isConnected())
+                throw Error("NATIVE_CAPTURE_FINAL_READ_UNCONFIRMED");
+            },
+            signal: finalReads.signal,
+          });
         });
         process.send({ id: message.id, ok: true, data });
       } else if (message.type === "policy_ack") {

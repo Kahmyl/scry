@@ -5,6 +5,7 @@ import type { NativeCaptureEpoch } from "@scry/contracts";
 // Load plain browser JavaScript, never a server-transformed Function.toString().
 // Server transpilers may inject helpers that do not exist in the browser world.
 const runtime = readFileSync(new URL("./native-mask-runtime.js", import.meta.url), "utf8");
+const geometry = readFileSync(new URL("./native-geometry.browser.js", import.meta.url), "utf8");
 export function nativeProtectionScript(
   values: readonly string[],
   options: {
@@ -32,6 +33,8 @@ export function nativeProtectionScript(
   return (
     "(() => {\n" +
     nativeControlPolicySource +
+    "\n" +
+    geometry +
     "\n" +
     runtime +
     "\ninstallNativePrivacyGraph(" +

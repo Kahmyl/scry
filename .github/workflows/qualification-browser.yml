@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SCRY_BROWSER_CHANNEL: chromium
+      PLAYWRIGHT_SKIP_BROWSER_GC: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -33,6 +34,12 @@ jobs:
 
       - name: Install the pinned Chromium runtime
         run: node packages/praxis/node_modules/playwright/cli.js install --with-deps chromium
+
+      - name: Install native recording and official adapter runtimes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg xvfb util-linux
+          node packages/praxis/node_modules/playwright-mcp-runtime/cli.js install chromium
 
       - name: Qualify browser execution and protected recording
         run: pnpm qualify browser
