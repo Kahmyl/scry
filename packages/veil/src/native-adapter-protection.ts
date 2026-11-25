@@ -514,7 +514,16 @@ export function createNativeAdapterProtector(
               ? classifier().sanitize(String(v)) === String(v)
                 ? v
                 : classifier().sanitize(String(v))
-              : clean(v);
+              : typeof v === "string"
+                ? classifier().sanitize(v)
+                : v;
+      };
+      // API data has its own structural/secret proof. A pending DOM geometry
+      // read is not its disclosure authority. Shared history failures still
+      // fail closed above; every API string retains exact/intrinsic masking.
+      const projectFields = (v: unknown) => {
+        nodes = 0;
+        return fields(v);
       };
       if (value && typeof value === "object" && "body" in value && typeof value.body === "string") {
         let body: unknown = value.body;
@@ -522,7 +531,7 @@ export function createNativeAdapterProtector(
           body = JSON.stringify(fields(JSON.parse(value.body)));
         } catch (error) {
           if (error instanceof Error && error.message === "API_RESPONSE_STRUCTURE_CAPACITY")
-            return clean({
+            return projectFields({
               ...value,
               body: "[UNAVAILABLE:RESPONSE_STRUCTURE_CAPACITY]",
               bodyIssue: "response_structure_capacity",
@@ -532,7 +541,7 @@ export function createNativeAdapterProtector(
             typeof value.contentType === "string" &&
             /json/i.test(value.contentType)
           )
-            return clean({
+            return projectFields({
               ...value,
               body: "[UNAVAILABLE:INVALID_JSON]",
               bodyIssue: "invalid_json",
@@ -544,9 +553,9 @@ export function createNativeAdapterProtector(
             ),
           );
         }
-        return clean({ ...value, body });
+        return projectFields({ ...value, body });
       }
-      return clean(value);
+      return projectFields(value);
     },
   };
 }

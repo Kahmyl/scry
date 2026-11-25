@@ -4,6 +4,44 @@ const secret = "fictional-private-bound-secret";
 const policy = createNativeAdapterProtector({ selected: secret });
 const response = (body: string, type = "application/json") =>
   policy.cleanApi({ execution: "completed", status: 200, contentType: type, body }) as any;
+it("keeps API receipt protection independent of an unfinished DOM read while retaining every known secret", () => {
+  const p = createNativeAdapterProtector({ key: secret });
+  p.beginNativeRead();
+  const raw = {
+    execution: "completed",
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      authorized: true,
+      token: "fictional-unclassified-token",
+      message: secret,
+    }),
+  };
+  const safe = p.cleanApi(raw) as typeof raw;
+  expect(JSON.parse(safe.body)).toMatchObject({
+    authorized: true,
+    token: "[PROTECTED:API_RESPONSE]",
+  });
+  expect(JSON.stringify(safe)).not.toContain(secret);
+  expect(safe.status).toBe(200);
+  expect(p.clean("ordinary DOM metadata")).toBe("[UNAVAILABLE:NATIVE_PROTECTION_TEXT]");
+  p.dispose();
+});
+it("continues withholding API strings if the shared secret history reaches capacity", () => {
+  const p = createNativeAdapterProtector({ key: secret });
+  p.capacityExceeded();
+  expect(
+    JSON.stringify(
+      p.cleanApi({
+        body: JSON.stringify({ message: secret }),
+        contentType: "application/json",
+        status: 200,
+      }),
+    ),
+  ).not.toContain(secret);
+  expect((p.cleanApi({ body: secret }) as { body: string }).body).toContain("UNAVAILABLE");
+  p.dispose();
+});
 it.each([
   "password",
   "access_token",

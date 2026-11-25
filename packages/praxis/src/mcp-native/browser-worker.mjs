@@ -465,7 +465,16 @@ export function startBrowserAdapter(makeProtector) {
           ok: true,
           data: {
             isError: facts.execution === "unknown" || facts.execution === "not_dispatched",
-            content: [{ type: "text", text: JSON.stringify(protection.clean(facts)) }],
+            // Scoped HTTP facts already passed both shared-history and bound-
+            // credential API redactors. Do not gate them again on DOM reads.
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  message.tool === "browser_scoped_request" ? facts : protection.clean(facts),
+                ),
+              },
+            ],
             ...(facts.execution === "unknown" || facts.execution === "not_dispatched"
               ? {
                   interaction: {
