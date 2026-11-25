@@ -57,9 +57,17 @@ export async function assertBrowserSchema(
     workflow?: boolean;
     deploymentAdmission?: boolean;
     capabilityLifecycle?: boolean;
+    messageProtection?: boolean;
   } = {},
 ): Promise<void> {
   await assertRetainedBrowserSchema(database);
+  if (historicalTarget.messageProtection !== false) {
+    const protection = await database.query(
+      "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='test_resource_events' AND column_name='protection_version'",
+    );
+    if (protection.rowCount !== 1)
+      throw new Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:message_protection");
+  }
   if (historicalTarget.capabilityLifecycle !== false) {
     const found =
       await database.query(`SELECT table_name||'.'||column_name FROM information_schema.columns WHERE table_schema='public' AND

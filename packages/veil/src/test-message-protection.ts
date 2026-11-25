@@ -6,12 +6,13 @@ const codeKey =
 const privateKey =
   /^(?:authorization|proxy-authorization|cookie|set-cookie|password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|recovery[_-]?codes?)$/i;
 const accessKey =
-  /^(?:token|secret|code|key|ticket|access[_-]?token|refresh[_-]?token|api[_-]?key|invite(?:ation)?[_-]?(?:token|code)|verification[_-]?(?:token|code)|reset[_-]?(?:token|code))$/i;
+  /^(?:token|secret|code|key|ticket|access[_-]?token|refresh[_-]?token|api[_-]?key|invit(?:e|ation)[_-]?(?:token|code)|verification[_-]?(?:token|code)|reset[_-]?(?:token|code))$/i;
 const codeText =
   /\b(?:verification|authentication|security|login|one[- ]time|otp|recovery)\s*(?:code|password)?\s*(?:is|:|=|-)?\s*(\d{4,8})\b/gi;
 export function protectTestMessage(value: unknown) {
   const candidates: Array<{ kind: "code" | "link"; value: string }> = [],
     secrets = new Set<string>();
+  const htmlAliases: Array<{ decoded: string; source: string }> = [];
   let nodes = 0,
     htmlNodes = 0;
   const addSecret = (s: string) => {
@@ -23,41 +24,97 @@ export function protectTestMessage(value: unknown) {
     if (candidates.length < 20 && !candidates.some((x) => x.value === s))
       candidates.push({ kind, value: s });
   };
-  const url = (raw: string, navigable = true) => {
+  const url = (raw: string) => {
     if (raw.length > 8192) throw Error("MESSAGE_URL_LIMIT");
     try {
-      const u = new URL(raw.replaceAll("&amp;", "&"));
-      if (!["http:", "https:"].includes(u.protocol) || u.username || u.password) return;
-      if (
-        [...u.searchParams.keys()].some((k) => accessKey.test(k)) ||
-        /\/(?:invite|verify|reset|activate|confirm)[^?]*\/[a-z0-9_-]{12,}/i.test(u.pathname)
-      ) {
-        if (navigable) candidate("link", u.href);
-        else addSecret(u.href);
+      let absolute = true;
+      let u: URL;
+      try {
+        u = new URL(raw);
+      } catch {
+        absolute = false;
+        // Relative links have no trusted origin. Protect them without inventing
+        // a usable absolute destination for the browser.
+        u = new URL(raw, "https://message.invalid/");
+      }
+      // The fragment is separate from searchParams. Support ordinary fragment
+      // parameters and router fragments with a query, without decoding an entire
+      // URL (which would change delimiters and the claim's actual value).
+      const fragment = u.hash.slice(1);
+      const queryStart = fragment.indexOf("?");
+      const assignment = fragment.indexOf("=");
+      const fragmentParams = new URLSearchParams(
+        queryStart >= 0 && (assignment < 0 || queryStart < assignment)
+          ? fragment.slice(queryStart + 1)
+          : fragment,
+      );
+      const parameters = [...u.searchParams, ...fragmentParams];
+      const pathClaim = /\/(?:invite|verify|reset|activate|confirm)[^?]*\/[a-z0-9_-]{12,}/i.test(
+        u.pathname,
+      );
+      if (parameters.some(([key]) => accessKey.test(key)) || pathClaim) {
+        // A previously sanitized projection is not the original claim. Never
+        // fabricate a handoff from a placeholder while upgrading old events.
+        if (
+          absolute &&
+          /^https?:\/\//i.test(raw.trim()) &&
+          (pathClaim ||
+            parameters.some(([key, claim]) => accessKey.test(key) && claim.length > 0)) &&
+          ["http:", "https:"].includes(u.protocol) &&
+          !u.username &&
+          !u.password &&
+          !/\[PROTECTED|%5bPROTECTED/i.test(raw)
+        )
+          candidate("link", u.href);
         addSecret(raw);
+        return true;
       }
     } catch (e: any) {
       if (e.message?.startsWith("MESSAGE_")) throw e;
     }
   };
+  const plainText = (s: string) => {
+    let found = false;
+    for (const m of s.matchAll(codeText)) {
+      candidate("code", m[1]!);
+      found = true;
+    }
+    for (const m of s.matchAll(/https?:\/\/[^\s"'<>\\]+/gi)) found = url(m[0]) || found;
+    return found;
+  };
   const text = (s: string) => {
     if (s.length > 16384) throw Error("MESSAGE_STRING_LIMIT");
-    for (const m of s.matchAll(codeText)) candidate("code", m[1]!);
     if (/<[a-z][\s\S]*>/i.test(s)) {
       const walk = (n: any) => {
         if (++htmlNodes > 2048) throw Error("MESSAGE_HTML_LIMIT");
-        for (const a of n.attrs ?? []) if (a.name === "href") url(a.value);
-        if (n.nodeName === "#text")
-          for (const m of (n.value ?? "").matchAll(/https?:\/\/[^\s"'<>\\]+/gi)) url(m[0]);
+        for (const a of n.attrs ?? []) {
+          const location = n.sourceCodeLocation?.attrs?.[a.name];
+          if (location)
+            htmlAliases.push({
+              decoded: a.value,
+              source: s.slice(location.startOffset, location.endOffset),
+            });
+          if (a.name === "href") url(a.value);
+        }
+        // HTML source aliases must be masked too: equals, ampersands, protocol
+        // characters or the claim itself can all use character references.
+        if (n.nodeName === "#text") {
+          plainText(n.value ?? "");
+          const location = n.sourceCodeLocation;
+          if (location)
+            htmlAliases.push({
+              decoded: n.value ?? "",
+              source: s.slice(location.startOffset, location.endOffset),
+            });
+        }
+        if (htmlAliases.length > 4096) throw Error("MESSAGE_HTML_LIMIT");
         for (const c of n.childNodes ?? []) walk(c);
+        if (n.content) walk(n.content);
       };
-      walk(parseFragment(s));
-      // Raw HTML encodings are secrecy aliases only. They must never become a
-      // second, truncated navigation choice beside the parsed href.
-      for (const m of s.matchAll(/https?:\/\/[^\s"'<>\\]+/gi)) url(m[0], false);
+      walk(parseFragment(s, { sourceCodeLocationInfo: true }));
       return;
     }
-    for (const m of s.matchAll(/https?:\/\/[^\s"'<>\\]+/gi)) url(m[0]);
+    plainText(s);
   };
   const collect = (v: any, key = "", depth = 0) => {
     if (++nodes > 4096 || depth > 32) throw Error("MESSAGE_TREE_LIMIT");
@@ -70,9 +127,14 @@ export function protectTestMessage(value: unknown) {
   try {
     if (Buffer.byteLength(JSON.stringify(value)) > 65536) throw Error("MESSAGE_BYTE_LIMIT");
     collect(value);
-    const classifier = new SensitiveValueClassifier({
-      protectedValues: Object.fromEntries([...secrets].map((s, i) => ["test_" + i, s])),
-    });
+    const classifierForSecrets = () =>
+      new SensitiveValueClassifier({
+        protectedValues: Object.fromEntries([...secrets].map((s, i) => ["test_" + i, s])),
+      });
+    const decodedClassifier = classifierForSecrets();
+    for (const alias of htmlAliases)
+      if (decodedClassifier.sanitize(alias.decoded) !== alias.decoded) addSecret(alias.source);
+    const classifier = classifierForSecrets();
     const visit = (v: any, key = ""): any => {
       if (privateKey.test(key) || (codeKey.test(key) && /^\d{4,8}$/.test(String(v))))
         return "[PROTECTED]";
