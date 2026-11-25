@@ -235,6 +235,7 @@ export async function migrateBrowserBaseline(input: BaselineMigrationInput) {
             workflow: names.includes("0018-agent-workflow.sql"),
             deploymentAdmission: names.includes("0019-deployment-admission.sql"),
             capabilityLifecycle: names.includes("0020-workflow-capabilities.sql"),
+            messageProtection: names.includes("0022-message-protection.sql"),
           }
         : {},
     );

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { PoolClient, QueryResultRow } from "pg";
 import type { CreateTestResourceInput, TestEvent, TestResource } from "@scry/contracts";
 import { protectTestMessage } from "@scry/veil";
@@ -22,6 +22,19 @@ export type ResourceRow = TestResource & {
 };
 const projection = `t.id,t.mission_id AS "missionId",t.kind,t.name,t.idempotency_key AS "idempotencyKey",t.requested_lifetime AS "expiresInSeconds",t.state,t.address,t.created_at AS "createdAt",t.expires_at AS "expiresAt",
   t.private_data,t.lease_id,t.ownership,t.connected_address,t.password_credential_id,m.project_id AS "projectId"`;
+const messageProtectionVersion = 1;
+type EventRow = TestEvent & { recordedAt: string; protectionVersion: number };
+
+function protectedMessage(title: string, content: unknown) {
+  const result = protectTestMessage({ title, content });
+  return {
+    candidates: result.candidates,
+    data:
+      typeof result.safe === "string"
+        ? { title: "Message withheld", content: result.safe }
+        : (result.safe as { title: string; content: unknown }),
+  };
+}
 
 @Injectable()
 export class TestResourcesRepository {
@@ -306,26 +319,10 @@ export class TestResourcesRepository {
         )
           continue;
         const id = randomUUID();
-        const { safe, candidates } = protectTestMessage({
-          title: message.title,
-          content: message.content,
-        });
-        const refs: TestEvent["secrets"] = [];
-        for (const candidate of candidates) {
-          const protectedValueId = randomUUID();
-          await this.secret(
-            c,
-            row.projectId,
-            row.missionId,
-            protectedValueId,
-            `Test ${candidate.kind} ${id}`,
-            candidate.kind === "link" ? candidate.value.replaceAll("&amp;", "&") : candidate.value,
-          );
-          refs.push({ kind: candidate.kind, protectedValueId });
-        }
-        const data = safe as { title: string; content: unknown };
+        const { data, candidates } = protectedMessage(message.title, message.content);
+        const refs = await this.writeSecrets(c, row.projectId, row.missionId, id, candidates);
         await c.query(
-          `INSERT INTO test_resource_events(id,resource_id,provider_event_id,received_at,title,safe_content,protected_refs) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)`,
+          `INSERT INTO test_resource_events(id,resource_id,provider_event_id,received_at,title,safe_content,protected_refs,protection_version) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)`,
           [
             id,
             row.id,
@@ -334,50 +331,115 @@ export class TestResourcesRepository {
             data.title,
             JSON.stringify(data.content),
             JSON.stringify(refs),
+            messageProtectionVersion,
           ],
         );
       }
     });
   }
-  private async secret(
+  private async writeSecrets(
     c: PoolClient,
     projectId: string,
     missionId: string,
-    id: string,
-    name: string,
-    value: string,
-  ) {
-    const encrypted = this.cipher.encrypt(value, {
-      projectId,
-      protectedValueId: id,
-      canonicalName: name,
-      sourceKind: "user_input",
-    });
-    await c.query(
-      `INSERT INTO protected_values(id,project_id,source_kind,display_name,external_reference,ciphertext,nonce,authentication_tag,value_digest,key_id,state,expires_at,idempotency_key,mission_id) VALUES($1,$2,'user_input',$3,$4,$5,$6,$7,$8,$9,'active',now()+interval '1 day',$10,$11)`,
-      [
-        id,
+    eventId: string,
+    candidates: Array<{ kind: "link" | "code"; value: string }>,
+    capturedAt?: string,
+  ): Promise<TestEvent["secrets"]> {
+    if (!candidates.length) return [];
+    const refs: TestEvent["secrets"] = [];
+    const values: unknown[] = [];
+    const parameter = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    const tuples = candidates.map((candidate) => {
+      const id = randomUUID(),
+        name = `Test ${candidate.kind} ${eventId}`;
+      const encrypted = this.cipher.encrypt(candidate.value, {
         projectId,
-        name,
-        `protected://test/${id}`,
-        encrypted.ciphertext,
-        encrypted.nonce,
-        encrypted.authenticationTag,
-        encrypted.valueDigest,
-        encrypted.keyId,
-        `test-${id}`,
-        missionId,
-      ],
+        protectedValueId: id,
+        canonicalName: name,
+        sourceKind: "user_input",
+      });
+      refs.push({ kind: candidate.kind, protectedValueId: id });
+      return `(${parameter(id)},${parameter(projectId)},'user_input',${parameter(name)},${parameter(`protected://test/${id}`)},${parameter(encrypted.ciphertext)},${parameter(encrypted.nonce)},${parameter(encrypted.authenticationTag)},${parameter(encrypted.valueDigest)},${parameter(encrypted.keyId)},'active',LEAST(now(),COALESCE(${parameter(capturedAt ?? null)}::timestamptz,now()))+interval '1 day',${parameter(`test-${id}`)},${parameter(missionId)})`;
+    });
+    // At most twenty values per event. One insert avoids a query round trip for
+    // every claim while retaining one atomic observation/ref transaction.
+    await c.query(
+      `INSERT INTO protected_values(id,project_id,source_kind,display_name,external_reference,ciphertext,nonce,authentication_tag,value_digest,key_id,state,expires_at,idempotency_key,mission_id) VALUES ${tuples.join(",")}`,
+      values,
     );
+    return refs;
   }
   async events(workspaceId: string | undefined, id: string): Promise<TestEvent[]> {
-    await this.resource(workspaceId, id);
-    return (
-      await this.query<TestEvent>(
-        `SELECT id,resource_id AS "resourceId",received_at AS "receivedAt",title,safe_content AS content,protected_refs AS secrets FROM test_resource_events WHERE resource_id=$1 ORDER BY recorded_at,id`,
-        [id],
-      )
+    const resource = await this.resource(workspaceId, id);
+    const select = `SELECT id,resource_id AS "resourceId",received_at AS "receivedAt",title,safe_content AS content,protected_refs AS secrets,recorded_at::text AS "recordedAt",protection_version AS "protectionVersion" FROM test_resource_events`;
+    // Normal reads do not lock or rewrite already-protected observations.
+    const rows = (
+      await this.query<EventRow>(`${select} WHERE resource_id=$1 ORDER BY recorded_at,id`, [id])
     ).rows;
+    if (rows.some((row) => row.protectionVersion < messageProtectionVersion))
+      return this.transaction(async (c) => {
+        // Re-read under a stable ordered lock: concurrent dashboard/MCP reads
+        // must observe one committed reference set, even after a lost response.
+        const locked = await c.query<EventRow>(
+          `${select} WHERE resource_id=$1 ORDER BY recorded_at,id FOR UPDATE`,
+          [id],
+        );
+        for (const event of locked.rows) {
+          if (event.protectionVersion >= messageProtectionVersion) continue;
+          const { data, candidates } = protectedMessage(event.title, event.content);
+          const refs = [...event.secrets];
+          const existing = refs.length
+            ? await c.query<{ value_digest: string }>(
+                "SELECT value_digest FROM protected_values WHERE id=ANY($1::uuid[]) AND project_id=$2 AND mission_id=$3",
+                [refs.map((ref) => ref.protectedValueId), resource.projectId, resource.missionId],
+              )
+            : undefined;
+          const known = new Set(existing?.rows.map((value) => value.value_digest));
+          // Even a leaked legacy alias of an already-issued claim must not
+          // mint a new credential or undo its revocation/expiry.
+          const fresh = candidates
+            .filter(
+              (candidate) => !known.has(createHash("sha256").update(candidate.value).digest("hex")),
+            )
+            .slice(0, Math.max(0, 20 - refs.length));
+          refs.push(
+            ...(await this.writeSecrets(
+              c,
+              resource.projectId,
+              resource.missionId,
+              event.id,
+              fresh,
+              event.recordedAt,
+            )),
+          );
+          await c.query(
+            "UPDATE test_resource_events SET title=$2,safe_content=$3::jsonb,protected_refs=$4::jsonb,protection_version=$5 WHERE id=$1",
+            [
+              event.id,
+              data.title,
+              JSON.stringify(data.content),
+              JSON.stringify(refs),
+              messageProtectionVersion,
+            ],
+          );
+          Object.assign(event, data, { secrets: refs });
+        }
+        return locked.rows.map((event) => this.publicEvent(event));
+      });
+    return rows.map((event) => this.publicEvent(event));
+  }
+  private publicEvent(event: EventRow): TestEvent {
+    return {
+      id: event.id,
+      resourceId: event.resourceId,
+      receivedAt: event.receivedAt,
+      title: event.title,
+      content: event.content,
+      secrets: event.secrets,
+    };
   }
   async authorizeSecret(
     workspaceId: string | undefined,
