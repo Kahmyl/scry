@@ -14,6 +14,7 @@ import {
   browserProtectionSinkSchema,
   submitBrowserCommandSchema,
   browserSequenceInputSchema,
+  persistedNativeActionResult,
   nativeObservationTools,
   nativeBrowserToolSchema,
 } from "@scry/contracts";
@@ -24,6 +25,11 @@ import type { PraxisStorageState } from "@scry/contracts";
 import { Database } from "../../infrastructure/database.js";
 import { commandExecutionBudgetMs } from "../command-budget.js";
 import { runtimeRecoveryCode, type RuntimeRecoveryCode } from "../command-recovery.js";
+import {
+  uncertainNativeActionSql,
+  NativeActionReconciliationRequired,
+  nativeActionIncidentId,
+} from "../native-action-recovery.js";
 import { lockLiveBrowserOwner } from "./browser-owner-admission.js";
 import { immutableWorkflowInput } from "../workflow-input.js";
 import {
@@ -312,10 +318,10 @@ export class BrowserCommandRepository {
         !nativeObservationTools.has(input.command.tool)
       ) {
         const uncertain = await client.query(
-          "SELECT 1 FROM browser_commands WHERE session_id=$1 AND state IN ('completed','failed') AND safe_result->>'execution'='unknown' LIMIT 1",
+          `SELECT id FROM browser_commands WHERE session_id=$1 AND state IN ('completed','failed') AND ${uncertainNativeActionSql("browser_commands")} ORDER BY command_ordinal LIMIT 1`,
           [sessionId],
         );
-        if (uncertain.rowCount) throw new Error("SCRY_BROWSER_COMMAND_RECONCILIATION_REQUIRED");
+        if (uncertain.rowCount) throw new NativeActionReconciliationRequired(uncertain.rows[0].id);
       }
       const ordinal = await client.query<{ next: string }>(
         "SELECT COALESCE(MAX(command_ordinal),0)+1 AS next FROM browser_commands WHERE session_id=$1",
@@ -476,13 +482,24 @@ export class BrowserCommandRepository {
         !nativeObservationTools.has(row.safe_input.tool)
       ) {
         const uncertain = await client.query(
-          "SELECT 1 FROM browser_commands WHERE session_id=$1 AND command_ordinal<$2 AND state IN ('completed','failed') AND safe_result->>'execution'='unknown' LIMIT 1",
+          `SELECT id FROM browser_commands WHERE session_id=$1 AND command_ordinal<$2 AND state IN ('completed','failed') AND ${uncertainNativeActionSql("browser_commands")} ORDER BY command_ordinal LIMIT 1`,
           [row.session_id, row.command_ordinal],
         );
         if (uncertain.rowCount) {
           await client.query(
-            `UPDATE browser_commands SET state='failed',completed_at=clock_timestamp(),error_code='SCRY_BROWSER_COMMAND_RECONCILIATION_REQUIRED',safe_result='{"execution":"not_dispatched","businessOutcome":"not_dispatched","reason":"prior_uncertain_action"}'::jsonb WHERE id=$1`,
-            [commandId],
+            `UPDATE browser_commands SET state='failed',completed_at=clock_timestamp(),error_code='SCRY_BROWSER_COMMAND_RECONCILIATION_REQUIRED',safe_result=$2::jsonb WHERE id=$1`,
+            [
+              commandId,
+              JSON.stringify({
+                execution: "not_dispatched",
+                businessOutcome: "not_dispatched",
+                reason: "prior_uncertain_action",
+                recovery: {
+                  incidentId: nativeActionIncidentId(uncertain.rows[0].id),
+                  relatedCommandId: uncertain.rows[0].id,
+                },
+              }),
+            ],
           );
           return null;
         }
@@ -617,7 +634,7 @@ export class BrowserCommandRepository {
   ): Promise<void> {
     // Serialization is not coordination work; revalidate the claim only after
     // it finishes, without holding its database lock during local CPU work.
-    const serialized = JSON.stringify(safeResult);
+    const serialized = JSON.stringify(persistedNativeActionResult(safeResult));
     await this.withLiveClaim(commandId, claimToken, "complete", async (client) => {
       await client.query(
         `UPDATE browser_commands SET state='completed',safe_result=$2::jsonb,completed_at=clock_timestamp(),
@@ -632,7 +649,7 @@ export class BrowserCommandRepository {
     claimToken: string,
     result: Record<string, unknown>,
   ): Promise<void> {
-    const serialized = JSON.stringify(result);
+    const serialized = JSON.stringify(persistedNativeActionResult(result));
     await this.withLiveClaim(
       commandId,
       claimToken,

@@ -6,7 +6,11 @@ import {
   HttpStatus,
 } from "@nestjs/common";
 import { publicBrowserErrorCode } from "@scry/veil";
-import { errorFeedback } from "@scry/contracts";
+import { errorFeedback, commandFeedback } from "@scry/contracts";
+import {
+  NativeActionReconciliationRequired,
+  nativeActionIncidentId,
+} from "./native-action-recovery.js";
 
 type HttpReply = { status(code: number): HttpReply; send(body: unknown): void };
 
@@ -39,8 +43,26 @@ export class BrowserExceptionFilter implements ExceptionFilter {
     reply.status(status).send({
       code,
       status,
+      ...(exception instanceof NativeActionReconciliationRequired
+        ? {
+            incidentId: nativeActionIncidentId(exception.relatedCommandId),
+            relatedCommandId: exception.relatedCommandId,
+            admission: "refused_before_allocation",
+            supportUrl: "https://scry.giize.com/support",
+          }
+        : {}),
       safeActions: browserSafeActions(code),
-      interaction: errorFeedback(code),
+      interaction:
+        exception instanceof NativeActionReconciliationRequired
+          ? commandFeedback({
+              state: "failed",
+              result: {
+                execution: "not_dispatched",
+                businessOutcome: "not_dispatched",
+                reason: "prior_uncertain_action",
+              },
+            })
+          : errorFeedback(code),
     });
   }
 }

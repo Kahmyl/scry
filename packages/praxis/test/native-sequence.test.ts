@@ -54,6 +54,134 @@ function fixture(response: unknown = { isError: false, content: [] }) {
   };
   return { engine, c, command };
 }
+it.each([0, 1, 2])(
+  "retains a completed prefix and proves step %i was refused before dispatch",
+  async (refusedIndex) => {
+    const { engine, c, command } = fixture();
+    c.worker.call.mockImplementation(async (m: any) =>
+      m.type === "plan_step" && m.index === refusedIndex
+        ? { contractVersion: 2, isError: true, content: [], dispatchRefusal: m.refusalIdentity }
+        : { isError: false, content: [] },
+    );
+    const saved: any[] = [];
+    try {
+      const r = await engine.execute(c.id, command, {
+        remainingMs: 5000,
+        persistAction: async (r) => {
+          saved.push(structuredClone(r));
+        },
+      });
+      expect(r).toMatchObject({
+        contractVersion: 2,
+        complete: false,
+        execution: refusedIndex === 0 ? "not_dispatched" : "partial",
+        reason: "guard_refused_before_dispatch",
+        observation: "available",
+      });
+      expect((r.receipts as any[]).map((x) => x.execution)).toEqual([
+        ...Array(refusedIndex).fill("completed"),
+        "not_dispatched",
+      ]);
+      expect(
+        saved
+          .filter((x) => x.reason === "dispatch_started")
+          .at(-1)
+          .receipts.at(-1).execution,
+      ).toBe("unknown");
+      expect(c.worker.call.mock.calls.filter(([m]: any) => m.type === "plan_step")).toHaveLength(
+        refusedIndex + 1,
+      );
+    } finally {
+      c.lease.revoke();
+    }
+  },
+);
+it.each(["challenge", "ownerGeneration", "index", "actionId", "planId"])(
+  "rejects a mismatched %s in a negative acknowledgement",
+  async (field) => {
+    const { engine, c, command } = fixture();
+    const saved: any[] = [];
+    c.worker.call.mockImplementation(async (m: any) =>
+      m.type === "plan_step"
+        ? {
+            contractVersion: 2,
+            isError: true,
+            content: [],
+            dispatchRefusal: {
+              ...m.refusalIdentity,
+              [field]: field === "index" ? 7 : field === "ownerGeneration" ? 2 : "wrong",
+            },
+          }
+        : { isError: false, content: [] },
+    );
+    try {
+      await expect(
+        engine.execute(c.id, command, {
+          remainingMs: 5000,
+          persistAction: async (r) => {
+            saved.push(structuredClone(r));
+          },
+        }),
+      ).rejects.toThrow("SCRY_BROWSER_ADAPTER_INVALID_PLAN_STATE");
+      expect(saved.at(-1).receipts.at(-1).execution).toBe("unknown");
+    } finally {
+      c.lease.revoke();
+    }
+  },
+);
+it("does not admit a refusal proof after the current command has been fenced", async () => {
+  const { engine, c, command } = fixture();
+  let fenced = false;
+  const saved: any[] = [];
+  c.worker.call.mockImplementation(async (m: any) => {
+    if (m.type === "plan_step") {
+      fenced = true;
+      return { contractVersion: 2, isError: true, content: [], dispatchRefusal: m.refusalIdentity };
+    }
+    return { isError: false, content: [] };
+  });
+  try {
+    await expect(
+      engine.execute(c.id, command, {
+        remainingMs: 5000,
+        assertCurrent: async () => {
+          if (fenced) throw Error("command fenced");
+        },
+        persistAction: async (r) => {
+          saved.push(structuredClone(r));
+        },
+      }),
+    ).rejects.toThrow("command fenced");
+    expect(saved.at(-1).receipts.at(-1).execution).toBe("unknown");
+  } finally {
+    c.lease.revoke();
+  }
+});
+it.each([undefined, 1, 3])(
+  "keeps a refusal with incompatible response version %s uncertain",
+  async (contractVersion) => {
+    const { engine, c, command } = fixture();
+    const saved: any[] = [];
+    c.worker.call.mockImplementation(async (m: any) =>
+      m.type === "plan_step"
+        ? { contractVersion, isError: true, content: [], dispatchRefusal: m.refusalIdentity }
+        : { isError: false, content: [] },
+    );
+    try {
+      await expect(
+        engine.execute(c.id, command, {
+          remainingMs: 5000,
+          persistAction: async (r) => {
+            saved.push(structuredClone(r));
+          },
+        }),
+      ).rejects.toThrow("SCRY_BROWSER_ADAPTER_INVALID_PLAN_STATE");
+      expect(saved.at(-1).execution).toBe("unknown");
+    } finally {
+      c.lease.revoke();
+    }
+  },
+);
 it("persists dispatch/receipt prefixes before later steps and takes one final snapshot", async () => {
   const { engine, c, command } = fixture(),
     receipts: any[] = [];

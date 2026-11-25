@@ -9,6 +9,8 @@ import {
   editBrowserTextSchema,
   nativeBrowserToolSchema,
   browserSequenceInputSchema,
+  nativeStepRefusalSchema,
+  nativeSequenceExecution,
   maskingDiagnosticSchema,
   type MaskingDiagnostic,
   nativeCapabilitySchemas,
@@ -40,6 +42,7 @@ import {
   createSessionDenials,
   type DenialCursor,
   type DenialSnapshot,
+  type DiagnosticDisclosure,
 } from "./mcp-native/scope-denials.js";
 
 const failure = (code: string) => new Error(`SCRY_BROWSER_${code}`);
@@ -67,6 +70,8 @@ function privateNetworkOrigins(): string[] {
 }
 type Content = { type: string; text?: string; data?: string; mimeType?: string };
 type ToolResult = {
+  contractVersion?: unknown;
+  dispatchRefusal?: unknown;
   content: Content[];
   observationId?: string;
   /** Private adapter admission fact; no new public response member. */
@@ -377,10 +382,14 @@ export class PraxisMcpBrowserEngine {
       const protection = this.protection.nativeDiagnostics?.(values);
       c.denials.setCleaner(
         protection
-          ? (value) =>
-              c.diagnosticDetailAllowed && !c.diagnosticDetailSuppressed
-                ? protection.sanitize(value)
-                : undefined
+          ? (value): DiagnosticDisclosure | undefined => {
+              if (!c.diagnosticDetailAllowed || c.diagnosticDetailSuppressed)
+                return { kind: "withheld", reason: "child_knowledge_unavailable" };
+              const display = protection.sanitize(value);
+              return typeof display === "string"
+                ? { kind: "disclosed", value: display }
+                : undefined;
+            }
           : undefined,
       );
     } catch {
@@ -766,7 +775,7 @@ export class PraxisMcpBrowserEngine {
   ) {
     const receipts: Array<Record<string, unknown>> = [];
     const outcome: Record<string, unknown> = {
-      contractVersion: 1,
+      contractVersion: 2,
       planId: plan.planId,
       execution: "unknown",
       businessOutcome: "unverified",
@@ -798,12 +807,53 @@ export class PraxisMcpBrowserEngine {
         // An already admitted step remains explicitly in-flight on cancellation.
         await options.persistAction?.({ ...outcome, reason: "dispatch_started" });
         attempt.assertActive();
+        const identity = {
+          version: 1 as const,
+          challenge: randomUUID(),
+          planId: plan.planId,
+          index,
+          actionId: step.actionId,
+          ownerGeneration: c.lease!.ownerGeneration,
+        };
         const response = await this.nativeCall(c, attempt, {
           type: "plan_step",
           planId: plan.planId,
           index,
+          refusalIdentity: identity,
           ...(secret !== undefined ? { secret } : {}),
         });
+        const refusal = nativeStepRefusalSchema.safeParse(response.dispatchRefusal);
+        if (
+          response.contractVersion === 2 &&
+          response.isError === true &&
+          Array.isArray(response.content) &&
+          response.content.length === 0 &&
+          refusal.success &&
+          Object.keys(identity).every(
+            (key) =>
+              refusal.data[key as keyof typeof identity] === identity[key as keyof typeof identity],
+          )
+        ) {
+          // A late response cannot downgrade uncertainty after this owner/claim
+          // was fenced. Persistence also rechecks its live database claim.
+          attempt.assertActive();
+          await options.assertCurrent?.();
+          receipt.execution = "not_dispatched";
+          receipt.businessOutcome = "not_dispatched";
+          receipt.dispatch = {
+            version: 1,
+            state: "not_dispatched",
+            source: "worker_guard",
+            ownerGeneration: identity.ownerGeneration,
+          };
+          outcome.execution = nativeSequenceExecution(receipts);
+          outcome.businessOutcome =
+            outcome.execution === "not_dispatched" ? "not_dispatched" : "unverified";
+          outcome.reason = "guard_refused_before_dispatch";
+          await options.persistAction?.(outcome);
+          break;
+        }
+        if (response.dispatchRefusal !== undefined) throw failure("ADAPTER_INVALID_PLAN_STATE");
         const completed = response?.isError === false && Array.isArray(response.content);
         receipt.execution =
           response?.isError === true ? "tool_error" : completed ? "completed" : "unknown";

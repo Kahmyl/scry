@@ -38,11 +38,14 @@ jobs:
       - name: Install native recording and official adapter runtimes
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg xvfb util-linux
+          sudo apt-get install -y --no-install-recommends ffmpeg xvfb util-linux xclip xauth
           node packages/praxis/node_modules/playwright-mcp-runtime/cli.js install chromium
 
       - name: Qualify browser execution and protected recording
         run: pnpm qualify browser
+
+      - name: Verify native input semantics and action recovery
+        run: xvfb-run -a -s "-screen 0 1280x720x24 -nolisten tcp -ac" env SCRY_NATIVE_RECOVERY_QUALIFY=1 pnpm --filter @scry/praxis exec vitest run test/native-recovery-qualification.test.ts --maxWorkers=1
 
       - name: Retain safe qualification outcomes
         if: always()

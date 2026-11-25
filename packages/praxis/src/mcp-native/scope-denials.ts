@@ -2,6 +2,11 @@
  * Veil owns diagnostic privacy. Praxis validates only structural canonical form.
  */
 export const DENIAL_LIMITS = Object.freeze({ capacity: 8, maxCapacity: 8, endpointChars: 512 });
+export type DiagnosticDisclosure =
+  | Readonly<{ kind: "disclosed"; value: string }>
+  | Readonly<{ kind: "withheld"; reason: "privacy_withheld" | "child_knowledge_unavailable" }>;
+// Legacy string cleaners remain supported. Native privacy owners use the typed
+// decision so intentional non-disclosure cannot masquerade as a broken cleaner.
 export type DiagnosticCleaner = (value: string) => unknown;
 type Transport = "http_origin" | "connect_endpoint" | "unknown";
 type Admission = "canonical" | "malformed" | "oversized" | "unsupported";
@@ -13,7 +18,13 @@ type Observation = Readonly<{
   endpoint?: string;
 }>;
 type Unavailable =
-  Admission | "cleaner_missing" | "cleaner_failed" | "cleaner_output_invalid" | "display_redacted";
+  | Admission
+  | "cleaner_missing"
+  | "cleaner_failed"
+  | "cleaner_output_invalid"
+  | "display_redacted"
+  | "privacy_withheld"
+  | "child_knowledge_unavailable";
 
 // Private fields keep cursors session-specific and prevent caller-edited counters.
 class Cursor {
@@ -185,10 +196,19 @@ export function createSessionDenials(
       else if (typeof clean !== "function") issue = "cleaner_missing";
       else {
         try {
-          const display = clean(item.endpoint);
+          const decision = clean(item.endpoint);
+          const typed =
+            decision !== null && typeof decision === "object" && !(decision instanceof Promise)
+              ? (decision as Record<string, unknown>)
+              : undefined;
+          const withheld =
+            typed?.kind === "withheld" &&
+            (typed.reason === "privacy_withheld" || typed.reason === "child_knowledge_unavailable");
+          const display = typed?.kind === "disclosed" ? typed.value : decision;
           // Unknown outputs and changed/redacted displays never become endpoints.
           // This also prevents a cleaner from injecting a new URL or extra text.
-          if (typeof display !== "string") {
+          if (withheld) issue = typed!.reason as "privacy_withheld" | "child_knowledge_unavailable";
+          else if (typeof display !== "string") {
             // The port is synchronous. Retire native Promise rejections without
             // awaiting them or executing arbitrary thenables as diagnostics.
             if (display instanceof Promise)

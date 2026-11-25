@@ -1,4 +1,5 @@
 import { nativeImageReasons } from "./native-privacy.js";
+import { isKnownRefusedSequence, nativeActionIsUncertain } from "./native-step-receipt.js";
 
 /** Pure assessment of authoritative owner facts. No service calls or persistence.
  * Adapters place these fields inside existing extensible command/context records;
@@ -70,6 +71,8 @@ export type FeedbackState =
   | "action_complete_observation_unavailable"
   | "action_complete_command_failed"
   | "not_dispatched"
+  | "partial_sequence"
+  | "active"
   | "scope_refresh_required"
   | "reconciliation_required"
   | "budget_exhausted"
@@ -167,6 +170,28 @@ function unknownCommand(scope: boolean, facts: unknown = {}): Feedback {
   );
 }
 
+function refusedSequenceFeedback(first: boolean, available: boolean, scope: boolean): Feedback {
+  return feedback(
+    first ? "not_dispatched" : "partial_sequence",
+    first
+      ? "Scry stopped before the first planned action was sent. Use the fresh page state when available to plan the remaining work; no planned action was performed."
+      : available
+        ? "Scry preserved the completed steps and stopped before the next action was sent. Use the fresh page state to plan only the remaining work; do not repeat completed steps."
+        : "Scry preserved the completed steps and stopped before the next action was sent. Check the supported recovery state before planning the remaining work; do not repeat completed steps.",
+    available ? { actor: "agent", action: "use_returned_observation" } : release,
+    scope,
+  );
+}
+
+function priorUncertainFeedback(scope: boolean): Feedback {
+  return feedback(
+    "reconciliation_required",
+    "This action was not sent because an earlier action is still unconfirmed. Read the linked earlier receipt once, preserve its uncertainty and use the supported inspection or incomplete-stop path; do not repeat the earlier action.",
+    readCommand,
+    scope,
+  );
+}
+
 /** Accept only finite owner facts. Extra strings/IDs/errors are never rendered.
  * `scopeRestrictionObserved` must be set by an admitted denial diagnostic adapter,
  * never by searching an arbitrary provider error string.
@@ -177,7 +202,13 @@ function baseCommandFeedback(value: unknown): Feedback {
   const scope = r.scopeRestrictionObserved === true;
   const state = c.state,
     execution = r.execution;
-  const knownExecution = is(execution, ["completed", "tool_error", "unknown", "not_dispatched"]);
+  const knownExecution = is(execution, [
+    "completed",
+    "partial",
+    "tool_error",
+    "unknown",
+    "not_dispatched",
+  ]);
   if (!is(state, ["queued", "running", "completed", "failed"]))
     return unknownCommand(scope, c.recovery);
   if (is(state, ["queued", "running"])) {
@@ -192,9 +223,22 @@ function baseCommandFeedback(value: unknown): Feedback {
     );
   }
   if (execution === "unknown" || !knownExecution) return unknownCommand(scope, c.recovery);
+  if (nativeActionIsUncertain(r)) return unknownCommand(scope, c.recovery);
   if (r.receipts !== undefined && !Array.isArray(r.receipts))
     return unknownCommand(scope, c.recovery);
+  if (
+    execution === "partial" ||
+    (execution === "not_dispatched" && Array.isArray(r.receipts) && r.receipts.length > 0)
+  ) {
+    if (!isKnownRefusedSequence(r)) return unknownCommand(scope, c.recovery);
+    return refusedSequenceFeedback(
+      execution === "not_dispatched",
+      r.observation === "available",
+      scope,
+    );
+  }
   if (execution === "not_dispatched") {
+    if (r.reason === "prior_uncertain_action") return priorUncertainFeedback(scope);
     const dispatchedPrefix = Array.isArray(r.receipts) && r.receipts.length > 0;
     if (
       r.businessOutcome !== "not_dispatched" ||
@@ -509,6 +553,33 @@ function baseReleaseFeedback(value: unknown): Feedback {
       { actor: "none", action: "none" },
     );
   }
+  if (r.browserReleased === false && (r.stopRequested === true || r.terminal === true))
+    return feedback(
+      "release_pending",
+      "This attempt is already stopping or has ended, but browser release is not confirmed. Check this same Run's release status; do not submit another stop or application action. Preserve any uncertain action outcomes.",
+      release,
+    );
+  if (record(r.recovery).state === "uncertain_action" && r.browserReleased !== true)
+    return feedback(
+      "unknown",
+      "An earlier action is still unconfirmed. Preserve its linked receipt. Use only the permitted inspection tools, or finish this attempt incomplete; do not repeat the action. Scry support can investigate using the incident reference.",
+      operator,
+    );
+  if (
+    r.browserReleased === false &&
+    r.terminal === false &&
+    r.stopRequested === false &&
+    is(r.state, ["running", "starting", "queued", "pending"])
+  )
+    return feedback(
+      "active",
+      Number.isInteger(r.pendingCommands) && Number(r.pendingCommands) > 0
+        ? "This attempt is active and browser work is pending. Retrieve the existing command result; do not submit a replacement action."
+        : "This attempt is active. Continue the authorized work using the returned context; browser release has not been requested.",
+      Number.isInteger(r.pendingCommands) && Number(r.pendingCommands) > 0
+        ? readCommand
+        : { actor: "agent", action: "continue_with_returned_context" },
+    );
   if (r.browserReleased === false)
     return feedback(
       "release_pending",
@@ -658,6 +729,10 @@ export function canonicalFeedback(value: unknown): Feedback | undefined {
   const input = record(value);
   const candidates: Feedback[] = [];
   for (const scopeRestrictionObserved of [false, true]) {
+    candidates.push(priorUncertainFeedback(scopeRestrictionObserved));
+    for (const first of [false, true])
+      for (const available of [false, true])
+        candidates.push(refusedSequenceFeedback(first, available, scopeRestrictionObserved));
     for (const recovery of [
       {},
       { readOnlyInspectionSupported: true },
@@ -804,6 +879,22 @@ export function canonicalFeedback(value: unknown): Feedback | undefined {
   for (const r of [
     {},
     { browserReleased: false },
+    { browserReleased: false, stopRequested: true },
+    {
+      browserReleased: false,
+      terminal: false,
+      stopRequested: false,
+      state: "running",
+      pendingCommands: 0,
+    },
+    {
+      browserReleased: false,
+      terminal: false,
+      stopRequested: false,
+      state: "running",
+      pendingCommands: 1,
+    },
+    { browserReleased: false, recovery: { state: "uncertain_action" } },
     { browserReleased: true },
     { browserReleased: true, terminal: true, pendingCommands: 0 },
     {

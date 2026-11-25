@@ -21,12 +21,13 @@
     "required",
     "multiple",
   ];
+  const root = el.getRootNode();
   const references = () =>
     ["aria-labelledby", "aria-describedby"].flatMap((a) =>
       (el.getAttribute(a) ?? "")
         .split(/\s+/)
         .filter(Boolean)
-        .map((id) => el.ownerDocument.getElementById(id))
+        .map((id) => root.getElementById(id))
         .filter(Boolean),
     );
   const related = references();
@@ -47,6 +48,8 @@
   const baseline = fingerprint();
   let invalid = false,
     blocked = false;
+  let mutations = [],
+    overflow = false;
   const relevant = (r) => {
     if (
       r.type === "attributes" &&
@@ -60,7 +63,13 @@
     return [...(el.labels ?? []), ...related].some((l) => l === r.target || l.contains(r.target));
   };
   const record = (rs) => {
-    if (rs.some(relevant) || !el.isConnected || fingerprint() !== baseline) invalid = true;
+    for (const r of rs)
+      if (relevant(r)) {
+        invalid = true;
+        if (mutations.length < 256) mutations.push(r);
+        else overflow = true;
+      }
+    if (!el.isConnected || el.getRootNode() !== root || fingerprint() !== baseline) invalid = true;
   };
   const observer = new MutationObserver(record);
   observer.observe(el.ownerDocument, {
@@ -71,7 +80,6 @@
     characterData: true,
   });
   // Also observe open shadow trees containing the control; a document observer does not cross them.
-  const root = el.getRootNode();
   if (root !== el.ownerDocument)
     observer.observe(root, {
       subtree: true,
@@ -95,6 +103,27 @@
     el.addEventListener(name, barrier, { capture: true });
   return {
     check,
+    advanceAfterInput: () => {
+      record(observer.takeRecords());
+      if (
+        blocked ||
+        overflow ||
+        !el.isConnected ||
+        el.getRootNode() !== root ||
+        !["INPUT", "TEXTAREA"].includes(el.tagName) ||
+        fingerprint() !== baseline ||
+        mutations.some(
+          (r) =>
+            r.type !== "attributes" ||
+            r.target !== el ||
+            (r.attributeName !== "name" && r.oldValue !== el.getAttribute(r.attributeName)),
+        )
+      )
+        return false;
+      mutations = [];
+      invalid = false;
+      return true;
+    },
     wasBlocked: () => blocked,
     dispose: () => {
       observer.disconnect();
