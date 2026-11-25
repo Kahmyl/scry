@@ -25,6 +25,7 @@ import {
 import { bindKnownControls, observeControlState } from "./known-controls.mjs";
 import { scopedHttp } from "./scoped-http.mjs";
 import { DownloadTracker } from "./downloads.mjs";
+import { captureGeneratedSecret } from "./generated-secret.mjs";
 export function startBrowserAdapter(makeProtector) {
   let browser, context, client, upstream, protection, output, closing, validators, interactions;
   let handling = false;
@@ -378,6 +379,39 @@ export function startBrowserAdapter(makeProtector) {
       } else if (message.type === "call" && Object.hasOwn(nativeCapabilitySchemas, message.tool)) {
         if (!capabilitiesEnabled || plan) throw Error("INVALID_TOOL_ARGUMENTS");
         const input = nativeCapabilitySchemas[message.tool].parse(message.args);
+        if (message.tool === "browser_capture_secret") {
+          const captured = await captureGeneratedSecret({
+            input,
+            request: message.secretCapture,
+            interactions,
+            protection,
+            allowedOrigins,
+          });
+          // A protected reference can survive an unavailable observation. Its
+          // cipher envelope is private IPC only; the parent admits it first.
+          await maskReady();
+          process.send({
+            id: message.id,
+            ok: true,
+            data: {
+              ...captured,
+              isError: !captured.sealedSecret,
+              content: [
+                {
+                  type: "text",
+                  text: captured.sealedSecret
+                    ? "Existing generated value captured privately; durable handoff pending."
+                    : "The existing secret view could not be captured. Select one current readonly value in the same application and retry capture only. Do not issue or rotate a credential to recover a value.",
+                },
+              ],
+              observationAvailable: protection.observationAvailable(),
+              ...(protection.observationAvailable()
+                ? {}
+                : { observationIssue: protection.observationIssue() }),
+            },
+          });
+          return;
+        }
         let facts;
         if (message.tool === "browser_scoped_request") {
           const raw = await scopedHttp(
@@ -431,7 +465,16 @@ export function startBrowserAdapter(makeProtector) {
           ok: true,
           data: {
             isError: facts.execution === "unknown" || facts.execution === "not_dispatched",
-            content: [{ type: "text", text: JSON.stringify(protection.clean(facts)) }],
+            // Scoped HTTP facts already passed both shared-history and bound-
+            // credential API redactors. Do not gate them again on DOM reads.
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  message.tool === "browser_scoped_request" ? facts : protection.clean(facts),
+                ),
+              },
+            ],
             ...(facts.execution === "unknown" || facts.execution === "not_dispatched"
               ? {
                   interaction: {

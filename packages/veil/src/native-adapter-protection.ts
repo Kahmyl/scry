@@ -161,8 +161,9 @@ export function createNativeAdapterProtector(
         }),
       );
     const failed = chosen.find((w) => w.facts.image.state === "withheld");
+    const emptyInventory = complete && all.length === 0 && selected === -1;
     const image =
-      !complete || !chosen.length
+      !complete || (!chosen.length && !emptyInventory)
         ? nativeImageEvidence("native_protection_refresh_incomplete")
         : (failed?.facts.image ?? nativeImageEvidence());
     return {
@@ -171,7 +172,9 @@ export function createNativeAdapterProtector(
       policyGeneration: shared.policyGeneration,
       ...(challenge ? { finalReadChallenge: challenge } : {}),
       text:
-        complete && chosen.length && chosen.every((w) => w.facts.text === "complete")
+        complete &&
+        (chosen.length || emptyInventory) &&
+        chosen.every((w) => w.facts.text === "complete")
           ? "complete"
           : "withheld",
       image,
@@ -231,6 +234,11 @@ export function createNativeAdapterProtector(
   };
   const clean = (value: unknown) => metadata(value);
   return {
+    sealGeneratedSecret(value, request) {
+      projection.learn([value]);
+      syncLearned();
+      return sealNativeGeneratedSecret(value, request);
+    },
     fork(epoch: NativeCaptureEpoch) {
       return createNativeAdapterProtector({}, { captureEpoch: epoch, shared });
     },
@@ -506,7 +514,16 @@ export function createNativeAdapterProtector(
               ? classifier().sanitize(String(v)) === String(v)
                 ? v
                 : classifier().sanitize(String(v))
-              : clean(v);
+              : typeof v === "string"
+                ? classifier().sanitize(v)
+                : v;
+      };
+      // API data has its own structural/secret proof. A pending DOM geometry
+      // read is not its disclosure authority. Shared history failures still
+      // fail closed above; every API string retains exact/intrinsic masking.
+      const projectFields = (v: unknown) => {
+        nodes = 0;
+        return fields(v);
       };
       if (value && typeof value === "object" && "body" in value && typeof value.body === "string") {
         let body: unknown = value.body;
@@ -514,7 +531,7 @@ export function createNativeAdapterProtector(
           body = JSON.stringify(fields(JSON.parse(value.body)));
         } catch (error) {
           if (error instanceof Error && error.message === "API_RESPONSE_STRUCTURE_CAPACITY")
-            return clean({
+            return projectFields({
               ...value,
               body: "[UNAVAILABLE:RESPONSE_STRUCTURE_CAPACITY]",
               bodyIssue: "response_structure_capacity",
@@ -524,7 +541,7 @@ export function createNativeAdapterProtector(
             typeof value.contentType === "string" &&
             /json/i.test(value.contentType)
           )
-            return clean({
+            return projectFields({
               ...value,
               body: "[UNAVAILABLE:INVALID_JSON]",
               bodyIssue: "invalid_json",
@@ -536,9 +553,10 @@ export function createNativeAdapterProtector(
             ),
           );
         }
-        return clean({ ...value, body });
+        return projectFields({ ...value, body });
       }
-      return clean(value);
+      return projectFields(value);
     },
   };
 }
+import { sealNativeGeneratedSecret } from "./generated-secret.js";

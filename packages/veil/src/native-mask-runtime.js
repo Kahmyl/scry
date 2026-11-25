@@ -454,14 +454,18 @@ function installNativePrivacyGraph(initialBound, options = {}) {
   };
   const textRuns = (element) => {
     const out = [];
-    let value = "";
+    let value = "",
+      nodes = [];
     const flush = () => {
-      if (value) out.push(value);
+      if (value) out.push({ value, nodes });
       value = "";
+      nodes = [];
     };
     const visit = (n) => {
-      if (n.nodeType === 3) value += n.textContent;
-      else if (n.nodeType === 1 && formatting.has(n.localName))
+      if (n.nodeType === 3) {
+        value += n.textContent;
+        nodes.push(n);
+      } else if (n.nodeType === 1 && formatting.has(n.localName))
         for (const child of n.childNodes) visit(child);
       else flush();
     };
@@ -672,8 +676,22 @@ function installNativePrivacyGraph(initialBound, options = {}) {
         if (payloadControl(element)) continue;
         const isOwner = (payloadOwner(element) || caption(element)) && !insideAtomicOwner(element),
           text = isOwner ? String(element.textContent ?? "") : "";
-        for (const run of isOwner ? textRuns(element) : []) {
-          const whole = atomic(element) && text === run;
+        for (const segment of isOwner ? textRuns(element) : []) {
+          const run = segment.value;
+          // A mixed CODE/PRE can contain an independent atomic private subtree
+          // beside a public Copy button. Transfer only the exact run's native
+          // text-node ownership; never widen a partial match or a mixed branch.
+          let branch = segment.nodes[0]?.parentElement;
+          while (branch && branch !== element && !segment.nodes.every((n) => branch.contains(n)))
+            branch = branch.parentElement;
+          const isolated =
+            branch &&
+            branch !== element &&
+            formatting.has(branch.localName) &&
+            atomic(branch) &&
+            branch.textContent === run;
+          const presentationElement = isolated ? branch : element;
+          const whole = isolated || (atomic(element) && text === run);
           if ((scanned += run.length * 2) > limits.textBytes) throw Error("capacity");
           const facts = {
               labels:
@@ -683,17 +701,24 @@ function installNativePrivacyGraph(initialBound, options = {}) {
                 element.hasAttribute("data-scry-financial"),
             },
             decision = nativePresentationDecision(facts);
-          if (bound.has(run) || learned.has(run)) add(element, run, "presentation", "known", whole);
+          if (bound.has(run) || learned.has(run))
+            add(presentationElement, run, "presentation", "known", whole);
           else if (decision.private && !caption(element) && !insideActionCaption(element)) {
             retain(run);
-            add(element, run, "presentation", "private", whole);
+            add(presentationElement, run, "presentation", "private", whole);
           } else {
             for (const known of [...bound, ...learned])
               if (known && run.includes(known))
-                add(element, known, "presentation", "known", whole && run === known);
+                add(presentationElement, known, "presentation", "known", whole && run === known);
             for (const found of nativeIntrinsicFindings(run)) {
               retain(found.value);
-              add(element, found.value, "presentation", "intrinsic", whole && run === found.value);
+              add(
+                presentationElement,
+                found.value,
+                "presentation",
+                "intrinsic",
+                whole && run === found.value,
+              );
             }
           }
         }
@@ -1234,7 +1259,9 @@ function installNativePrivacyGraph(initialBound, options = {}) {
             ? "button"
             : "textbox",
       ];
-    if (tag === "code") return ["code"];
+    // A mixed code owner can expose an independent text run beside a Copy
+    // button. The projector must still prove that exact inline branch.
+    if (tag === "code") return ["code", "text"];
     if (tag === "p") return ["paragraph"];
     if (tag === "button") return ["button"];
     if (tag === "option") return ["option"];

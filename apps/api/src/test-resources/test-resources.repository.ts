@@ -342,7 +342,12 @@ export class TestResourcesRepository {
     projectId: string,
     missionId: string,
     eventId: string,
-    candidates: Array<{ kind: "link" | "code"; value: string }>,
+    candidates: Array<{
+      kind: "link" | "code";
+      value: string;
+      source?: TestEvent["secrets"][number]["source"];
+      label?: string;
+    }>,
     capturedAt?: string,
   ): Promise<TestEvent["secrets"]> {
     if (!candidates.length) return [];
@@ -361,7 +366,12 @@ export class TestResourcesRepository {
         canonicalName: name,
         sourceKind: "user_input",
       });
-      refs.push({ kind: candidate.kind, protectedValueId: id });
+      refs.push({
+        kind: candidate.kind,
+        protectedValueId: id,
+        ...(candidate.source ? { source: candidate.source } : {}),
+        ...(candidate.label ? { label: candidate.label } : {}),
+      });
       return `(${parameter(id)},${parameter(projectId)},'user_input',${parameter(name)},${parameter(`protected://test/${id}`)},${parameter(encrypted.ciphertext)},${parameter(encrypted.nonce)},${parameter(encrypted.authenticationTag)},${parameter(encrypted.valueDigest)},${parameter(encrypted.keyId)},'active',LEAST(now(),COALESCE(${parameter(capturedAt ?? null)}::timestamptz,now()))+interval '1 day',${parameter(`test-${id}`)},${parameter(missionId)})`;
     });
     // At most twenty values per event. One insert avoids a query round trip for
@@ -438,7 +448,11 @@ export class TestResourcesRepository {
       receivedAt: event.receivedAt,
       title: event.title,
       content: event.content,
-      secrets: event.secrets,
+      secrets: event.secrets.map((ref, index) => ({
+        ...ref,
+        source: ref.source ?? "earlier_capture",
+        label: ref.label ?? `Protected ${ref.kind} ${index + 1}`,
+      })),
     };
   }
   async authorizeSecret(
@@ -453,5 +467,47 @@ export class TestResourcesRepository {
       [resourceId, runId, resource.missionId, JSON.stringify([{ protectedValueId: valueId }])],
     );
     if (!result.rowCount) resourceError("TEST_SECRET_SCOPE_INVALID", 403);
+  }
+  async signatureContext(
+    workspace: string | undefined,
+    resourceId: string,
+    eventId: string,
+    runId: string,
+  ) {
+    const row = await this.resource(workspace, resourceId);
+    if (row.kind !== "webhook") resourceError("TEST_SIGNATURE_WEBHOOK_REQUIRED", 400);
+    const event = (
+      await this.query(
+        "SELECT e.provider_event_id,s.id AS session_id FROM test_resource_events e JOIN runs r ON r.mission_id=$3 JOIN browser_execution_sessions s ON s.run_id=r.id WHERE e.id=$1 AND e.resource_id=$2 AND r.id=$4 AND r.state='running' AND s.state='active'",
+        [eventId, resourceId, row.missionId, runId],
+      )
+    ).rows[0];
+    if (!event) resourceError("TEST_SECRET_SCOPE_INVALID", 403);
+    return { row, event };
+  }
+  async signatureReceipt(runId: string, key: string, inputDigest: string) {
+    const row = (
+      await this.query(
+        "SELECT input_digest,safe_receipt FROM test_signature_verifications WHERE run_id=$1 AND idempotency_key=$2",
+        [runId, key],
+      )
+    ).rows[0];
+    if (row && row.input_digest !== inputDigest)
+      resourceError("TEST_RESOURCE_IDEMPOTENCY_CONFLICT", 409);
+    return row?.safe_receipt;
+  }
+  async saveSignatureReceipt(
+    eventId: string,
+    runId: string,
+    valueId: string,
+    key: string,
+    inputDigest: string,
+    receipt: unknown,
+  ) {
+    await this.query(
+      "INSERT INTO test_signature_verifications(id,event_id,run_id,protected_value_id,idempotency_key,input_digest,safe_receipt) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT(run_id,idempotency_key) DO NOTHING",
+      [randomUUID(), eventId, runId, valueId, key, inputDigest, JSON.stringify(receipt)],
+    );
+    return this.signatureReceipt(runId, key, inputDigest);
   }
 }

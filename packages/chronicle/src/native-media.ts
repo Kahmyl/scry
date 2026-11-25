@@ -10,6 +10,7 @@ import type {
   NativeCaptureRecovery,
   NativeCaptureEpoch,
   RecordingAssessment,
+  RecordingGap,
 } from "@scry/contracts";
 import type { ChronicleRecording } from "./recording.js";
 import type { EvidenceVerification } from "./admitted-evidence-reader.js";
@@ -43,6 +44,7 @@ type NativeInternal = {
 };
 const internals = new WeakMap<ChronicleNativeRecordingPort, NativeInternal>();
 import {
+  canonicalRecordingGaps,
   maskingDiagnosticSchema,
   maskingDiagnosticsSchema,
   type MaskingDiagnostic,
@@ -342,7 +344,11 @@ export async function readNativeEvidenceInventory(options: {
   /** Authorized application reads may inspect an immutable admitted prefix. */
   allowOpen?: boolean;
   terminal?: boolean;
-}): Promise<{ media: NativeMediaReceipt[]; recordingAssessment?: RecordingAssessment }> {
+}): Promise<{
+  media: NativeMediaReceipt[];
+  recordingAssessment?: RecordingAssessment;
+  recordingGaps?: RecordingGap[];
+}> {
   const { snapshot } = options;
   if (!snapshot.sealedAt && !options.allowOpen) throw new Error("native_media_not_sealed");
   if (snapshot.custodyMode !== "admitted") return { media: [] };
@@ -369,7 +375,11 @@ export function nativeEvidenceInventory(
   verified: EvidenceVerification<Record<string, unknown>>,
   snapshot: EvidenceStreamSnapshot,
   terminal = false,
-): { media: NativeMediaReceipt[]; recordingAssessment?: RecordingAssessment } {
+): {
+  media: NativeMediaReceipt[];
+  recordingAssessment?: RecordingAssessment;
+  recordingGaps?: RecordingGap[];
+} {
   const facts = {
     ownerGenerations: verified.eventOwnerGenerations,
     captureStopped: !!snapshot.captureStoppedAt,
@@ -398,9 +408,29 @@ export function nativeEvidenceInventory(
     );
   });
   const assessment = recordingAssessment(verified.events, facts);
+  const recordingGaps =
+    canonicalRecordingGaps(
+      captures
+        .filter((c) => c.assessment.state === "withheld")
+        .slice(0, 64)
+        .map((c) => ({
+          ...(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(c.reservation.epoch?.captureId)
+            ? { captureId: c.reservation.epoch.captureId }
+            : {}),
+          reason:
+            c.assessment.state === "withheld"
+              ? c.assessment.reason
+              : "native_capture_final_assessment_missing",
+          affectedEvidence: "whole_capture",
+          timing: c.physical ? "capture_bounds_only" : "unavailable",
+          ...(c.physical ? { startedAtMs: c.physical.started, endedAtMs: c.physical.ended } : {}),
+          recoverable: false,
+        })),
+    ) ?? [];
   return {
     media: nativeMediaReceipts(events),
     ...(assessment ? { recordingAssessment: assessment } : {}),
+    ...(recordingGaps.length ? { recordingGaps } : {}),
   };
 }
 

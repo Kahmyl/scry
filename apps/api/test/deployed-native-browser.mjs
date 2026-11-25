@@ -131,6 +131,10 @@ export async function exerciseNativeBrowser({
     "get_command",
     "connect_test_mailbox",
     "create_webhook_listener",
+    "browser_capture_secret",
+    "list_generated_secrets",
+    "revoke_generated_secret",
+    "verify_test_webhook_signature",
   ])
     assert.ok(tools.includes(name), "DEPLOYED_NATIVE_TOOL_MISSING:" + name);
   assert.ok(!tools.includes("command"), "DEPLOYED_RETAINED_PROFILE_EXPOSED");
@@ -253,6 +257,50 @@ export async function exerciseNativeBrowser({
   await invoke("browser_navigate", { url: "http://fixture:8080/login-app" });
   await expectText("Sign in to the fictional workspace");
   assert.equal((await facts()).logouts, before.logouts + 1);
+  // Exact public API -> durable worker -> opaque reference -> scoped API use.
+  // The fictional source value is never fetched into this controller.
+  const reveal = await invoke("browser_navigate", {
+    url: "http://fixture:8080/generated-secret-view",
+  });
+  assert.ok(!JSON.stringify(reveal).includes("sk_test_"), "GENERATED_REVEAL_VALUE_ESCAPED");
+  const captured = await invoke("browser_capture_secret", {
+    sourceOrigin: "http://fixture:8080",
+    target: { selector: "code" },
+    displayName: "Fictional generated signing key",
+    permittedUses: ["scoped_request"],
+    expiresInSeconds: 3600,
+    trimWhitespace: false,
+    userConfirmed: true,
+  });
+  const reference = captured.result.protectedReferences[0];
+  assert.equal(reference.environmentId, environment.environmentId, "GENERATED_ENVIRONMENT_MISSING");
+  assert.equal(reference.sourceRunId, run.runId, "GENERATED_RUN_MISSING");
+  const listed = await call("list_generated_secrets", { runId: run.runId });
+  assert.ok(
+    listed.items.some(
+      (item) => item.protectedValueId === reference.protectedValueId && item.state === "active",
+    ),
+    "GENERATED_METADATA_MISSING",
+  );
+  const verified = await invoke("browser_scoped_request", {
+    method: "GET",
+    url: "http://fixture:8080/generated-secret-api",
+    credentials: [
+      { protectedValueId: reference.protectedValueId, header: "authorization", format: "bearer" },
+    ],
+  });
+  const requestReceipt = JSON.parse(text(verified));
+  assert.equal(requestReceipt.status, 200, "GENERATED_SCOPED_REQUEST_FAILED");
+  assert.equal(JSON.parse(requestReceipt.body).authorized, true, "GENERATED_SCOPED_USE_FAILED");
+  assert.ok(!JSON.stringify(verified).includes("sk_test_"), "GENERATED_REQUEST_VALUE_ESCAPED");
+  const revoked = await call("revoke_generated_secret", {
+    runId: run.runId,
+    protectedValueId: reference.protectedValueId,
+    userConfirmed: true,
+  });
+  assert.equal(revoked.reference.state, "revoked", "GENERATED_REVOCATION_MISSING");
+  assert.equal(revoked.applicationRevocation, "not_performed", "APPLICATION_REVOCATION_FABRICATED");
+  assert.ok(!(await snapshot()).includes("sk_test_"), "REVOKED_VALUE_LOST_PRIVACY_HISTORY");
   const owned = await operator(`/runs/${run.runId}`);
   await call("finalize_run", {
     runId: run.runId,

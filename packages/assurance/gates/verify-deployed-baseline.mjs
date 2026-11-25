@@ -85,6 +85,10 @@ const env = {
     "fixture-key": Buffer.alloc(32, 7).toString("base64"),
   }),
   POSTGRES_ARCHIVE_MODE: "off",
+  // Fictional, portless candidate only; exercise the shipped private capture
+  // and API capability without changing the live service configuration.
+  SCRY_BROWSER_WORKFLOW_V2_ENABLED: "true",
+  SCRY_BROWSER_PRIVATE_NETWORK_ORIGINS: JSON.stringify(["http://fixture:8080"]),
 };
 const compose = [
   "compose",

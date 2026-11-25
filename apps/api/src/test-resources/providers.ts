@@ -23,6 +23,20 @@ export type ReceivedTestMessage = {
 
 @Injectable()
 export class TestResourceProviders {
+  async webhookSignatureReceipt(state: PrivateResource, providerEventId: string) {
+    const path = `/requests/${encodeURIComponent(providerEventId)}`;
+    const receipt = await this.hookdeck.request(path, { headers: this.hookAuth() });
+    if (receipt.data.id !== providerEventId || receipt.data.source_id !== state.sourceId)
+      resourceError("TEST_PROVIDER_SCOPE_INVALID");
+    const raw = await this.hookdeck.request(
+      path + "/raw_body",
+      { headers: { ...this.hookAuth(), accept: "application/octet-stream" } },
+      [404, 410],
+      "bytes",
+    );
+    if (raw.status !== 200 || !Buffer.isBuffer(raw.data)) return { available: false as const };
+    return { available: true as const, body: raw.data, headers: receipt.data.data?.headers ?? {} };
+  }
   readonly mail: ProviderHttp;
   readonly hookdeck: ProviderHttp;
   constructor(@Inject(Database) database: Database) {

@@ -558,6 +558,7 @@ export class NativeTextProjection {
           ? [{ token, field: "label", value: token.label }]
           : [];
     const groups: Array<{ owner: Scalar; pieces: Piece[] }> = [];
+    const inlineOwners = new Map<Scalar, { key: string; role: string }>();
     const inlinePieces = (token: Scalar): Piece[] => [
       ...ownPiece(token),
       ...token.children.filter((t) => inline.has(t.role)).flatMap(inlinePieces),
@@ -575,12 +576,17 @@ export class NativeTextProjection {
         if (group.length) groups.push({ owner: token, pieces: group });
       }
     for (const { owner: groupOwner, pieces } of groups) {
+      const mixed = groupOwner.children.some((child) => !inline.has(child.role));
+      const independentInline = mixed && pieces.every((piece) => inline.has(piece.token.role));
       const owner = {
-        key: namespace + ":" + groupOwner.line,
-        role: groupOwner.children.some((child) => !inline.has(child.role))
-          ? "unconfirmed"
-          : groupOwner.role,
+        key:
+          namespace +
+          ":" +
+          groupOwner.line +
+          (independentInline ? ":inline:" + pieces[0]!.token.line : ""),
+        role: independentInline ? "text" : mixed ? "unconfirmed" : groupOwner.role,
       };
+      if (independentInline) for (const piece of pieces) inlineOwners.set(piece.token, owner);
       const joined = pieces.map((p) => p.value).join(""),
         matches = this.classifier.findings(joined).filter((f) => f.category === "reference");
       for (const f of matches) {
@@ -605,6 +611,7 @@ export class NativeTextProjection {
       }
     }
     const ownerOf = (token: Scalar) => {
+      if (inlineOwners.has(token)) return inlineOwners.get(token)!;
       let origin = token;
       if (inline.has(token.role)) {
         let parent = token.parent;

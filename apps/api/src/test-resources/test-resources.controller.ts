@@ -18,6 +18,7 @@ import {
   cleanupDecisionSchema,
   type CleanupDecision,
   useTestSecretSchema,
+  verifyTestWebhookSignatureSchema,
   type CreateTestResourceInput,
   type RefreshTestResourceInput,
 } from "@scry/contracts";
@@ -32,6 +33,17 @@ import { TestingOperations } from "../auth/auth.guard.js";
 @Controller("api")
 @TestingOperations()
 export class TestResourcesController {
+  @Post("test-resources/:id/verify-signature")
+  @Header("Cache-Control", "private, no-store")
+  verifySignature(
+    @CurrentPrincipal() p: Principal,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body(new ZodValidationPipe(verifyTestWebhookSignatureSchema))
+    input: import("zod").z.infer<typeof verifyTestWebhookSignatureSchema>,
+  ) {
+    write(p);
+    return withProviderBudget(() => this.service.verifySignature(scope(p), id, input), 15000);
+  }
   constructor(
     @Inject(TestResourcesService) readonly service: TestResourcesService,
     @Inject(CleanupService) readonly cleanup: CleanupService,

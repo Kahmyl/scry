@@ -670,6 +670,12 @@ export function errorFeedback(code: unknown, authoritativeFacts: unknown = {}): 
           requiresConfirmation: true,
         },
       );
+    case "SCRY_BROWSER_GENERATED_SECRET_CAPTURE_UNAVAILABLE":
+      return feedback(
+        "evidence_unconfirmed",
+        "The generated value could not be saved as a protected reference. Retrieve the original command receipt first; if it already contains a reference, reuse it. Otherwise capture only the existing reveal if still available. Do not issue or rotate a credential to recover it. Preserve the application action outcome and report any unverified use.",
+        { actor: "agent", action: "retrieve_existing_command", tool: "get_command" },
+      );
     case "SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE":
       return feedback(
         "protected_input_required",

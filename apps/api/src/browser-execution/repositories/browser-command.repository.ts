@@ -1,4 +1,9 @@
 import { ChronicleRepository } from "@scry/chronicle";
+import {
+  persistGeneratedSecret,
+  generatedMetadataProjection,
+} from "./generated-secret.repository.js";
+import type { AdmittedGeneratedSecret, GeneratedSecretUse } from "@scry/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { isDeepStrictEqual } from "node:util";
@@ -211,11 +216,17 @@ export class BrowserCommandRepository {
       if (!session.rows[0]) throw new Error("SCRY_BROWSER_RUN_NOT_ACTIVE");
       const available = await client.query<{ id: string }>(
         `SELECT id FROM protected_values
-         WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind='user_input' AND state='active'
+         WHERE id=ANY($1::uuid[]) AND project_id=$2 AND source_kind IN ('user_input','browser_generated') AND state='active'
            AND (mission_id IS NULL OR mission_id=$3)
+           AND (source_kind<>'browser_generated' OR source_environment_id=(SELECT environment_id FROM browser_execution_sessions WHERE id=$4))
            AND (expires_at IS NULL OR expires_at>now())
          FOR UPDATE`,
-        [uniqueIds, session.rows[0].projectId, session.rows[0].missionId],
+        [
+          uniqueIds,
+          session.rows[0].projectId,
+          session.rows[0].missionId,
+          session.rows[0].sessionId,
+        ],
       );
       if (available.rowCount !== uniqueIds.length)
         throw new Error("SCRY_BROWSER_PROTECTED_INPUT_UNAVAILABLE");
@@ -246,6 +257,7 @@ export class BrowserCommandRepository {
       parsed.command.kind === "browser_tool" &&
       [
         "browser_scoped_request",
+        "browser_capture_secret",
         "browser_list_downloads",
         "browser_verify_download",
         "browser_set_viewport",
@@ -568,8 +580,16 @@ export class BrowserCommandRepository {
     claimToken: string,
     mode: "heartbeat" | "dispatch" | "complete" | "fail",
     work: (client: PoolClient, sample: CommandClaimSample) => Promise<T>,
+    coordination: "command" | "session" = "command",
   ): Promise<T> {
     return this.database.transaction(async (client) => {
+      // Capture admission also owns Session metadata. Match submit/stop/claim
+      // lock order instead of holding a Command while waiting on its Session.
+      if (coordination === "session")
+        await client.query(
+          "SELECT s.id FROM browser_commands c JOIN browser_execution_sessions s ON s.id=c.session_id WHERE c.id=$1 FOR UPDATE OF s",
+          [commandId],
+        );
       await client.query("SELECT id FROM browser_commands WHERE id=$1 FOR UPDATE", [commandId]);
       const sampleStartedAt = performance.now();
       const result = await client.query<
@@ -689,6 +709,7 @@ export class BrowserCommandRepository {
   }
 
   async sessionContext(sessionId: string): Promise<{
+    environmentId: string;
     sessionId: string;
     runId: string;
     projectId: string;
@@ -702,6 +723,7 @@ export class BrowserCommandRepository {
     stopRequested: boolean;
   }> {
     const result = await this.database.query<{
+      environmentId: string;
       sessionId: string;
       runId: string;
       projectId: string;
@@ -714,7 +736,7 @@ export class BrowserCommandRepository {
       allowedOrigins: string[];
       stopRequested: boolean;
     }>(
-      `SELECT s.id AS "sessionId",s.run_id AS "runId",s.project_id AS "projectId",s.mission_id AS "missionId",
+      `SELECT s.id AS "sessionId",s.environment_id AS "environmentId",s.run_id AS "runId",s.project_id AS "projectId",s.mission_id AS "missionId",
          e.base_origin AS "baseOrigin",s.active_owner_generation AS "ownerGeneration",(s.stop_requested_at IS NOT NULL) AS "stopRequested",
          s.disclosure_mode AS "disclosureMode",s.protection_key_id AS "protectionKeyId",
          s.runtime_adapter AS "runtimeAdapter",(s.allowed_first_party_origins || s.allowed_service_origins) AS "allowedOrigins"
@@ -763,6 +785,7 @@ export class BrowserCommandRepository {
       [sessionId],
     );
     const inputs = await this.database.query<{
+      source_kind: string;
       id: string;
       display_name: string;
       ciphertext: Buffer;
@@ -772,14 +795,16 @@ export class BrowserCommandRepository {
       key_id: string;
       project_id: string;
     }>(
-      `SELECT v.id,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,
+      `SELECT v.id,v.source_kind,v.display_name,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,
               v.key_id,v.project_id
        FROM protected_values v
        JOIN browser_session_protected_inputs i ON i.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=i.session_id AND s.project_id=v.project_id
-       WHERE s.id=$1 AND v.state='active' AND v.source_kind='user_input'
+       WHERE s.id=$1 AND v.source_kind IN ('user_input','browser_generated')
+         AND (v.source_kind='browser_generated' OR v.state='active')
          AND (v.mission_id IS NULL OR v.mission_id=s.mission_id)
-         AND (v.expires_at IS NULL OR v.expires_at>now()) ORDER BY v.id`,
+         AND (v.source_kind<>'browser_generated' OR v.source_environment_id=s.environment_id)
+         AND (v.source_kind='browser_generated' OR v.expires_at IS NULL OR v.expires_at>now()) ORDER BY v.id`,
       [sessionId],
     );
     const values: Record<string, string> = {};
@@ -820,7 +845,7 @@ export class BrowserCommandRepository {
           projectId: row.project_id,
           protectedValueId: row.id,
           canonicalName: row.display_name,
-          sourceKind: "user_input",
+          sourceKind: row.source_kind,
         },
       );
     }
@@ -1034,7 +1059,45 @@ export class BrowserCommandRepository {
     if ((result.rowCount ?? 0) > 1) throw new Error("SCRY_BROWSER_CHECKPOINT_DELETE_INVALID");
   }
 
-  async protectedValueForBrowser(sessionId: string, protectedValueId: string): Promise<string> {
+  saveGeneratedSecret(commandId: string, claimToken: string, value: AdmittedGeneratedSecret) {
+    return this.withLiveClaim(
+      commandId,
+      claimToken,
+      "dispatch",
+      (c) => persistGeneratedSecret(c, commandId, value, this.cipher),
+      "session",
+    );
+  }
+  async listGeneratedSecrets(workspace: string | undefined, runId: string) {
+    const run = (
+      await this.database.query(
+        "SELECT r.* FROM runs r JOIN projects p ON p.id=r.project_id WHERE r.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)",
+        [runId, workspace ?? null],
+      )
+    ).rows[0];
+    if (!run) throw Error("SCRY_BROWSER_RUN_NOT_FOUND");
+    return (
+      await this.database.query(
+        `SELECT ${generatedMetadataProjection} FROM protected_values WHERE source_kind='browser_generated' AND mission_id=$1 AND source_environment_id=$2 ORDER BY created_at,id`,
+        [run.mission_id, run.environment_id],
+      )
+    ).rows;
+  }
+  async revokeGeneratedSecret(workspace: string | undefined, runId: string, valueId: string) {
+    const allowed = await this.listGeneratedSecrets(workspace, runId);
+    if (!allowed.some((v) => v.protectedValueId === valueId))
+      throw Error("SCRY_BROWSER_PROTECTED_VALUE_UNAVAILABLE");
+    const rows = await this.database.query(
+      `UPDATE protected_values SET state=CASE WHEN state='active' THEN 'revoked' ELSE state END WHERE id=$1 AND source_kind='browser_generated' RETURNING ${generatedMetadataProjection}`,
+      [valueId],
+    );
+    return rows.rows[0];
+  }
+  async protectedValueForBrowser(
+    sessionId: string,
+    protectedValueId: string,
+    use: GeneratedSecretUse = "browser_fill",
+  ): Promise<string> {
     const result = await this.database.query<{
       ciphertext: Buffer;
       nonce: Buffer;
@@ -1073,6 +1136,7 @@ export class BrowserCommandRepository {
       );
     }
     const userInput = await this.database.query<{
+      source_kind: string;
       id: string;
       ciphertext: Buffer;
       nonce: Buffer;
@@ -1082,13 +1146,14 @@ export class BrowserCommandRepository {
       project_id: string;
       display_name: string;
     }>(
-      `SELECT v.id,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_id,v.project_id,v.display_name
+      `SELECT v.id,v.source_kind,v.ciphertext,v.nonce,v.authentication_tag,v.value_digest,v.key_id,v.project_id,v.display_name
        FROM protected_values v JOIN browser_session_protected_inputs b ON b.protected_value_id=v.id
        JOIN browser_execution_sessions s ON s.id=b.session_id AND s.project_id=v.project_id
-       WHERE s.id=$1 AND v.id=$2 AND v.source_kind='user_input' AND v.state='active'
+       WHERE s.id=$1 AND v.id=$2 AND v.source_kind IN ('user_input','browser_generated') AND v.state='active'
          AND (v.mission_id IS NULL OR v.mission_id=s.mission_id)
+         AND (v.source_kind<>'browser_generated' OR (v.source_environment_id=s.environment_id AND $3=ANY(v.permitted_uses)))
          AND (v.expires_at IS NULL OR v.expires_at>now())`,
-      [sessionId, protectedValueId],
+      [sessionId, protectedValueId, use],
     );
     const input = userInput.rows[0];
     if (!input) throw new Error("SCRY_BROWSER_PROTECTED_VALUE_UNAVAILABLE");
@@ -1104,7 +1169,7 @@ export class BrowserCommandRepository {
         projectId: input.project_id,
         protectedValueId: input.id,
         canonicalName: input.display_name,
-        sourceKind: "user_input",
+        sourceKind: input.source_kind,
       },
     );
   }

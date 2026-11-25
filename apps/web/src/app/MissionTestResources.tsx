@@ -21,7 +21,7 @@ type Event = {
   title: string;
   receivedAt: string;
   content: unknown;
-  secrets: Array<{ kind: string; protectedValueId: string }>;
+  secrets: Array<{ kind: string; protectedValueId: string; source?: string; label?: string }>;
 };
 type ReceiptRead = {
   resourceId: string | undefined;
@@ -520,6 +520,8 @@ function MissionTestResourcesPanel({
                               <div key={secret.protectedValueId}>
                                 <dt>
                                   Protected {secret.kind === "link" ? "link" : "code"} {index + 1}
+                                  {secret.label ? ` — ${secret.label}` : ""}
+                                  {secret.source ? ` (${secret.source.replaceAll("_", " ")})` : ""}
                                 </dt>
                                 <dd>
                                   <span>protectedValueId: </span>

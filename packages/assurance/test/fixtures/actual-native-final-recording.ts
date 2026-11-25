@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
@@ -12,12 +12,12 @@ import {
   SupervisedBrowser,
 } from "@scry/praxis";
 import { ChronicleEvidenceService, readNativeEvidence, readNativeMedia } from "@scry/chronicle";
-import { EvidenceCipher } from "@scry/veil";
+import { EvidenceCipher, VeilBrowserProtection, BrowserProtectedValueCipher } from "@scry/veil";
 import type { NativeCaptureSample } from "@scry/contracts";
 import { recordingAdmission } from "./evidence-admission.js";
 
 export async function actualNativeFinalRecording(
-  mode: "normal" | "delayed-public" | "stuck-public" | "delayed-known",
+  mode: "normal" | "delayed-public" | "stuck-public" | "delayed-known" | "generated" | "api-only",
 ) {
   const root = await mkdtemp(path.join(os.tmpdir(), "scry-final-custody-"));
   const runId = "00000000-0000-4000-8000-000000000204";
@@ -58,7 +58,9 @@ export async function actualNativeFinalRecording(
       `<h1>Public account settings</h1><p>Ordinary fixture content.</p>${
         mode === "delayed-known"
           ? '<label>Password<input type="password" value="fictional-recording-secret"></label>'
-          : ""
+          : mode === "generated"
+            ? '<p>Signing secret</p><code style="display:flex;gap:16px;align-items:start"><span>sk_test_fictional_generated_secret_763428</span><button>Copy</button></code>'
+            : ""
       }`,
     );
   });
@@ -116,10 +118,95 @@ export async function actualNativeFinalRecording(
       secrets: { FIXTURE_MODE: mode, PASSWORD: "fictional-recording-secret" },
       output,
       captureEpoch: capture.epoch,
+      capabilitiesEnabled: mode === "generated" || mode === "api-only",
+      allowedOrigins: [url],
+      privateOrigins: [url],
     });
     await custody.completeSetup();
-    await worker.call({ type: "call", tool: "browser_navigate", args: { url } });
-    await worker.call({ type: "call", tool: "browser_snapshot", args: {} });
+    if (mode === "api-only") {
+      const response = (await worker.call({
+        type: "call",
+        tool: "browser_scoped_request",
+        args: {
+          method: "GET",
+          url,
+          headers: {},
+          credentials: [],
+          bodyBindings: [],
+          timeoutMs: 10000,
+          maxResponseBytes: 32768,
+        },
+        requestBindings: [],
+      })) as Record<string, unknown>;
+      assert.equal(response.isError, false);
+    } else {
+      const navigation = await worker.call({
+        type: "call",
+        tool: "browser_navigate",
+        args: { url },
+      });
+      const snapshot = (await worker.call({
+        type: "call",
+        tool: "browser_snapshot",
+        args: {},
+      })) as Record<string, unknown>;
+      if (mode === "generated") {
+        const secret = "sk_test_fictional_generated_secret_763428";
+        assert.notEqual(snapshot.observationAvailable, false);
+        assert.equal(JSON.stringify(snapshot).includes(secret), false);
+        assert.equal(JSON.stringify(navigation).includes(secret), false);
+        process.env.SCRY_BROWSER_PROTECTED_KEY_BASE64 = randomBytes(32).toString("base64");
+        const scope = {
+          projectId: randomUUID(),
+          missionId: randomUUID(),
+          runId,
+          sessionId: randomUUID(),
+          environmentId: randomUUID(),
+          ownerGeneration: 1,
+          baseOrigin: url,
+          allowedOrigins: [url],
+          disclosureMode: "confidential" as const,
+          protectionKeyId: "browser-key-1",
+        };
+        const input = {
+          sourceOrigin: url,
+          target: { selector: "code" },
+          displayName: "Fictional signing key",
+          permittedUses: ["scoped_request" as const],
+          expiresInSeconds: 3600,
+          trimWhitespace: false,
+          userConfirmed: true as const,
+        };
+        const admission = new VeilBrowserProtection().nativeSecretCapture(
+          scope,
+          input,
+          randomUUID(),
+          scope.environmentId,
+        );
+        try {
+          const captured = (await worker.call({
+            type: "call",
+            tool: "browser_capture_secret",
+            args: input,
+            secretCapture: admission.request,
+          })) as Record<string, unknown>;
+          assert.equal(captured.isError, false);
+          assert.equal(JSON.stringify(captured).includes(secret), false);
+          const value = admission.accept(captured.sealedSecret);
+          assert.equal(
+            new BrowserProtectedValueCipher().decrypt(value.encrypted, {
+              projectId: scope.projectId,
+              protectedValueId: value.metadata.protectedValueId,
+              canonicalName: value.metadata.displayName,
+              sourceKind: "browser_generated",
+            }),
+            secret,
+          );
+        } finally {
+          admission.dispose();
+        }
+      }
+    }
     const engine = new PraxisMcpBrowserEngine({} as any, {} as any, {} as any, {} as any, root);
     const cell = {
       capture,
@@ -136,10 +223,11 @@ export async function actualNativeFinalRecording(
     assert.ok(finalReads.every((read) => read.sameChallenge));
     assert.equal(finalReads.length, mode === "delayed-public" ? 2 : 1);
     assert.equal(typeof finalSample?.finalReadChallenge, "string");
-    const available = mode === "normal" || mode === "delayed-public";
+    const available = ["normal", "delayed-public", "generated", "api-only"].includes(mode);
     assert.equal(
       (cell.recordingAssessment as { state: string }).state,
       available ? "best_effort_assessed" : "withheld",
+      JSON.stringify({ assessment: cell.recordingAssessment, sample: finalSample }),
     );
     if (mode === "delayed-known")
       assert.equal(finalSample?.observedRequiredGap, "native_protection_refresh_incomplete");

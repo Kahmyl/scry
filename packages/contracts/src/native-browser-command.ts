@@ -68,6 +68,7 @@ export const nativeObservationTools = new Set([
   "browser_take_screenshot",
   "browser_list_downloads",
   "browser_verify_download",
+  "browser_capture_secret",
 ]);
 
 type Schema = {

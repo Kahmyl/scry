@@ -23,7 +23,7 @@ it.each([false, true])(
     await client.connect(b);
     try {
       const { tools } = await client.listTools();
-      expect(tools).toHaveLength(native ? 61 : 33);
+      expect(tools).toHaveLength(native ? 65 : 36);
       // Frozen from the pre-campaign source through the real SDK. Handler copy
       // can evolve; cached schemas, identities, annotations and OAuth cannot.
       const historical = JSON.parse(
@@ -45,6 +45,7 @@ it.each([false, true])(
             .digest("hex"),
         ]),
       );
+      // The new tools were appended without changing any existing fingerprint.
       expect(shapes).toEqual(historical[native ? "native" : "retained"]);
       const budget = codexPluginBudget(tools, client.getInstructions() ?? "");
       expect(budget.hidden).toEqual([]);

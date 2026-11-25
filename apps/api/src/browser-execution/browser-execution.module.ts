@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { BrowserGeneratedSecretsController } from "./controllers/browser-generated-secrets.controller.js";
 
 import { Database } from "../infrastructure/database.js";
 import { RedisConnection } from "../infrastructure/redis.js";
@@ -16,7 +17,12 @@ import { VeilReportProtectionPort } from "@scry/contracts";
 import { BrowserRuntimeVeilReportProtection } from "./browser-boundary-composition.js";
 
 @Module({
-  controllers: [BrowserLifecycleController, BrowserProjectController, BrowserDashboardController],
+  controllers: [
+    BrowserLifecycleController,
+    BrowserProjectController,
+    BrowserDashboardController,
+    BrowserGeneratedSecretsController,
+  ],
   providers: [
     Database,
     RedisConnection,

@@ -51,6 +51,9 @@ export async function processBrowserCommand(
       return { ...result, recovered: true };
     }
     const result = await praxis.executeCommand(command.session_id, command.safe_input, {
+      commandId: command.id,
+      persistGeneratedSecret: (value) =>
+        commands.saveGeneratedSecret(command.id, claimToken, value),
       remainingMs: lease.remainingMs(),
       signal: lease.signal,
       assertCurrent: () => lease.checkpoint(),

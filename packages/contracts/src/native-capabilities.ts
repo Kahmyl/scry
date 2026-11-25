@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { captureGeneratedSecretSchema } from "./generated-secret.js";
 
 const headerName = z
   .string()
@@ -146,6 +147,7 @@ export const setViewportSchema = z.strictObject({
   profile: z.enum(["desktop", "mobile", "mobile_landscape", "tablet"]),
 });
 export const nativeCapabilitySchemas = {
+  browser_capture_secret: captureGeneratedSecretSchema,
   browser_scoped_request: scopedRequestSchema,
   browser_list_downloads: listDownloadsSchema,
   browser_verify_download: verifyDownloadSchema,

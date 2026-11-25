@@ -2,6 +2,7 @@ import {
   applicationReportPresentationSchema,
   releaseFeedback,
   canonicalRecordingAssessment,
+  canonicalRecordingGaps,
   nativeObservationTools,
 } from "@scry/contracts";
 import { nativeActionIncidentId } from "./native-action-recovery.js";
@@ -77,6 +78,9 @@ export function runRecoveryStatus(row: Row) {
         }
       : {}),
     ...(assessment ? { recordingAssessment: assessment } : {}),
+    ...(canonicalRecordingGaps(row.recordingGaps)
+      ? { recordingGaps: canonicalRecordingGaps(row.recordingGaps) }
+      : {}),
     ...(assessmentUnavailable ? { recordingAssessmentAvailability: "unavailable" as const } : {}),
   };
   return { ...status, interaction: releaseFeedback(status) };

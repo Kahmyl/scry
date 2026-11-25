@@ -5,6 +5,11 @@ import "./run-evidence.css";
 import { EvidenceLoading } from "./EvidenceLoading.js";
 import { MaskingReview } from "./MaskingReview.js";
 import type { MaskingDiagnostic } from "@scry/contracts";
+import {
+  canonicalRecordingGaps,
+  recordingGapExplanation,
+  type RecordingGap,
+} from "@scry/contracts";
 
 type Media = {
   index: number;
@@ -24,6 +29,7 @@ type Publication = {
   playbackRate: 1;
   items: Media[];
   recordingAssessment?: { state: "pending" | "best_effort_assessed" | "withheld" };
+  recordingGaps?: RecordingGap[];
 };
 
 /** Only the selected item is fetched. Authorization, exact references and native timing are unchanged. */
@@ -216,6 +222,18 @@ export function RunEvidence({
           refreshing; missing evidence does not establish an application result.
         </p>
       )}
+      {recordingWithheld &&
+        (canonicalRecordingGaps(publication?.recordingGaps) ?? []).map((gap, index) => (
+          <p className="native-evidence-warning" key={gap.captureId ?? index}>
+            {recordingGapExplanation(gap.reason)}{" "}
+            {gap.timing === "capture_bounds_only"
+              ? `The whole recording from ${new Date(gap.startedAtMs!).toLocaleString()} to ${new Date(gap.endedAtMs!).toLocaleString()} is unavailable; these are capture bounds, not the exact failure time.`
+              : "The affected recording interval could not be established."}{" "}
+            This footage cannot be recovered by refreshing. Use independently available screenshots
+            and action/request receipts; do not replay completed actions to replace a video. For
+            API-only checks, recording availability does not change the HTTP result.
+          </p>
+        ))}
       {error && <p role="alert">{error}</p>}
       {selected?.maskingDiagnostics && (
         <MaskingReview

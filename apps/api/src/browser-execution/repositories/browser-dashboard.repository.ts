@@ -103,6 +103,7 @@ export class BrowserDashboardRepository {
       ...(publication?.recordingAssessment
         ? { recordingAssessment: publication.recordingAssessment }
         : {}),
+      ...(publication?.recordingGaps ? { recordingGaps: publication.recordingGaps } : {}),
       items: (publication?.media ?? []).map(
         (
           {
@@ -272,6 +273,7 @@ export class BrowserDashboardRepository {
         ...(publication?.recordingAssessment
           ? { recordingAssessment: publication.recordingAssessment }
           : {}),
+        ...(publication?.recordingGaps ? { recordingGaps: publication.recordingGaps } : {}),
       };
     } catch {
       return { ...row, recordingAssessmentAvailability: "unavailable" as const };

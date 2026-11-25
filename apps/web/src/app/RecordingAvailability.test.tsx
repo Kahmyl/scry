@@ -25,6 +25,29 @@ beforeEach(() => {
   });
   Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
 });
+it("explains authenticated capture bounds without claiming an exact failure instant or recovery", async () => {
+  vi.mocked(api).mockResolvedValue({
+    ...publication(),
+    recordingGaps: [
+      {
+        captureId: "00000000-0000-4000-8000-000000000101",
+        reason: "native_protection_geometry_unsupported",
+        affectedEvidence: "whole_capture",
+        timing: "capture_bounds_only",
+        startedAtMs: 1000,
+        endedAtMs: 2000,
+        recoverable: false,
+        rawSecret: "must-not-render",
+      },
+    ],
+  });
+  render(<RunEvidence runId="timed-gap" />);
+  expect(await screen.findByText(/capture bounds, not the exact failure time/)).toBeTruthy();
+  expect(screen.getAllByText(/cannot be recovered by refreshing/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/recording availability does not change the HTTP result/)).toBeTruthy();
+  expect(screen.queryByText("must-not-render")).toBeNull();
+  expect(videoPlayback).not.toHaveBeenCalled();
+});
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();

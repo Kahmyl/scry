@@ -13,6 +13,7 @@ import type {
 } from "./chronicle-ports.js";
 
 export interface PraxisSessionScope {
+  environmentId?: string;
   sessionId: string;
   runId: string;
   projectId: string;
@@ -128,7 +129,11 @@ export interface PraxisCommandsPort {
   publicValuesForSession(
     sessionId: string,
   ): Promise<Array<{ value: string; allowedSinks: BrowserProtectionSink[] }>>;
-  protectedValueForBrowser(sessionId: string, protectedValueId: string): Promise<string>;
+  protectedValueForBrowser(
+    sessionId: string,
+    protectedValueId: string,
+    use?: import("./generated-secret.js").GeneratedSecretUse,
+  ): Promise<string>;
   loadBrowserCheckpoint(
     sessionId: string,
     generation: number,
@@ -247,6 +252,12 @@ export interface VeilBrowserSessionPort {
   restoreCaptures(captures: DurableCaptureEnvelope[]): Promise<void>;
 }
 export interface VeilBrowserProtectionPort {
+  nativeSecretCapture?(
+    scope: PraxisSessionScope,
+    input: import("./generated-secret.js").CaptureGeneratedSecret,
+    commandId: string,
+    environmentId: string,
+  ): import("./generated-secret.js").NativeSecretCaptureAdmission;
   nativeEvidence?(scope: PraxisSessionScope): EvidenceProtectionPort;
   /** Optional synchronous privacy capability for bounded native scope diagnostics.
    * The caller supplies only already-authorized session policy values. Unknown,

@@ -6,6 +6,7 @@ import {
   createTestResourceSchema,
   refreshTestResourceSchema,
   cleanupDecisionSchema,
+  verifyTestWebhookSignatureSchema,
 } from "@scry/contracts";
 import type { BrowserApiClient } from "./api-client.js";
 import { idempotentDurableWrite, localFactualRead, toolResult, uuid } from "./tool-registry.js";
@@ -19,10 +20,57 @@ export const testResourceInstructions =
 
 export function registerTestResourceTools(server: McpServer, client: BrowserApiClient) {
   server.registerTool(
+    "list_generated_secrets",
+    {
+      description:
+        "List safe generated-reference source, scope, expiry, uses and Scry state. No plaintext or application revocation claim.",
+      inputSchema: { runId: uuid },
+      _meta: toolAuthMetadata(),
+      annotations: localFactualRead,
+    },
+    async ({ runId }) =>
+      toolResult(
+        await client.get(`/runs/${runId}/generated-secrets`),
+        "Generated reference metadata loaded. State describes Scry's reference, not the application's credential status.",
+      ),
+  );
+  server.registerTool(
+    "revoke_generated_secret",
+    {
+      description:
+        "Explicitly revoke this Scry reference, blocking future uses. Retains masking history and evidence; does not revoke the application credential.",
+      inputSchema: { runId: uuid, protectedValueId: uuid, userConfirmed: z.literal(true) },
+      _meta: toolAuthMetadata(),
+      annotations: { ...idempotentDurableWrite, destructiveHint: true },
+    },
+    async ({ runId, protectedValueId, userConfirmed }) =>
+      toolResult(
+        await client.post(`/runs/${runId}/generated-secrets/${protectedValueId}/revoke`, {
+          userConfirmed,
+        }),
+        "Scry reference revocation recorded. No application credential was changed.",
+      ),
+  );
+  server.registerTool(
+    "verify_test_webhook_signature",
+    {
+      description:
+        "Check received webhook HMAC-SHA256 using bound key and exact provider bytes. Select documented raw-body or timestamp-dot-body recipe and encoding. No delivery replay, plaintext or signature output. Missing bytes stay unverified; match does not prove replay protection/business success. Retry same idempotencyKey.",
+      inputSchema: { resourceId: uuid, ...verifyTestWebhookSignatureSchema.shape },
+      _meta: toolAuthMetadata(),
+      annotations: idempotentDurableWrite,
+    },
+    async ({ resourceId, ...input }) =>
+      toolResult(
+        await client.post(`/test-resources/${resourceId}/verify-signature`, input),
+        "Recorded signature check loaded. Interpret only the exact declared recipe and received event; replay protection is not assessed.",
+      ),
+  );
+  server.registerTool(
     "get_cleanup_ledger",
     {
       description:
-        "Read this Mission's actual resource closure and credential retention ledger. Pending cleanup and decisions are explicit. Shared or pre-existing credentials cannot be revoked here. A retained resource can still expire normally. No values are returned.",
+        "Read actual Mission resource closure and credential retention facts. Pending is not completed; shared credentials cannot be revoked here. No values returned.",
       inputSchema: { missionId: uuid },
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
@@ -37,7 +85,7 @@ export function registerTestResourceTools(server: McpServer, client: BrowserApiC
     "record_cleanup_decision",
     {
       description:
-        "Record an authorized cleanup decision for an item in get_cleanup_ledger. Retain shared credentials; close only the selected test resource (customer mailbox closure disconnects without deletion). Revoke only a Mission-created credential after all bound attempts end. Requires explicit confirmation and a factual reason. Reuse one idempotencyKey on retry; external cleanup can remain pending. Never infer a user's retention choice.",
+        "Record explicit cleanup intent and factual reason. Retain shared credentials. Close selected resources; customer mail closure only disconnects. Revoke Mission-created credentials only after bound attempts end. Retry same idempotencyKey; inspect actual pending closure.",
       inputSchema: { missionId: uuid, ...cleanupDecisionSchema.shape },
       _meta: toolAuthMetadata(),
       annotations: { ...idempotentDurableWrite, destructiveHint: true },
@@ -52,7 +100,7 @@ export function registerTestResourceTools(server: McpServer, client: BrowserApiC
     "connect_test_mailbox",
     {
       description:
-        "Use an existing customer-owned Mail.tm mailbox instead of creating a disposable one. Requires its address and the passwordCredentialId explicitly selected by the current user from Project credentials. Never guess a saved credential or ask for its plaintext. Mail.tm authenticates each address separately. May read existing emails; only connect a mailbox the user authorized for this test. Closing or expiry only disconnects Scry and never deletes this mailbox or its messages. Reuse the same idempotency key on retry.",
+        "Connect an authorized existing Mail.tm inbox using its address and explicitly user-selected passwordCredentialId. May read existing mail. No plaintext password or guessing. Closing only disconnects, never deletes the mailbox/messages. Retry same idempotencyKey.",
       inputSchema: { missionId: uuid, ...connectTestMailboxSchema.shape },
       _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,

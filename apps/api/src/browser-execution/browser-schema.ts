@@ -58,9 +58,30 @@ export async function assertBrowserSchema(
     deploymentAdmission?: boolean;
     capabilityLifecycle?: boolean;
     messageProtection?: boolean;
+    generatedSecrets?: boolean;
   } = {},
 ): Promise<void> {
   await assertRetainedBrowserSchema(database);
+  if (historicalTarget.generatedSecrets !== false) {
+    const generated = await database.query(
+      "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='protected_values' AND column_name=ANY($1::text[])",
+      [
+        [
+          "native_source_command_id",
+          "native_source_session_id",
+          "source_environment_id",
+          "source_origin",
+          "permitted_uses",
+          "source_owner_generation",
+        ],
+      ],
+    );
+    const signatures = await database.query(
+      "SELECT to_regclass('public.test_signature_verifications') AS present",
+    );
+    if (generated.rowCount !== 6 || !signatures.rows[0]?.present)
+      throw Error("SCRY_BROWSER_SCHEMA_INCOMPLETE:generated_secrets");
+  }
   if (historicalTarget.messageProtection !== false) {
     const protection = await database.query(
       "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='test_resource_events' AND column_name='protection_version'",

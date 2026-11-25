@@ -7,6 +7,11 @@ import type {
 
 /** Private transport capability. History/graph values must never enter parent IPC. */
 export interface NativeBrowserProtectionPort {
+  /** Explicit read capability: plaintext stays inside this private worker. */
+  sealGeneratedSecret(
+    value: string,
+    request: import("./generated-secret.js").NativeSecretCaptureRequest,
+  ): import("./generated-secret.js").SealedNativeSecret;
   fork(epoch: NativeCaptureEpoch): NativeBrowserProtectionPort;
   clean(value: unknown): unknown;
   cleanApi(value: unknown): unknown;

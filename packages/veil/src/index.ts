@@ -14,3 +14,4 @@ export * from "./browser-protection.js";
 export * from "./error-protection.js";
 export * from "./native-protection.js";
 export { createNativeAdapterProtector } from "./native-adapter-protection.js";
+export { verifyRawWebhookHmac } from "./generated-secret.js";
