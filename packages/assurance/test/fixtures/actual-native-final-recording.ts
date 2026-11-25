@@ -59,7 +59,7 @@ export async function actualNativeFinalRecording(
         mode === "delayed-known"
           ? '<label>Password<input type="password" value="fictional-recording-secret"></label>'
           : mode === "generated"
-            ? "<p>Signing secret</p><code><span>sk_test_fictional_generated_secret_763428</span><button>Copy</button></code>"
+            ? '<p>Signing secret</p><code style="display:flex;gap:16px;align-items:start"><span>sk_test_fictional_generated_secret_763428</span><button>Copy</button></code>'
             : ""
       }`,
     );
@@ -227,6 +227,7 @@ export async function actualNativeFinalRecording(
     assert.equal(
       (cell.recordingAssessment as { state: string }).state,
       available ? "best_effort_assessed" : "withheld",
+      JSON.stringify({ assessment: cell.recordingAssessment, sample: finalSample }),
     );
     if (mode === "delayed-known")
       assert.equal(finalSample?.observedRequiredGap, "native_protection_refresh_incomplete");

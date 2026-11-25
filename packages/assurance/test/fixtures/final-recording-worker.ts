@@ -16,7 +16,9 @@ await runNativeBrowserAdapterWorker((secrets, options) => {
     if (challenge) {
       firstChallenge ??= challenge;
       ++finalOrdinal;
-      delayCurrentRead = finalOrdinal === 1 && mode !== "normal";
+      delayCurrentRead =
+        finalOrdinal === 1 &&
+        ["delayed-public", "stuck-public", "delayed-known"].includes(mode ?? "");
       process.send?.({
         type: "fixture_final_read",
         ordinal: finalOrdinal,

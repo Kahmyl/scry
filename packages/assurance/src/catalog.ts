@@ -187,7 +187,7 @@ export const checks: readonly CheckDefinition[] = [
       "test/native-paint-acknowledgement.test.ts",
       "test/generated-secret.browser.test.ts",
     ],
-    { integrated: true, minimum: 26 },
+    { integrated: true, minimum: 29 },
   ),
   tests(
     "browser-recording",

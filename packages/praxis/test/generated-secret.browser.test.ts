@@ -130,4 +130,79 @@ live("generated value capture in real Chromium", () => {
       }
     }
   });
+  it.each([
+    {
+      name: "isolated exact subtree",
+      markup: `<span>${secret}</span><button>Copy</button>`,
+      buttonStyle: "",
+      state: "available",
+    },
+    {
+      name: "partial value inside one subtree",
+      markup: `<span>Public prefix ${secret}</span><button>Copy</button>`,
+      buttonStyle: "",
+      state: "withheld",
+    },
+    {
+      name: "overlapping public button",
+      markup: `<span>${secret}</span><button>Copy</button>`,
+      buttonStyle: "transform:translateX(-25px)",
+      state: "withheld",
+    },
+  ])(
+    "masks only proven atomic text and preserves refusal for $name",
+    async ({ markup, buttonStyle, state }) => {
+      const context = await browser.newContext(),
+        page = await context.newPage(),
+        protection = createNativeAdapterProtector({ key: secret });
+      try {
+        await page.setContent(
+          `<style>code{display:flex;gap:16px;align-items:start}button{${buttonStyle}}</style><code>${markup}</code>`,
+        );
+        const publicBefore = await page.locator("button").screenshot(),
+          privateBefore = await page.locator("span").screenshot();
+        const cdp = await context.newCDPSession(page),
+          { frameTree } = await cdp.send("Page.getFrameTree"),
+          world = await cdp.send("Page.createIsolatedWorld", {
+            frameId: frameTree.frame.id,
+            worldName: "scry-native-protection",
+          });
+        await cdp.send("Runtime.evaluate", {
+          contextId: world.executionContextId,
+          expression: protection.script,
+        });
+        const read = protection.beginNativeRead(),
+          source = { pageId: 0, worldId: 0 };
+        const facts = await cdp.send("Runtime.evaluate", {
+          contextId: world.executionContextId,
+          expression: protection.readExpressionFor(source),
+          awaitPromise: true,
+          returnByValue: true,
+        });
+        protection.acceptNativeRead(read, facts.result.value, source);
+        protection.finishNativeRead(read, true, 0);
+        const safe = protection.cleanTextContent(
+          [{ type: "text", text: await page.locator("body").ariaSnapshot() }],
+          true,
+        );
+        expect(JSON.stringify(safe)).not.toContain(secret);
+        const paint = await cdp.send("Runtime.evaluate", {
+          contextId: world.executionContextId,
+          expression: protection.pixelExpression,
+          awaitPromise: true,
+          returnByValue: true,
+        });
+        protection.acceptNativePaint(read, paint.result.value, source);
+        protection.finishNativePaint(read);
+        expect(protection.imageEvidence().state).toBe(state);
+        if (state === "available") {
+          expect((await page.locator("button").screenshot()).equals(publicBefore)).toBe(true);
+          expect((await page.locator("span").screenshot()).equals(privateBefore)).toBe(false);
+        }
+      } finally {
+        protection.dispose();
+        await context.close();
+      }
+    },
+  );
 });

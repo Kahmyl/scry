@@ -24,6 +24,7 @@ if (process.argv[2] === "serve") {
   const key = { ...publicKey.export({ format: "jwk" }), kid: "fixture", alg: "ES256", use: "sig" };
   const users = [randomUUID(), randomUUID()];
   const credential = `fixture-only-secret-${randomUUID()}`;
+  const generatedSecret = `sk_test_fictional_${randomUUID()}`;
   startLoginFixture(credential);
   const token = (index) => {
     const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -112,6 +113,17 @@ if (process.argv[2] === "serve") {
       return response.end(JSON.stringify({ keys: [key] }));
     if (url.pathname === "/fixture-input")
       return response.end(JSON.stringify({ token: token(0), otherToken: token(1), credential }));
+    if (url.pathname === "/generated-secret-view") {
+      response.setHeader("content-type", "text/html");
+      return response.end(
+        `<h1>Fictional signing secret</h1><code style="display:flex;gap:16px;align-items:start"><span>${generatedSecret}</span><button>Copy</button></code>`,
+      );
+    }
+    if (url.pathname === "/generated-secret-api") {
+      const authorized = request.headers.authorization === `Bearer ${generatedSecret}`;
+      response.statusCode = authorized ? 200 : 401;
+      return response.end(JSON.stringify({ authorized }));
+    }
     if (url.pathname === "/app") {
       response.setHeader("content-type", "text/html");
       return response.end(
