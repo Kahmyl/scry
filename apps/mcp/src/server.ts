@@ -17,6 +17,7 @@ import {
 import { z } from "zod";
 
 import { BrowserApiClient } from "./api-client.js";
+import { browserErrorEnvelopeCapability } from "./browser-tool-error.js";
 import {
   registerSavedReportTools,
   reportNavigation,
@@ -54,6 +55,7 @@ export function createBrowserMcpServer(client = new BrowserApiClient()) {
       // Codex charges namespace instructions per tool against a shared plugin budget.
       // Deliver complete guidance through discovery/preflight instead of repeating it per tool.
       instructions: "Use list_projects.",
+      capabilities: { experimental: { [browserErrorEnvelopeCapability]: { version: 1 } } },
     },
   );
   registerLifecycleTools(server, client, native, navigation, workflowGuidance);

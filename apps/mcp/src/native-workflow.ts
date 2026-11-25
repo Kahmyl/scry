@@ -27,6 +27,7 @@ export const reportingNotes =
 export const nativeWorkflowGuidance = [
   customerWorkflowInstructions,
   nativeExecutionNotes,
+  "Recovery: a partial browser_sequence result preserves completed steps and proves only its refused suffix was not dispatched. Reuse its fresh observation and plan only the remaining authorized work; never repeat the completed prefix. Unknown is different: retain the original receipt and inspect get_run_status once for its correlated recovery facts. admissionAllowedTools describes current admission, not guaranteed runtime availability; every call revalidates ownership and scope. Use a permitted inspection when it can resolve a concrete question, or finish the attempt incomplete with applicable authorization. If the outcome remains unknown, preserve it and give the incident reference and returned support URL. A support link does not mean a ticket was filed or that someone will resume work automatically. Do not poll a healthy active Run for release unless stopping or finalization is actually pending.",
   resourceWorkflowNotes,
   reportingNotes,
   "Example report payload (format only; replace with actual findings, add the observed missionId and agentSessionId, and never copy an unperformed test as completed): " +

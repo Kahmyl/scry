@@ -2,7 +2,9 @@ import {
   applicationReportPresentationSchema,
   releaseFeedback,
   canonicalRecordingAssessment,
+  nativeObservationTools,
 } from "@scry/contracts";
+import { nativeActionIncidentId } from "./native-action-recovery.js";
 
 type Row = Record<string, unknown>;
 export const isTerminalRunState = (state: unknown): boolean =>
@@ -43,6 +45,37 @@ export function runRecoveryStatus(row: Row) {
         ? Number(row.ownerGeneration)
         : null,
     pendingCommands,
+    ...(typeof row.currentCommandId === "string" ? { currentCommandId: row.currentCommandId } : {}),
+    ...(typeof row.uncertainCommandId === "string"
+      ? {
+          recovery: {
+            state: "uncertain_action",
+            incidentId: nativeActionIncidentId(row.uncertainCommandId),
+            relatedCommandId: row.uncertainCommandId,
+            browserSessionId: row.browserSessionId,
+            admissionAllowedTools:
+              !terminal &&
+              row.runtimeAdapter === "playwright_mcp" &&
+              row.browserSessionState === "active" &&
+              row.stopRequestedAt == null &&
+              row.inspectionOwnerLive === true &&
+              ![
+                "SCRY_BROWSER_ADAPTER_TIMEOUT",
+                "SCRY_BROWSER_ADAPTER_LOST",
+                "SCRY_BROWSER_ADAPTER_COMMAND_CONCURRENT",
+                "SCRY_BROWSER_COMMAND_PHASE_EXPIRED",
+                "SCRY_BROWSER_OWNER_FENCED",
+              ].includes(String(row.uncertainErrorCode))
+                ? [...nativeObservationTools]
+                : [],
+            availability: "revalidated_on_submission",
+            mutationsAllowed: false,
+            stopTool: terminal ? null : "finish_incomplete_run",
+            supportUrl: "https://scry.giize.com/support",
+            resumeCondition: "authoritative_action_outcome_required",
+          },
+        }
+      : {}),
     ...(assessment ? { recordingAssessment: assessment } : {}),
     ...(assessmentUnavailable ? { recordingAssessmentAvailability: "unavailable" as const } : {}),
   };

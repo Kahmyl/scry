@@ -4,6 +4,7 @@ import type { BrowserApiClient } from "./api-client.js";
 import { toolAuthMetadata } from "./oauth-discovery.js";
 import { uuid } from "./tool-registry.js";
 import { nativeCommandResult, nativePendingResult } from "./native-browser-tools.js";
+import { browserToolCall } from "./browser-tool-error.js";
 
 type Poll = (
   client: BrowserApiClient,
@@ -16,7 +17,7 @@ export function registerBrowserSequence(server: McpServer, client: BrowserApiCli
     "browser_sequence",
     {
       description:
-        "Submit one worker-owned plan of up to eight already-known native controls. Use current snapshot references, a stable planId and distinct actionIds. Clicks, key presses and submit end the plan. The worker binds observed control meaning, serializes the whole plan, preserves each receipt and stops on change, error, cancellation or uncertainty. Secrets use bound references only. Exact retry retrieves receipts and never repeats uncertain work. One final snapshot is returned; verify business state separately. Host approval applies to all proposed effects.",
+        "Submit one worker-owned plan of up to eight already-known native controls. Use current snapshot references, a stable planId and distinct actionIds. Clicks, key presses and submit end the plan. The worker binds observed control meaning, serializes the plan and preserves each receipt. A known partial result preserves completed steps and proves the refused suffix was not sent; use the fresh observation to plan only remaining work. An unknown result may have happened and must not be replayed. Secrets use bound references only. Exact retry retrieves receipts. Verify business state separately. Host approval applies to all proposed effects.",
       inputSchema: { browserSessionId: uuid, ...browserSequenceInputSchema.shape },
       _meta: toolAuthMetadata(),
       annotations: {
@@ -26,42 +27,44 @@ export function registerBrowserSequence(server: McpServer, client: BrowserApiCli
         openWorldHint: true,
       },
     },
-    async ({ browserSessionId, ...requested }) => {
-      const plan = browserSequenceInputSchema.parse(requested);
-      const submitted = await client.post<{ commandId: string; state: string }>(
-        `/browser-sessions/${browserSessionId}/commands`,
-        {
-          command: { kind: "browser_tool", tool: "browser_sequence", args: plan },
-          idempotencyKey: `sequence-v1:${plan.planId}`,
-        },
-      );
-      const observed = await poll(client, submitted.commandId, 25_000);
-      const final = observed
-        ? await nativeCommandResult(client, observed)
-        : nativePendingResult(submitted);
-      const result = observed?.result as Record<string, unknown> | undefined;
-      const complete =
-        observed?.state === "completed" &&
-        result?.execution === "completed" &&
-        result?.observation === "available" &&
-        final?.isError !== true;
-      const structuredContent = {
-        message: complete
-          ? "Planned actions completed. Use the returned observation to verify the business state."
-          : final.structuredContent.message,
-        commandId: submitted.commandId,
-        state: observed?.state ?? submitted.state,
-        complete,
-        command: final.structuredContent.command,
-      };
-      return {
-        content: [
-          { type: "text" as const, text: JSON.stringify(structuredContent) },
-          ...(final?.content.filter((c) => c.type === "image") ?? []),
-        ],
-        structuredContent,
-        isError: final?.isError ?? false,
-      };
-    },
+    async ({ browserSessionId, ...requested }) =>
+      browserToolCall(server, async () => {
+        const plan = browserSequenceInputSchema.parse(requested);
+        const submitted = await client.post<{ commandId: string; state: string }>(
+          `/browser-sessions/${browserSessionId}/commands`,
+          {
+            command: { kind: "browser_tool", tool: "browser_sequence", args: plan },
+            idempotencyKey: `sequence-v1:${plan.planId}`,
+          },
+        );
+        const observed = await poll(client, submitted.commandId, 25_000);
+        const final = observed
+          ? await nativeCommandResult(client, observed)
+          : nativePendingResult(submitted);
+        const result = observed?.result as Record<string, unknown> | undefined;
+        const complete =
+          observed?.state === "completed" &&
+          result?.complete === true &&
+          result?.execution === "completed" &&
+          result?.observation === "available" &&
+          final?.isError !== true;
+        const structuredContent = {
+          message: complete
+            ? "Planned actions completed. Use the returned observation to verify the business state."
+            : final.structuredContent.message,
+          commandId: submitted.commandId,
+          state: observed?.state ?? submitted.state,
+          complete,
+          command: final.structuredContent.command,
+        };
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(structuredContent) },
+            ...(final?.content.filter((c) => c.type === "image") ?? []),
+          ],
+          structuredContent,
+          isError: final?.isError ?? false,
+        };
+      }),
   );
 }

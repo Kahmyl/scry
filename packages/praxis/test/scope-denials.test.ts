@@ -9,6 +9,34 @@ import {
 const blocked = (origin: unknown) => ({ origin, reason: "origin_not_allowed" });
 const identity = (value: string) => value;
 
+test("typed withholding is distinct from cleaner failure and preserves bounded counts", () => {
+  for (const reason of ["privacy_withheld", "child_knowledge_unavailable"] as const) {
+    const collector = createSessionDenials({ clean: () => ({ kind: "withheld", reason }) });
+    for (let i = 0; i < 17; i++) collector.record(blocked("https://private-fixture.example"));
+    const r = collector.snapshot();
+    assert.deepEqual(r.unavailableReasons, [reason]);
+    assert.equal(r.denialCount, 17);
+    assert.equal(r.retainedCallbackCount, 8);
+    assert.equal(r.droppedCallbackCount, 9);
+    assert.deepEqual(r.endpoints, []);
+    assert.equal(JSON.stringify(r).includes("private-fixture"), false);
+  }
+});
+test("typed disclosure cannot replace an endpoint or smuggle a withheld reason", () => {
+  for (const clean of [
+    () => ({ kind: "disclosed", value: "https://replacement.example" }),
+    () => ({ kind: "withheld", reason: "private-hostname" }),
+    () => ({ kind: "disclosed", value: Promise.resolve("https://private.example") }),
+  ]) {
+    const collector = createSessionDenials({ clean });
+    collector.record(blocked("https://original.example"));
+    const r = collector.snapshot();
+    assert.deepEqual(r.endpoints, []);
+    assert.equal(JSON.stringify(r).includes("replacement.example"), false);
+    assert.equal(JSON.stringify(r).includes("private-hostname"), false);
+  }
+});
+
 test("existing callback becomes contextual diagnostics without an app/action verdict", () => {
   const collector = createSessionDenials({ clean: identity });
   collector.record(blocked("https://dependency.example"));

@@ -14,6 +14,7 @@ import { Database } from "../../infrastructure/database.js";
 import { readBrowserEvidenceProtection } from "../browser-boundary-composition.js";
 import type { NativeMediaReceipt } from "@scry/contracts";
 import { isTerminalRunState } from "../customer-reporting.js";
+import { uncertainNativeActionSql } from "../native-action-recovery.js";
 
 const statusBudgetMs = 3000;
 async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
@@ -240,11 +241,17 @@ export class BrowserDashboardRepository {
     const row = await this.database.boundedTransaction(async (client) => {
       const result = await client.query(
         `SELECT r.id,r.mission_id AS "missionId",r.state,r.outcome_classification AS "outcomeClassification",
+        s.id AS "browserSessionId",s.runtime_adapter AS "runtimeAdapter",
         s.state AS "browserSessionState",s.active_owner_generation AS "ownerGeneration",s.stop_requested_at AS "stopRequestedAt",
+        uncertain.id AS "uncertainCommandId",uncertain.error_code AS "uncertainErrorCode",
+        EXISTS(SELECT 1 FROM browser_owner_generations og WHERE og.session_id=s.id AND og.generation=s.active_owner_generation AND og.state='active' AND og.lease_expires_at>clock_timestamp()) AS "inspectionOwnerLive",
         EXISTS(SELECT 1 FROM browser_evidence_streams es WHERE es.session_id=s.id AND es.sealed_at IS NOT NULL) AS "evidenceSealed",
         EXISTS(SELECT 1 FROM browser_owner_generations og WHERE og.session_id=s.id AND og.generation=s.active_owner_generation AND og.state='released' AND og.replacement_reason IN ('physical_retirement_confirmed','session_finalized')) AS "ownerReleased",
-        (SELECT count(*)::int FROM browser_commands bc WHERE bc.session_id=s.id AND bc.state IN ('queued','running')) AS "pendingCommandCount"
+        (SELECT count(*)::int FROM browser_commands bc WHERE bc.session_id=s.id AND bc.state IN ('queued','running')) AS "pendingCommandCount",
+        (SELECT bc.id FROM browser_commands bc WHERE bc.session_id=s.id AND bc.state IN ('queued','running') ORDER BY bc.command_ordinal LIMIT 1) AS "currentCommandId"
         FROM runs r JOIN projects p ON p.id=r.project_id LEFT JOIN browser_execution_sessions s ON s.run_id=r.id
+        LEFT JOIN LATERAL (SELECT bc.id,bc.error_code FROM browser_commands bc WHERE bc.session_id=s.id
+          AND bc.state IN ('completed','failed') AND ${uncertainNativeActionSql("bc")} ORDER BY bc.command_ordinal LIMIT 1) uncertain ON true
         WHERE r.id=$1 AND ($2::uuid IS NULL OR p.workspace_id=$2)`,
         [runId, workspaceId ?? null],
       );

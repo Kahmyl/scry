@@ -18,6 +18,7 @@ import {
   editBrowserTextSchema,
   screenshotPresentationSchema,
   browserSequenceInputSchema,
+  nativeStepRefusalSchema,
   nativeCapabilitySchemas,
   viewportProfiles,
 } from "@scry/contracts";
@@ -265,6 +266,8 @@ export function startBrowserAdapter(makeProtector) {
     }
     handling = true;
     let pendingObservation, imageCaptureToken;
+    let refusalIdentity,
+      stepMayHaveDispatched = false;
     try {
       if (message.type === "init") {
         captureEpoch = message.captureEpoch;
@@ -478,6 +481,14 @@ export function startBrowserAdapter(makeProtector) {
           )
             throw Error("INVALID_PLAN_STATE");
           const step = plan.input.steps[message.index];
+          const identity = nativeStepRefusalSchema.safeParse(message.refusalIdentity);
+          if (
+            identity.success &&
+            identity.data.planId === plan.input.planId &&
+            identity.data.index === message.index &&
+            identity.data.actionId === step.actionId
+          )
+            refusalIdentity = identity.data;
           tool = step.tool;
           rawArgs = step.args;
           if (tool === "browser_type_secret") {
@@ -533,6 +544,9 @@ export function startBrowserAdapter(makeProtector) {
             throw Error("OBSERVATION_INVALIDATED");
           await plan.binding.before(message.index, tool === "browser_press_key");
         }
+        // From this point, absent acknowledgement is uncertain. Never emit a
+        // negative acknowledgement after entering the upstream invocation path.
+        if (inPlan) stepMayHaveDispatched = true;
         process.send?.({ type: "phase", phase: "upstream:" + tool });
         if (tool === "browser_drag" && /^(f\d+)?e\d+$/.test(args.startTarget)) {
           const page = await interactions.activePage(),
@@ -551,6 +565,17 @@ export function startBrowserAdapter(makeProtector) {
         if (tool === "browser_tabs" && !result.isError) interactions.noteTabState(result);
         if (inPlan) {
           await plan.binding.after(message.index);
+          if (
+            !result.isError &&
+            ["browser_type", "browser_type_secret"].includes(
+              plan.input.steps[message.index].tool,
+            ) &&
+            plan.input.steps[message.index].args.submit !== true
+          ) {
+            // Compare a bounded operation-scoped mutation window, never replace
+            // the original observer or bind a different target after a rerender.
+            await plan.binding.advanceAfterInput(message.index, observation.guard);
+          }
           plan.next++;
         }
         if (tool === "browser_handle_dialog" && !result.isError) {
@@ -582,6 +607,24 @@ export function startBrowserAdapter(makeProtector) {
       }
     } catch (error) {
       await pendingObservation?.dispose().catch(() => {});
+      if (
+        refusalIdentity &&
+        !stepMayHaveDispatched &&
+        error?.message === "OBSERVATION_INVALIDATED"
+      ) {
+        process.send?.({
+          id: message.id,
+          ok: true,
+          data: {
+            contractVersion: 2,
+            dispatchRefusal: refusalIdentity,
+            isError: true,
+            content: [],
+            diagnosticDetailAllowed: false,
+          },
+        });
+        return;
+      }
       process.send?.({
         id: message.id,
         ok: false,

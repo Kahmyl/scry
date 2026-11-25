@@ -1,4 +1,9 @@
-import { canonicalFeedback, errorFeedback, type Feedback } from "@scry/contracts";
+import {
+  canonicalFeedback,
+  canonicalBrowserFailureCode,
+  errorFeedback,
+  type Feedback,
+} from "@scry/contracts";
 
 export type BrowserAgentIdentity = Readonly<{
   provider: string;
@@ -8,15 +13,39 @@ export type BrowserAgentIdentity = Readonly<{
 }>;
 
 export class BrowserApiError extends Error {
+  readonly publicDetail: Record<string, unknown>;
   constructor(
     readonly code: string,
     readonly status: number,
     readonly safeActions: string[] = [],
     readonly interaction: Feedback = errorFeedback(code),
+    correlation: { incidentId?: string | undefined; relatedCommandId?: string | undefined } = {},
   ) {
     // The SDK transports thrown tool errors as text. Keep that error payload
     // finite and machine-readable without expanding any strict output schema.
-    super(JSON.stringify({ message: interaction.summary, interaction }));
+    const admittedCode = canonicalBrowserFailureCode(code) ?? "SCRY_BROWSER_API_UNAVAILABLE";
+    const admittedInteraction = canonicalFeedback(interaction) ?? errorFeedback(admittedCode);
+    const detail = {
+      version: 1,
+      code: admittedCode,
+      ...(correlation.incidentId &&
+      /^scry-command-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(correlation.incidentId)
+        ? { incidentId: correlation.incidentId, supportUrl: "https://scry.giize.com/support" }
+        : {}),
+      ...(correlation.relatedCommandId &&
+      /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(correlation.relatedCommandId)
+        ? { relatedCommandId: correlation.relatedCommandId }
+        : {}),
+    };
+    super(
+      JSON.stringify({
+        message: admittedInteraction.summary,
+        interaction: admittedInteraction,
+        error: detail,
+      }),
+    );
+    this.interaction = admittedInteraction;
+    this.publicDetail = Object.freeze(detail);
     this.name = "BrowserApiError";
   }
 }
@@ -116,7 +145,10 @@ export class BrowserApiClient {
       // Canonical validation admits only finite service-owned copy and next actions,
       // never arbitrary provider messages, tokens or unrecognized recovery hints.
       const interaction = canonicalFeedback(detail?.interaction) ?? errorFeedback(code);
-      throw new BrowserApiError(code, response.status, safeActions, interaction);
+      throw new BrowserApiError(code, response.status, safeActions, interaction, {
+        incidentId: stringField(detail, "incidentId"),
+        relatedCommandId: stringField(detail, "relatedCommandId"),
+      });
     }
     return response;
   }
