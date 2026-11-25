@@ -14,6 +14,7 @@ import {
   maskingDiagnosticSchema,
   type MaskingDiagnostic,
   nativeCapabilitySchemas,
+  captureGeneratedSecretSchema,
   scopedRequestSchema,
   canonicalRecordingAssessment,
   nativeImageReasons,
@@ -70,6 +71,8 @@ function privateNetworkOrigins(): string[] {
 }
 type Content = { type: string; text?: string; data?: string; mimeType?: string };
 type ToolResult = {
+  sealedSecret?: unknown;
+  reason?: string;
   contractVersion?: unknown;
   dispatchRefusal?: unknown;
   content: Content[];
@@ -137,7 +140,8 @@ type Cell = {
 };
 
 /** An IPC-only official adapter. No API credentials, database, lease, or
- * encryption key enters this process. Its browser is independently supervised. */
+ * long-lived decryption key enters it. Explicit generated capture receives only
+ * a one-use wrapping public key. Its browser is independently supervised. */
 export class AdapterWorker {
   readonly child: ChildProcess;
   #sequence = 0;
@@ -1001,7 +1005,11 @@ export class PraxisMcpBrowserEngine {
             for (const binding of [...request.credentials, ...request.bodyBindings])
               requestBindings.push({
                 ...binding,
-                value: await this.commands.protectedValueForBrowser(id, binding.protectedValueId),
+                value: await this.commands.protectedValueForBrowser(
+                  id,
+                  binding.protectedValueId,
+                  "scoped_request",
+                ),
               });
           }
         } else if (tool === "browser_type_secret") {
@@ -1092,6 +1100,62 @@ export class PraxisMcpBrowserEngine {
               commandOptions,
             ),
           );
+        if (tool === "browser_capture_secret") {
+          const input = captureGeneratedSecretSchema.parse(args);
+          if (
+            !options.commandId ||
+            !c.scope?.environmentId ||
+            !options.persistGeneratedSecret ||
+            !this.protection.nativeSecretCapture
+          )
+            throw failure("GENERATED_SECRET_CAPTURE_UNAVAILABLE");
+          const admission = this.protection.nativeSecretCapture(
+            c.scope,
+            input,
+            options.commandId,
+            c.scope.environmentId,
+          );
+          try {
+            const response = await this.nativeCall(c, attempt, {
+              type: "call",
+              tool,
+              args,
+              secretCapture: admission.request,
+            });
+            if (response.isError || !response.sealedSecret)
+              return published({
+                execution: "tool_error",
+                businessOutcome: "not_dispatched",
+                observation: response.observationAvailable === false ? "unavailable" : "available",
+                reason: response.reason ?? "protected_capture_unavailable",
+                content: response.content,
+              });
+            const value = admission.accept(response.sealedSecret);
+            await options.assertCurrent?.();
+            const metadata = await options.persistGeneratedSecret(value);
+            const outcome = {
+              execution: "completed",
+              businessOutcome: "not_dispatched",
+              observation: response.observationAvailable === false ? "unavailable" : "available",
+              ...(response.observationIssue ? { observationIssue: response.observationIssue } : {}),
+              protectedReferences: [metadata],
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    message:
+                      "Generated value saved as an opaque reference. Use only its permitted uses in this Environment. Capture does not verify the originating business operation.",
+                    protectedReference: metadata,
+                  }),
+                },
+              ],
+            };
+            await commandOptions.persistAction?.(outcome);
+            return published(outcome);
+          } finally {
+            admission.dispose();
+          }
+        }
         const mutating = !nativeObservationTools.has(tool);
         await commandOptions.persistAction?.({
           execution: "unknown",

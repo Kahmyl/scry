@@ -17,6 +17,10 @@ export interface PraxisCommandAuthoritySample {
   claimRevision: number;
 }
 export interface PraxisCommandOptions {
+  commandId?: string;
+  persistGeneratedSecret?: (
+    value: import("./generated-secret.js").AdmittedGeneratedSecret,
+  ) => Promise<import("./generated-secret.js").GeneratedSecretMetadata>;
   remainingMs: number;
   signal?: AbortSignal;
   assertCurrent?: () => Promise<void>;

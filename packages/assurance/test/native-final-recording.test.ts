@@ -5,7 +5,14 @@ const nativeTest =
     ? it
     : it.skip;
 describe("actual native worker final recording admission", () => {
-  nativeTest.each(["normal", "delayed-public", "stuck-public", "delayed-known"] as const)(
+  nativeTest.each([
+    "normal",
+    "delayed-public",
+    "stuck-public",
+    "delayed-known",
+    "generated",
+    "api-only",
+  ] as const)(
     "keeps physical stop, final read and Chronicle admission ordered (%s)",
     async (mode) => {
       await actualNativeFinalRecording(mode);

@@ -8,9 +8,11 @@ import { safeDomSemanticHint } from "./transport-protection.js";
 import { nativeProtectionScript } from "./native-protection.js";
 import { createNativeDiagnosticProtection } from "./native-diagnostic-protection.js";
 import { createNativeAdapterProtector } from "./native-adapter-protection.js";
+import { createNativeSecretCapture } from "./generated-secret.js";
 
 /** Supplies policy capabilities without exposing key material to browser execution. */
 export class VeilBrowserProtection implements VeilBrowserProtectionPort {
+  nativeSecretCapture = createNativeSecretCapture;
   nativeDiagnostics(protectedValues: Record<string, string>) {
     return createNativeDiagnosticProtection(protectedValues);
   }

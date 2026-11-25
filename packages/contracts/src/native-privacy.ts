@@ -53,6 +53,60 @@ export const nativeCaptureWithholdReasons = [
   "native_capture_admission_unavailable",
 ] as const;
 export type NativeCaptureWithholdReason = (typeof nativeCaptureWithholdReasons)[number];
+export type RecordingGap = {
+  captureId?: string;
+  reason: NativeCaptureWithholdReason;
+  affectedEvidence: "whole_capture";
+  timing: "capture_bounds_only" | "unavailable";
+  startedAtMs?: number;
+  endedAtMs?: number;
+  recoverable: false;
+};
+/** Safe informational projection, never media admission or a privacy override. */
+export function canonicalRecordingGaps(value: unknown): RecordingGap[] | undefined {
+  if (!Array.isArray(value)) return;
+  return value.slice(0, 64).flatMap((v) => {
+    if (
+      !v ||
+      typeof v !== "object" ||
+      !nativeCaptureWithholdReasons.includes(v.reason) ||
+      v.affectedEvidence !== "whole_capture" ||
+      v.recoverable !== false
+    )
+      return [];
+    const timed =
+      v.timing === "capture_bounds_only" &&
+      Number.isSafeInteger(v.startedAtMs) &&
+      v.startedAtMs >= 0 &&
+      Number.isSafeInteger(v.endedAtMs) &&
+      v.endedAtMs >= v.startedAtMs;
+    return [
+      {
+        ...(typeof v.captureId === "string" &&
+        /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(v.captureId)
+          ? { captureId: v.captureId }
+          : {}),
+        reason: v.reason,
+        affectedEvidence: "whole_capture" as const,
+        timing: timed ? ("capture_bounds_only" as const) : ("unavailable" as const),
+        ...(timed ? { startedAtMs: v.startedAtMs, endedAtMs: v.endedAtMs } : {}),
+        recoverable: false as const,
+      },
+    ];
+  });
+}
+export function recordingGapExplanation(reason: NativeCaptureWithholdReason): string {
+  if (reason === "native_protection_geometry_unsupported")
+    return "The masking system could not safely cover this page layout.";
+  if (reason === "native_protection_classification_failed")
+    return "The page's private-value observation could not be safely classified.";
+  if (
+    reason === "native_protection_refresh_incomplete" ||
+    reason === "native_protection_geometry_stale"
+  )
+    return "A required privacy observation did not finish with current page geometry.";
+  return "The recording's protection or capture proof was incomplete.";
+}
 
 /** Capture-bound best-effort assessment, never a continuous privacy certificate. */
 export type NativeCaptureAssessment =

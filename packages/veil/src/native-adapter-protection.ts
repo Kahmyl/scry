@@ -161,8 +161,9 @@ export function createNativeAdapterProtector(
         }),
       );
     const failed = chosen.find((w) => w.facts.image.state === "withheld");
+    const emptyInventory = complete && all.length === 0 && selected === -1;
     const image =
-      !complete || !chosen.length
+      !complete || (!chosen.length && !emptyInventory)
         ? nativeImageEvidence("native_protection_refresh_incomplete")
         : (failed?.facts.image ?? nativeImageEvidence());
     return {
@@ -171,7 +172,9 @@ export function createNativeAdapterProtector(
       policyGeneration: shared.policyGeneration,
       ...(challenge ? { finalReadChallenge: challenge } : {}),
       text:
-        complete && chosen.length && chosen.every((w) => w.facts.text === "complete")
+        complete &&
+        (chosen.length || emptyInventory) &&
+        chosen.every((w) => w.facts.text === "complete")
           ? "complete"
           : "withheld",
       image,
@@ -231,6 +234,11 @@ export function createNativeAdapterProtector(
   };
   const clean = (value: unknown) => metadata(value);
   return {
+    sealGeneratedSecret(value, request) {
+      projection.learn([value]);
+      syncLearned();
+      return sealNativeGeneratedSecret(value, request);
+    },
     fork(epoch: NativeCaptureEpoch) {
       return createNativeAdapterProtector({}, { captureEpoch: epoch, shared });
     },
@@ -542,3 +550,4 @@ export function createNativeAdapterProtector(
     },
   };
 }
+import { sealNativeGeneratedSecret } from "./generated-secret.js";

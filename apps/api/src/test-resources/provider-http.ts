@@ -69,7 +69,12 @@ export class ProviderHttp {
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 
-  async request(path: string, options: RequestInit = {}, acceptable: number[] = []) {
+  async request(
+    path: string,
+    options: RequestInit = {},
+    acceptable: number[] = [],
+    mode: "json" | "bytes" = "json",
+  ) {
     // Fixed provider origins only. Never follow a provider response URL with an
     // Authorization header, including redirects to a different origin.
     if (!path.startsWith("/") || path.startsWith("//"))
@@ -197,6 +202,7 @@ export class ProviderHttp {
           } finally {
             await within(reader.cancel()).catch(() => {});
           }
+        if (mode === "bytes") return { status: response.status, data: Buffer.concat(chunks) };
         const text = Buffer.concat(chunks).toString("utf8");
         return { status: response.status, data: text ? JSON.parse(text) : {} };
       } catch (error) {

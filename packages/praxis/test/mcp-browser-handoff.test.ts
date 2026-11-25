@@ -5,6 +5,8 @@ import { PraxisOwnerLease } from "../src/owner-lease.js";
 import { SupervisionAuthority } from "../src/supervision-authority.js";
 import { ExecutionSupervision } from "../src/execution-supervision.js";
 import { CommandAttempt } from "../src/command-lane.js";
+import { randomBytes, randomUUID } from "node:crypto";
+import { VeilBrowserProtection, createNativeAdapterProtector } from "@scry/veil";
 import type {
   PraxisCommandsPort,
   PraxisEffectsPort,
@@ -13,6 +15,120 @@ import type {
 } from "@scry/contracts";
 
 describe("official adapter command handoff", () => {
+  it.each(["success", "unavailable", "persistence_failure"] as const)(
+    "admits an encrypted generated-value handoff without repeating the application action (%s)",
+    async (mode) => {
+      vi.stubEnv("SCRY_BROWSER_WORKFLOW_V2_ENABLED", "true");
+      vi.stubEnv("SCRY_BROWSER_PROTECTED_KEY_BASE64", randomBytes(32).toString("base64"));
+      const effects = { assertOwner: vi.fn(async () => {}) } as unknown as PraxisEffectsPort;
+      const commands = {
+        protectedValuesForSession: vi.fn(async () => ({})),
+      } as unknown as PraxisCommandsPort;
+      const engine = new PraxisMcpBrowserEngine(
+        commands,
+        effects,
+        {} as ChronicleEvidencePort,
+        new VeilBrowserProtection(),
+        "unused",
+      );
+      const c = (engine as unknown as { cell(id: string): any }).cell(randomUUID());
+      c.scope = {
+        sessionId: c.id,
+        projectId: randomUUID(),
+        missionId: randomUUID(),
+        runId: randomUUID(),
+        environmentId: randomUUID(),
+        baseOrigin: "https://app.test",
+        allowedOrigins: ["https://app.test"],
+        ownerGeneration: 1,
+        disclosureMode: "confidential",
+        protectionKeyId: "browser-key-1",
+      };
+      c.lease = new PraxisOwnerLease(
+        { sessionId: c.id, generation: 1, leaseToken: "private" },
+        effects,
+        { sampleStartedAt: performance.now(), leaseRemainingMs: 60000 },
+      );
+      c.opening = Promise.resolve();
+      c.policyDigest = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+      c.custody = {
+        synchronize: vi.fn(async () => {}),
+        terminate: vi.fn(async () => ({ exitConfirmed: true })),
+      };
+      const secret = "fictional-private-generated-42683",
+        saved: Array<Record<string, unknown>> = [];
+      c.worker = {
+        stop: vi.fn(async () => {}),
+        call: vi.fn(async (message: any) => {
+          expect(message.tool).toBe("browser_capture_secret");
+          expect(JSON.stringify(message)).not.toContain(secret);
+          return mode === "unavailable"
+            ? {
+                isError: true,
+                reason: "source_not_unique",
+                content: [],
+                observationAvailable: false,
+              }
+            : {
+                sealedSecret: createNativeAdapterProtector({}).sealGeneratedSecret(
+                  secret,
+                  message.secretCapture,
+                ),
+                content: [],
+                observationAvailable: false,
+                observationIssue: "native_protection_classification_failed",
+              };
+        }),
+      };
+      const persist = vi.fn(async (value: any) => {
+        if (mode === "persistence_failure") throw Error("SCRY_BROWSER_OWNER_FENCED");
+        expect(JSON.stringify(value)).not.toContain(secret);
+        return value.metadata;
+      });
+      try {
+        const promise = engine.execute(
+          c.id,
+          {
+            kind: "browser_tool",
+            tool: "browser_capture_secret",
+            args: {
+              sourceOrigin: "https://app.test",
+              target: { selector: "code" },
+              displayName: "Synthetic signing key",
+              permittedUses: ["scoped_request"],
+              expiresInSeconds: 3600,
+              userConfirmed: true,
+            },
+          },
+          {
+            commandId: randomUUID(),
+            remainingMs: 5000,
+            persistGeneratedSecret: persist,
+            persistAction: async (r) => {
+              saved.push(r);
+            },
+          },
+        );
+        if (mode === "persistence_failure") await expect(promise).rejects.toThrow("OWNER_FENCED");
+        else {
+          const result = await promise;
+          expect(JSON.stringify(result)).not.toContain(secret);
+          expect(result).toMatchObject({
+            execution: mode === "success" ? "completed" : "tool_error",
+            businessOutcome: "not_dispatched",
+            observation: "unavailable",
+          });
+          if (mode === "success") expect(result.protectedReferences).toHaveLength(1);
+        }
+        expect(c.worker.call).toHaveBeenCalledTimes(1);
+        expect(persist).toHaveBeenCalledTimes(mode === "unavailable" ? 0 : 1);
+        expect(JSON.stringify(saved)).not.toContain(secret);
+      } finally {
+        c.lease.revoke();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
   it("resolves a bound access link privately but refuses navigation outside the Run origin", async () => {
     let link = "http://outside.invalid/verify?token=fictional_access_link";
     const effects = { assertOwner: vi.fn(async () => {}) } as unknown as PraxisEffectsPort;

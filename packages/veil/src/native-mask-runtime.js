@@ -1234,7 +1234,9 @@ function installNativePrivacyGraph(initialBound, options = {}) {
             ? "button"
             : "textbox",
       ];
-    if (tag === "code") return ["code"];
+    // A mixed code owner can expose an independent text run beside a Copy
+    // button. The projector must still prove that exact inline branch.
+    if (tag === "code") return ["code", "text"];
     if (tag === "p") return ["paragraph"];
     if (tag === "button") return ["button"];
     if (tag === "option") return ["option"];

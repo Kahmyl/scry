@@ -71,7 +71,7 @@ export function registerAgentWorkflowTools(
     "preview_mission_report",
     {
       description:
-        "Validate the customer-visible report before final publication. Typed presentation.sections retain safe API coverage, cleanup and receipt detail; blocked/excluded statuses stay separate. Extra safeReport keys are operator-only and will NOT appear in the customer report. This preview is not privacy certification; the API sanitizes on publication. Final reports are immutable; replay returns the existing report without changing it.",
+        "Preview customer-visible presentation.sections before immutable publication. Extra safeReport keys are operator-only. Preserve blocked/excluded scope; preview is not privacy certification.",
       inputSchema: publishBrowserMissionReportSchema.omit({ agentSessionId: true }).shape,
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
@@ -97,7 +97,7 @@ export function registerAgentWorkflowTools(
     "get_testing_context",
     {
       description:
-        "After list_projects, call this before testing and follow returned workflowGuidance. Load the Project’s Missions, Environments and safe credential metadata in one call. Server capabilities do not prove host tool exposure. Reuse explicit user credential choices; never infer permission from names.",
+        "After list_projects, load Project Missions, Environments and safe credential metadata together. Follow returned workflowGuidance. Capability is not host exposure or credential permission.",
       inputSchema: testingContextRequestSchema.shape,
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
@@ -112,7 +112,7 @@ export function registerAgentWorkflowTools(
     "start_journey",
     {
       description:
-        "Create/reuse one objective, Flow and Run for a known current Mission in one call. Select the assigned Environment first. Reuse the same attemptId and inputs to recover a partial/lost response; change attemptId only for a deliberately new attempt. Does not choose credentials or start application actions.",
+        "Create/reuse an objective, Flow and Run in the current Mission/selected Environment. Retry identical inputs with the same attemptId after lost responses. Does not select credentials or act on the app.",
       inputSchema: prepareBrowserJourneySchema.shape,
       _meta: toolAuthMetadata(),
       annotations: idempotentDurableWrite,
@@ -128,7 +128,7 @@ export function registerAgentWorkflowTools(
     "get_run_status",
     {
       description:
-        "Read terminal status, pending-command count, current owner generation and explicit browserReleased for one Run. This is execution state, never an application pass. Use after finalization instead of inferring release from a closed chat.",
+        "Read terminal state, pending commands, privacy gaps and explicit browserReleased. Execution state is not an application verdict.",
       inputSchema: { runId: uuid },
       _meta: toolAuthMetadata(),
       annotations: localFactualRead,
@@ -143,7 +143,7 @@ export function registerAgentWorkflowTools(
     "finish_incomplete_run",
     {
       description:
-        "Stop an explicitly selected incomplete attempt through the supported fenced finalizer, preserving evidence and uncertain outcomes. Never marks a test passed or replays application writes. Confirmed must represent authorization to stop this attempt. Returns explicit release facts; if closure is pending or fenced, inspect get_run_status rather than repeatedly stopping.",
+        "Stop the selected incomplete attempt with confirmed authorization, preserving evidence and uncertainty. No replay or passing verdict. Use returned release facts; if pending inspect get_run_status.",
       inputSchema: {
         runId: uuid,
         confirmed: z.literal(true),

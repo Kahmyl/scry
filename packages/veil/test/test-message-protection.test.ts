@@ -2,6 +2,48 @@ import { describe, expect, it } from "vitest";
 import { protectTestMessage } from "../src/test-message-protection.js";
 
 describe("test-message access-secret protection", () => {
+  it("does not mint a second claim from a square-bracketed email text link", () => {
+    const link = "https://preview.example/accept#token=fictional-square-claim";
+    const result = protectTestMessage({
+      text: `Accept invitation [${link}]`,
+      html: [`<a href="${link}">Accept as Owner</a>`],
+    });
+    expect(result.candidates).toEqual([
+      { kind: "link", value: link, source: "html_href", label: "Accept as Owner" },
+    ]);
+    expect(JSON.stringify(result.safe)).not.toContain("fictional-square-claim");
+  });
+  it("preserves genuine punctuation and distinct destinations from authoritative anchors", () => {
+    const a = "https://preview.example/accept#token=fictional-real-claim]",
+      b = "https://preview.example/accept#token=fictional-second-claim";
+    const result = protectTestMessage({
+      html: [`<a href="${a}">Owner</a><a href="${b}">Member</a>`],
+    });
+    expect(result.candidates).toEqual([
+      { kind: "link", value: a, source: "html_href", label: "Owner" },
+      { kind: "link", value: b, source: "html_href", label: "Member" },
+    ]);
+  });
+  it("retains balanced URL delimiters inside a wrapped link and masks secret-bearing anchor labels", () => {
+    const claim = "fictional-(balanced)-claim",
+      link = `https://preview.example/accept#token=${claim}`;
+    const result = protectTestMessage({
+      text: `[Accept](${link})`,
+      html: [`<a href="${link}">${claim}</a>`],
+    });
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]?.value).toBe(link);
+    expect(JSON.stringify(result.safe)).not.toContain(claim);
+    expect(result.candidates[0]?.label).not.toContain(claim);
+  });
+  it("does not mint a second invitation claim from a Markdown closing delimiter", () => {
+    const link = "https://preview.example/accept#token=fictional-markdown-claim";
+    const result = protectTestMessage({
+      text: `[Accept invitation](${link})`,
+      html: [`<a href="${link}">Accept invitation</a>`],
+    });
+    expect(result.candidates.map((c) => c.value)).toEqual([link]);
+  });
   it.each(["=", "&#x3D;", "&#61;", "&equals;"])(
     "hands off fragment access links and masks their HTML spelling (%s)",
     (equals) => {
@@ -9,7 +51,7 @@ describe("test-message access-secret protection", () => {
       const link = `https://preview.example/partner-team-invitations/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/accept#token=${token}`;
       const html = `<a href="${link.replace("#token=", `#token${equals}`)}">Join as Owner</a>`;
       const result = protectTestMessage({ text: `Join as Owner: ${link}`, html: [html] });
-      expect(result.candidates).toEqual([{ kind: "link", value: link }]);
+      expect(result.candidates).toMatchObject([{ kind: "link", value: link }]);
       expect(JSON.stringify(result.safe)).not.toContain(token);
       expect(JSON.stringify(result.safe)).toContain("Join as Owner");
     },
@@ -22,7 +64,7 @@ describe("test-message access-secret protection", () => {
       text: `Accept ${link}`,
       html: [`<a href="${htmlLink}">Accept invitation</a>`],
     });
-    expect(result.candidates).toEqual([{ kind: "link", value: link }]);
+    expect(result.candidates).toMatchObject([{ kind: "link", value: link }]);
     expect(JSON.stringify(result.safe)).not.toContain("fictional-invite-123");
     expect(JSON.stringify(result.safe)).not.toContain("recipient=test");
   });
@@ -32,7 +74,7 @@ describe("test-message access-secret protection", () => {
         "<a href='https://app.example/reset?token=fictional-reset-123&#38;next=%2Fhome'>Reset</a>",
       ],
     });
-    expect(result.candidates).toEqual([
+    expect(result.candidates).toMatchObject([
       { kind: "link", value: "https://app.example/reset?token=fictional-reset-123&next=%2Fhome" },
     ]);
     expect(JSON.stringify(result.safe)).not.toContain("fictional-reset-123");
@@ -44,7 +86,7 @@ describe("test-message access-secret protection", () => {
       headers: { authorization: "Bearer fictional_access_credential", cookie: "session=private" },
     };
     const result = protectTestMessage(input);
-    expect(result.candidates).toEqual([
+    expect(result.candidates).toMatchObject([
       { kind: "code", value: "123456" },
       { kind: "link", value: "https://app.example/reset?token=fictional_access_token" },
     ]);
@@ -62,7 +104,7 @@ describe("test-message access-secret protection", () => {
       api_key: "fictional-api-key",
       phone: "+1234567890",
     });
-    expect(result.candidates).toContainEqual({ kind: "code", value: "942781" });
+    expect(result.candidates).toContainEqual({ kind: "code", value: "942781", source: "code" });
     expect(JSON.stringify(result.safe)).not.toContain("942781");
     expect(JSON.stringify(result.safe)).toContain("752419");
     expect(JSON.stringify(result.safe)).toContain("+1234567890");
@@ -82,7 +124,7 @@ describe("test-message access-secret protection", () => {
   ])("recognizes access parameters in supported URL components: %s", (suffix) => {
     const link = `https://preview.example/accept${suffix}`;
     const result = protectTestMessage({ html: [`<a href="${link}">Accept</a>`] });
-    expect(result.candidates).toEqual([{ kind: "link", value: link }]);
+    expect(result.candidates).toMatchObject([{ kind: "link", value: link }]);
     expect(JSON.stringify(result.safe)).not.toContain("fictional-claim");
   });
   it("decodes HTML once and retains the exact URL claim bytes", () => {
@@ -91,7 +133,7 @@ describe("test-message access-secret protection", () => {
         '<a href="https://preview.example/accept#token&#61;fictional%2Bclaim%26tail+literal&amp;next=%2Fteam">Accept</a>',
       ],
     });
-    expect(result.candidates).toEqual([
+    expect(result.candidates).toMatchObject([
       {
         kind: "link",
         value: "https://preview.example/accept#token=fictional%2Bclaim%26tail+literal&next=%2Fteam",
@@ -108,7 +150,7 @@ describe("test-message access-secret protection", () => {
     const result = protectTestMessage({
       html: [`<a href="${encoded}" data-copy="${encoded}">Owner invitation</a><p>${encoded}</p>`],
     });
-    expect(result.candidates).toEqual([
+    expect(result.candidates).toMatchObject([
       { kind: "link", value: "https://preview.example/accept#token=fictional-claim" },
     ]);
     expect(JSON.stringify(result.safe)).not.toContain("fictional");
@@ -123,7 +165,7 @@ describe("test-message access-secret protection", () => {
     const result = protectTestMessage({
       html: [`<a href="${link.replace("=", "&#61;")}">Accept</a>`],
     });
-    expect(result.candidates).toEqual([]);
+    expect(result.candidates).toMatchObject([]);
     expect(JSON.stringify(result.safe)).not.toContain("fictional-claim");
   });
   it.each(["[PROTECTED:ASSIGNMENT-SECRET]", "%5BPROTECTED%3AREFERENCE%5D"])(
@@ -132,7 +174,7 @@ describe("test-message access-secret protection", () => {
       const result = protectTestMessage({
         text: `https://preview.example/accept#token=${placeholder}`,
       });
-      expect(result.candidates).toEqual([]);
+      expect(result.candidates).toMatchObject([]);
     },
   );
   it("protects every claim beyond the handoff cap and fails closed at size bounds", () => {
@@ -174,7 +216,7 @@ describe("test-message access-secret protection", () => {
             html: [`<a href=${quote}${encoded}${quote}>Join Owner</a>`],
             text: canonical,
           });
-          expect(result.candidates).toEqual([{ kind: "link", value: canonical }]);
+          expect(result.candidates).toMatchObject([{ kind: "link", value: canonical }]);
           expect(JSON.stringify(result.safe)).not.toContain("fictional-matrix-claim");
         }
       }
@@ -189,8 +231,10 @@ describe("test-message access-secret protection", () => {
     expect(result.candidates).toContainEqual({
       kind: "link",
       value: "https://preview.example/accept#token=fictional-template-claim",
+      source: "html_href",
+      label: "Owner invitation",
     });
-    expect(result.candidates).toContainEqual({ kind: "code", value: "123456" });
+    expect(result.candidates).toContainEqual({ kind: "code", value: "123456", source: "code" });
     expect(JSON.stringify(result.safe)).not.toContain("fictional-template-claim");
     expect(JSON.stringify(result.safe)).not.toContain("&#49;");
   });

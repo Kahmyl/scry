@@ -38,6 +38,23 @@ function receipt(policy: NativeBrowserProtectionPort, readId: number, values: un
     },
   };
 }
+it("matches an independent secret text run beside a Copy button without treating the button as payload", () => {
+  const policy = createNativeAdapterProtector({});
+  const read = policy.beginNativeRead();
+  const ref = { learnedIndex: 0, sourceOwner: 0, axRoles: ["generic", "text"] };
+  accept(policy, read, {
+    ...receipt(policy, read, [value]),
+    knownRequirement: "present",
+    textCandidateRefs: [ref],
+    imageCandidateRefs: [ref],
+  });
+  policy.finishNativeRead(read, true, 0);
+  const result = snapshot(policy, `- code:\n  - text: ${value}\n  - button "Copy" [ref=e2]`);
+  expect(result).not.toContain(value);
+  expect(result).toContain('button "Copy"');
+  expect(policy.observationAvailable()).toBe(true);
+  expect(policy.imageEvidence().state).toBe("available");
+});
 it("preserves a public display name describing a private credential in snapshot and later text", () => {
   const policy = createNativeAdapterProtector({});
   const input = line("Display name for private access credential", "ordinary-public-name");

@@ -208,7 +208,7 @@ function registerLifecycleTools(
     {
       title: "List Project Environments",
       description:
-        "List the Environments visible in one Project, including origin scope, disclosure mode, and active or disabled state. Use an active matching Environment when starting a Run. If none matches the application assigned by the user, create one with create_environment.",
+        "List Project Environments and their origin scope, disclosure and state. Reuse an active match; create_environment only for assigned origins.",
       inputSchema: { projectId: uuid },
       outputSchema: { message, environments: z.array(z.record(z.string(), z.unknown())) },
       _meta: toolAuthMetadata(),
@@ -234,7 +234,7 @@ function registerLifecycleTools(
     {
       title: "Create Project Environment",
       description:
-        "Create or idempotently reuse an Environment from the application origins explicitly assigned by the user for the current Mission. This is routine execution setup: do not ask the user to configure it manually. Include only the browser origin and service origins needed by that assignment. Do not infer a live origin from a test origin, add unrelated origins, or use this to broaden an active Run; every Run keeps its immutable scope snapshot.",
+        "Create/reuse routine Environment setup from user-assigned origins; do not ask the user to configure it manually. Never broaden an active Run or infer live origins.",
       inputSchema: { projectId: uuid, ...createEnvironmentInput.shape },
       outputSchema: { message, environmentId: uuid, replay: z.boolean() },
       _meta: toolAuthMetadata(),
@@ -255,7 +255,7 @@ function registerLifecycleTools(
     {
       title: "List Project Credentials",
       description:
-        "List safe metadata for reusable Project credentials without returning values. Results are candidates only: never infer first-use permission from a unique, similar, or obvious name. Ask the current user to choose a candidate or create a new credential before binding it to a Run.",
+        "List safe Project credential metadata; never infer first-use permission from names. Require current-user selection before binding.",
       inputSchema: { projectId: uuid },
       outputSchema: { message, credentials: z.array(z.record(z.string(), z.unknown())) },
       _meta: toolAuthMetadata(),
@@ -281,7 +281,7 @@ function registerLifecycleTools(
     {
       title: "Create Project Credential",
       description:
-        "Create one encrypted Project credential only when the current user explicitly chooses to provide its plaintext in this agent interaction. Prefer Project settings when the user does not want the model or conversation host to receive the value. The value is never returned by Scry.",
+        "Encrypt a credential only if the user explicitly chooses to provide plaintext here. Prefer Project settings to keep it from the model/host. Never returns the value.",
       inputSchema: { projectId: uuid, ...createCredentialInput.shape },
       outputSchema: { message, protectedValueId: uuid, replay: z.boolean() },
       _meta: toolAuthMetadata(),
@@ -302,7 +302,7 @@ function registerLifecycleTools(
     {
       title: "Bind Selected Credentials to Run",
       description:
-        "Bind only the opaque Project credential references explicitly selected by the current user to an existing active Run. This supports authentication discovered after navigation. Never call it based only on credential-name similarity or agent preference.",
+        "Bind only explicitly selected opaque references to an active Run. Never choose by name. Generated references require the same Mission/Environment and permitted uses.",
       inputSchema: { runId: uuid, ...bindBrowserProtectedInputsSchema.shape },
       outputSchema: {
         message,
@@ -375,7 +375,7 @@ function registerLifecycleTools(
     {
       title: "Create Mission Flow",
       description:
-        "Create a Flow at the agent's discretion inside the same Mission. A Flow can represent any useful work stream, retry, resumption, investigation, or approach; it does not need to be an alternative to another Flow.",
+        "Create a Flow at the agent's discretion within the same Mission; it does not need to be an alternative to another Flow.",
       inputSchema: { missionId: uuid, ...flowInput.shape },
       outputSchema: { message, flowId: uuid, flowRevisionId: uuid, replay: z.boolean() },
       _meta: toolAuthMetadata(),
@@ -406,7 +406,7 @@ function registerLifecycleTools(
     {
       title: "Start Flow Run",
       description:
-        "Start one browser Run under exactly one current Flow revision. Include protected input IDs only after the current user has explicitly selected them; credentials discovered later can be bound to this active Run after user choice. This queues a browser owner but does not itself dispatch an external application mutation. Browser capacity is reserved until finalization; if capacity is full, no browser is launched by this request. Wait for availability or finish a Run you own, then retry this exact start identity. Existing browser commands and finalization remain available.",
+        "Start/recover an attempt for the selected Flow and Environment. Reuse attemptId and identical inputs after lost replies; new identity means deliberately new work. Bind only explicitly selected credentials. Reuse returned browserSessionId.",
       inputSchema: startRunInput.shape,
       outputSchema: { message, runId: uuid, browserSessionId: uuid, replay: z.boolean() },
       _meta: toolAuthMetadata(),
@@ -468,7 +468,8 @@ function registerLifecycleTools(
     "publish_mission_report",
     {
       title: "Publish Mission report",
-      description: `Publish the tested application's report after terminal work. ${reportingInstructions}`,
+      description:
+        "Publish the tested application report after terminal work using returned workflowGuidance. Preview customer presentation first; preserve evidence, unresolved/excluded checks, cleanup and limitations. Publication is immutable; idempotent replay returns the existing report.",
       inputSchema: { missionId: uuid, ...publishBrowserMissionReportSchema.shape },
       outputSchema: { message, reportId: uuid, replay: z.boolean(), ...reportNavigationSchema },
       _meta: toolAuthMetadata(),

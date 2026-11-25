@@ -52,5 +52,10 @@ export interface TestEvent {
   receivedAt: string;
   title: string;
   content: unknown;
-  secrets: Array<{ kind: "code" | "link"; protectedValueId: string }>;
+  secrets: Array<{
+    kind: "code" | "link";
+    protectedValueId: string;
+    source?: "html_href" | "markdown" | "text" | "code" | "earlier_capture";
+    label?: string;
+  }>;
 }

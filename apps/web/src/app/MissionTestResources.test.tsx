@@ -37,7 +37,12 @@ describe("mission test observations", () => {
               ...receipt("Received restoration invitation"),
               content: { text: "Review invitation [PROTECTED:REFERENCE:TEST_0]" },
               secrets: [
-                { kind: "link", protectedValueId: link },
+                {
+                  kind: "link",
+                  protectedValueId: link,
+                  source: "html_href",
+                  label: "Accept as Owner",
+                },
                 { kind: "code", protectedValueId: code },
               ],
             },
@@ -53,7 +58,8 @@ describe("mission test observations", () => {
     fireEvent.click(screen.getByText("Use protected values in this mission"));
     expect(screen.getByText(link)).toBeTruthy();
     expect(screen.getByText(code)).toBeTruthy();
-    expect(screen.getByText("Protected link 1")).toBeTruthy();
+    expect(screen.getByText(/Accept as Owner/)).toBeTruthy();
+    expect(screen.getByText(/html href/)).toBeTruthy();
     expect(screen.getByText("Protected code 2")).toBeTruthy();
     expect(screen.getByText("resource")).toBeTruthy();
     expect(screen.getByText(/same Mission and an active Run/)).toBeTruthy();

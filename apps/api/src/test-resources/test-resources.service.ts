@@ -20,9 +20,105 @@ import {
   providerPause,
   providerTiming,
 } from "./provider-http.js";
+import { createHash } from "node:crypto";
+import { verifyRawWebhookHmac } from "@scry/veil";
+import { verifyTestWebhookSignatureSchema } from "@scry/contracts";
+import type { z } from "zod";
 
 @Injectable()
 export class TestResourcesService implements OnModuleInit, OnModuleDestroy {
+  async verifySignature(
+    workspace: string | undefined,
+    resourceId: string,
+    input: z.infer<typeof verifyTestWebhookSignatureSchema>,
+  ) {
+    const { row, event } = await this.repository.signatureContext(
+      workspace,
+      resourceId,
+      input.eventId,
+      input.runId,
+    );
+    const inputDigest = createHash("sha256")
+      .update(JSON.stringify({ resourceId, ...input }))
+      .digest("hex");
+    const prior = await this.repository.signatureReceipt(
+      input.runId,
+      input.idempotencyKey,
+      inputDigest,
+    );
+    if (prior) return { ...prior, cached: true };
+    const secret = await this.commands.protectedValueForBrowser(
+      event.session_id,
+      input.protectedValueId,
+      "hmac_verification",
+    );
+    try {
+      const receipt = await this.providers.webhookSignatureReceipt(
+        this.repository.open(row.private_data, row.id),
+        event.provider_event_id,
+      );
+      if (!receipt.available)
+        return {
+          status: "unavailable",
+          reason: "exact_raw_body_unavailable",
+          nextAction:
+            "Preserve the received event; verify only when its original bytes are available. Do not reconstruct JSON or replay delivery just for this check.",
+        };
+      const header = (name: string) => {
+        const pairs = Object.entries(receipt.headers).filter(
+          ([key]) => key.toLowerCase() === name.toLowerCase(),
+        );
+        return pairs.length === 1 && typeof pairs[0]![1] === "string"
+          ? (pairs[0]![1] as string)
+          : undefined;
+      };
+      const signature = header(input.signatureHeader),
+        timestamp = input.timestampHeader ? header(input.timestampHeader) : undefined;
+      if (signature === undefined || (input.timestampHeader && timestamp === undefined))
+        return {
+          status: "unavailable",
+          reason: "signature_headers_missing_or_ambiguous",
+          nextAction:
+            "Check the application's documented signature header and signing recipe for this same received event.",
+        };
+      const matched = verifyRawWebhookHmac(
+        secret,
+        receipt.body,
+        signature,
+        input.encoding,
+        input.prefix,
+        timestamp,
+      );
+      return this.repository.saveSignatureReceipt(
+        input.eventId,
+        input.runId,
+        input.protectedValueId,
+        input.idempotencyKey,
+        inputDigest,
+        {
+          status: matched ? "matched" : "different",
+          algorithm: "hmac_sha256",
+          signedData: timestamp === undefined ? "exact_raw_body" : "timestamp_dot_exact_raw_body",
+          encoding: input.encoding,
+          bodyBytes: receipt.body.length,
+          eventId: input.eventId,
+          runId: input.runId,
+          protectedValueId: input.protectedValueId,
+          verifiedAt: new Date().toISOString(),
+          replayProtection: "not_assessed",
+          cached: false,
+        },
+      );
+    } catch (error) {
+      if (!(error instanceof ProviderDeferred)) throw error;
+      return {
+        status: "temporarily_unavailable",
+        retryAfterSeconds: error.retryAfterSeconds,
+        nextAction:
+          "Retry this same signature check and event after the provider delay. Do not resend the event.",
+      };
+    }
+  }
   private timer?: ReturnType<typeof setInterval>;
   private sweeping = false;
   constructor(

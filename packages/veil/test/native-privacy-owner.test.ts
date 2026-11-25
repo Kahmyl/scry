@@ -38,6 +38,28 @@ function ready(
   return read;
 }
 describe("shared native privacy owner", () => {
+  it("accepts a complete empty page inventory for API-only recording finalization", () => {
+    const p = createNativeAdapterProtector({});
+    const read = p.beginNativeRead();
+    p.finishNativeRead(read, true, -1);
+    expect(p.captureSample()).toMatchObject({
+      text: "complete",
+      knownRequirement: "absent_in_supported_snapshot",
+      image: { state: "available" },
+    });
+    p.dispose();
+  });
+  it("does not treat an incomplete or missing selection as an empty inventory", () => {
+    const p = createNativeAdapterProtector({});
+    let read = p.beginNativeRead();
+    p.finishNativeRead(read, false, -1);
+    expect(p.imageEvidence().state).toBe("withheld");
+    read = p.beginNativeRead();
+    p.acceptNativeRead(read, facts(read), { pageId: 0, worldId: 0 });
+    p.finishNativeRead(read, true, -1);
+    expect(p.imageEvidence().state).toBe("withheld");
+    p.dispose();
+  });
   it("shares bounded privacy history while keeping per-capture observed gaps independent", () => {
     const root = createNativeAdapterProtector({}),
       a = root.fork(epoch(1)),

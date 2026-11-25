@@ -17,3 +17,4 @@ export * from "./agent-feedback.js";
 export * from "./agent-resume.js";
 export * from "./native-privacy.js";
 export * from "./native-protection-port.js";
+export * from "./generated-secret.js";

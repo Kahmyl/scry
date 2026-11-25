@@ -409,6 +409,16 @@ describe("prospective native capture admission", () => {
     const completion = await f.session.seal({ renderVideo: true, actionLedger: async () => [] });
     expect(completion).toMatchObject({ state: "incomplete", videoObjectKey: expect.any(String) });
     expect((await f.inventory()).media).toMatchObject([{ kind: "video" }]);
+    expect((await f.inventory()).recordingGaps).toEqual([
+      expect.objectContaining({
+        reason: "native_protection_geometry_unsupported",
+        affectedEvidence: "whole_capture",
+        recoverable: false,
+        timing: "capture_bounds_only",
+        startedAtMs: expect.any(Number),
+        endedAtMs: expect.any(Number),
+      }),
+    ]);
     expect(f.renderer.render).not.toHaveBeenCalled();
   });
   it("persists finite admission failure independently of an assessed final", async () => {

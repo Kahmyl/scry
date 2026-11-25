@@ -185,8 +185,9 @@ export const checks: readonly CheckDefinition[] = [
       "test/native-font-cache-review.test.ts",
       "test/native-geometry-feedback-review.test.ts",
       "test/native-paint-acknowledgement.test.ts",
+      "test/generated-secret.browser.test.ts",
     ],
-    { integrated: true, minimum: 15 },
+    { integrated: true, minimum: 26 },
   ),
   tests(
     "browser-recording",
@@ -200,7 +201,7 @@ export const checks: readonly CheckDefinition[] = [
       "test/native-pseudo-envelope-review.test.ts",
       "test/native-final-recording.test.ts",
     ],
-    { integrated: true, minimum: 55 },
+    { integrated: true, minimum: 57 },
   ),
   tests(
     "schema-upgrades",
@@ -242,8 +243,12 @@ export const checks: readonly CheckDefinition[] = [
     "test-resources",
     "Mission-scoped receipts, shared provider pacing, retries and secret binding",
     "@scry/api",
-    ["test/test-resources.integration.test.ts", "test/test-message-protection.integration.test.ts"],
-    { database: true, minimum: 30 },
+    [
+      "test/test-resources.integration.test.ts",
+      "test/test-message-protection.integration.test.ts",
+      "test/generated-secret.integration.test.ts",
+    ],
+    { database: true, minimum: 39 },
   ),
   tests(
     "worker-shutdown",
